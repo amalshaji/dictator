@@ -1,0 +1,245 @@
+import Foundation
+
+public enum ProviderKind: String, Codable, CaseIterable, Sendable {
+    case groq
+    case cloudflare
+    case xAI = "xai"
+    case deepgram
+    case assemblyAI = "assemblyai"
+    case gladia
+    case gemini
+    case openRouter = "openrouter"
+    case openAICompatible = "openai-compatible"
+}
+
+public enum ProviderModality: String, Codable, Sendable {
+    case batch
+    case streaming
+    case both
+}
+
+public struct ProviderCredentials: Codable, Equatable, Sendable {
+    public var apiKey: String
+    public var accountID: String?
+    public var baseURL: URL?
+
+    public init(apiKey: String, accountID: String? = nil, baseURL: URL? = nil) {
+        self.apiKey = apiKey
+        self.accountID = accountID
+        self.baseURL = baseURL
+    }
+}
+
+public struct RecordedAudio: Equatable, Sendable {
+    public let wavData: Data
+    public let pcm16Data: Data
+    public let duration: TimeInterval
+    public let sampleRate: Int
+
+    public init(wavData: Data, pcm16Data: Data, duration: TimeInterval, sampleRate: Int = 16_000) {
+        self.wavData = wavData
+        self.pcm16Data = pcm16Data
+        self.duration = duration
+        self.sampleRate = sampleRate
+    }
+}
+
+public struct VocabularyEntry: Identifiable, Codable, Equatable, Sendable {
+    public let id: UUID
+    public var value: String
+    public var variants: [String]
+    public var pronunciations: [String]
+    public var language: String?
+    public var isEnabled: Bool
+    public var useCount: Int
+
+    public init(
+        id: UUID = UUID(),
+        value: String,
+        variants: [String] = [],
+        pronunciations: [String] = [],
+        language: String? = nil,
+        isEnabled: Bool = true,
+        useCount: Int = 0
+    ) {
+        self.id = id
+        self.value = value
+        self.variants = variants
+        self.pronunciations = pronunciations
+        self.language = language
+        self.isEnabled = isEnabled
+        self.useCount = useCount
+    }
+}
+
+public struct WritingStyle: Identifiable, Codable, Equatable, Sendable {
+    public let id: UUID
+    public var name: String
+    public var instruction: String
+    public var isEnabled: Bool
+
+    public init(id: UUID = UUID(), name: String, instruction: String, isEnabled: Bool = true) {
+        self.id = id
+        self.name = name
+        self.instruction = instruction
+        self.isEnabled = isEnabled
+    }
+}
+
+public struct SnippetEntry: Identifiable, Codable, Equatable, Sendable {
+    public let id: UUID
+    public var trigger: String
+    public var expansion: String
+    public var isEnabled: Bool
+    public var useCount: Int
+
+    public init(id: UUID = UUID(), trigger: String, expansion: String, isEnabled: Bool = true, useCount: Int = 0) {
+        self.id = id
+        self.trigger = trigger
+        self.expansion = expansion
+        self.isEnabled = isEnabled
+        self.useCount = useCount
+    }
+}
+
+public struct TranscriptionOptions: Equatable, Sendable {
+    public var model: String
+    public var language: String?
+    public var vocabulary: [VocabularyEntry]
+    public var receivePartials: Bool
+
+    public init(model: String, language: String? = nil, vocabulary: [VocabularyEntry] = [], receivePartials: Bool = true) {
+        self.model = model
+        self.language = language
+        self.vocabulary = vocabulary
+        self.receivePartials = receivePartials
+    }
+}
+
+public struct TranscriptionResult: Equatable, Sendable {
+    public var text: String
+    public var language: String?
+    public var provider: ProviderKind
+    public var model: String
+    public var requestID: String?
+    public var latency: TimeInterval
+
+    public init(text: String, language: String? = nil, provider: ProviderKind, model: String, requestID: String? = nil, latency: TimeInterval) {
+        self.text = text
+        self.language = language
+        self.provider = provider
+        self.model = model
+        self.requestID = requestID
+        self.latency = latency
+    }
+}
+
+public struct STTProviderMetadata: Equatable, Sendable {
+    public let kind: ProviderKind
+    public let displayName: String
+    public let modality: ProviderModality
+    public let defaultModel: String
+    public let models: [String]
+    public let supportsVocabulary: Bool
+    public let supportsLanguageDetection: Bool
+    public let requiresAccountID: Bool
+}
+
+public struct CleanupRequest: Equatable, Sendable {
+    public var transcript: String
+    public var language: String?
+    public var vocabulary: [VocabularyEntry]
+    public var promptVersion: String
+    public var styleInstruction: String?
+
+    public init(transcript: String, language: String? = nil, vocabulary: [VocabularyEntry] = [], promptVersion: String = CleanupPrompt.currentVersion, styleInstruction: String? = nil) {
+        self.transcript = transcript
+        self.language = language
+        self.vocabulary = vocabulary
+        self.promptVersion = promptVersion
+        self.styleInstruction = styleInstruction
+    }
+}
+
+public struct CleanupResult: Equatable, Sendable {
+    public var text: String
+    public var provider: ProviderKind
+    public var model: String
+    public var inputTokens: Int?
+    public var outputTokens: Int?
+    public var latency: TimeInterval
+
+    public init(text: String, provider: ProviderKind, model: String, inputTokens: Int? = nil, outputTokens: Int? = nil, latency: TimeInterval) {
+        self.text = text
+        self.provider = provider
+        self.model = model
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
+        self.latency = latency
+    }
+}
+
+public struct LLMProviderMetadata: Equatable, Sendable {
+    public let kind: ProviderKind
+    public let displayName: String
+    public let defaultModel: String
+    public let requiresAccountID: Bool
+    public let supportsDynamicModels: Bool
+}
+
+public struct TranscriptRecord: Identifiable, Codable, Equatable, Sendable {
+    public let id: UUID
+    public let createdAt: Date
+    public var rawText: String
+    public var finalText: String
+    public var sttProvider: ProviderKind
+    public var sttModel: String
+    public var llmProvider: ProviderKind?
+    public var llmModel: String?
+    public var sourceBundleID: String?
+    public var audioDuration: TimeInterval
+    public var sttLatency: TimeInterval
+    public var cleanupLatency: TimeInterval?
+    public var insertionOutcome: String
+
+    public init(
+        id: UUID = UUID(), createdAt: Date = Date(), rawText: String, finalText: String,
+        sttProvider: ProviderKind, sttModel: String, llmProvider: ProviderKind? = nil,
+        llmModel: String? = nil, sourceBundleID: String? = nil, audioDuration: TimeInterval,
+        sttLatency: TimeInterval, cleanupLatency: TimeInterval? = nil, insertionOutcome: String
+    ) {
+        self.id = id
+        self.createdAt = createdAt
+        self.rawText = rawText
+        self.finalText = finalText
+        self.sttProvider = sttProvider
+        self.sttModel = sttModel
+        self.llmProvider = llmProvider
+        self.llmModel = llmModel
+        self.sourceBundleID = sourceBundleID
+        self.audioDuration = audioDuration
+        self.sttLatency = sttLatency
+        self.cleanupLatency = cleanupLatency
+        self.insertionOutcome = insertionOutcome
+    }
+}
+
+public enum ProviderError: LocalizedError, Equatable, Sendable {
+    case missingCredential(String)
+    case invalidResponse
+    case httpStatus(Int, String)
+    case emptyTranscript
+    case unsupported(String)
+    case cleanupRejected(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .missingCredential(let field): "Missing \(field)."
+        case .invalidResponse: "The provider returned an invalid response."
+        case .httpStatus(let status, let message): "Provider error \(status): \(message)"
+        case .emptyTranscript: "The provider returned an empty transcript."
+        case .unsupported(let message): message
+        case .cleanupRejected(let reason): "Cleanup output was rejected: \(reason)"
+        }
+    }
+}
