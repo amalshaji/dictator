@@ -19,9 +19,9 @@ public enum CleanupSafetyValidator {
         }
 
         for pattern in protectedPatterns {
-            let rawValues = matches(pattern, in: raw)
-            let cleanedValues = matches(pattern, in: trimmed)
-            guard Set(rawValues).isSubset(of: Set(cleanedValues)) else {
+            let rawValues = occurrenceCounts(matches(pattern, in: raw))
+            let cleanedValues = occurrenceCounts(matches(pattern, in: trimmed))
+            guard rawValues.allSatisfy({ value, count in cleanedValues[value, default: 0] >= count }) else {
                 throw ProviderError.cleanupRejected("protected token changed")
             }
         }
@@ -40,5 +40,8 @@ public enum CleanupSafetyValidator {
             Range(match.range, in: text).map { String(text[$0]) }
         }
     }
-}
 
+    private static func occurrenceCounts(_ values: [String]) -> [String: Int] {
+        values.reduce(into: [:]) { counts, value in counts[value, default: 0] += 1 }
+    }
+}

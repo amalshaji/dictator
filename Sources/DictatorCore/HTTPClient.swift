@@ -19,6 +19,14 @@ public struct URLSessionTransport: HTTPTransport {
 }
 
 public enum HTTPHelpers {
+    public static func requireHTTPURL(_ value: String) throws -> URL {
+        guard let url = URL(string: value),
+              ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+              url.host != nil
+        else { throw ProviderError.invalidResponse }
+        return url
+    }
+
     public static func requireSuccess(data: Data, response: HTTPURLResponse) throws {
         guard (200..<300).contains(response.statusCode) else {
             let message = String(data: data.prefix(1_024), encoding: .utf8) ?? "Unknown error"

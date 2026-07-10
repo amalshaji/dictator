@@ -1,14 +1,11 @@
 import Foundation
 
 public struct GroqSTTProvider: SpeechToTextProvider {
-    public let metadata = STTProviderMetadata(
+    public let metadata = ProviderMetadata(
         kind: .groq,
         displayName: "Groq",
-        modality: .batch,
         defaultModel: "whisper-large-v3-turbo",
         models: ["whisper-large-v3-turbo", "whisper-large-v3"],
-        supportsVocabulary: true,
-        supportsLanguageDetection: true,
         requiresAccountID: false
     )
 
@@ -69,4 +66,3 @@ public struct GroqSTTProvider: SpeechToTextProvider {
         struct GroqMetadata: Decodable { let id: String? }
     }
 }
-

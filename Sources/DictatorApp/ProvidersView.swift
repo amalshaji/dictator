@@ -16,7 +16,7 @@ struct ProvidersView: View {
                 providerTypeSelector
 
                 if tab == 0 {
-                    providerList(metadata: ProviderRegistry.sttMetadata, purpose: "stt")
+                    providerList(ProviderRegistry.sttMetadata, purpose: .speechToText)
                 } else {
                     HStack(spacing: 16) {
                         VStack(alignment: .leading, spacing: 3) {
@@ -29,7 +29,7 @@ struct ProvidersView: View {
                     .padding(14)
                     .background(DictatorDesign.control, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).stroke(DictatorDesign.border))
-                    providerList(metadata: CleanupProviderRegistry.metadata, purpose: "llm")
+                    providerList(CleanupProviderRegistry.metadata, purpose: .cleanup)
                 }
             }
             .frame(maxWidth: DictatorDesign.contentWidth, alignment: .leading)
@@ -65,18 +65,11 @@ struct ProvidersView: View {
         .buttonStyle(.plain)
     }
 
-    private func providerList(metadata: [Any], purpose: String) -> some View {
+    private func providerList(_ providers: [ProviderMetadata], purpose: ProviderPurpose) -> some View {
         VStack(spacing: 0) {
-            if purpose == "stt" {
-                ForEach(ProviderRegistry.sttMetadata, id: \.kind) { item in
-                    ProviderSetupRow(model: model, purpose: purpose, kind: item.kind, name: item.displayName, defaultModel: item.defaultModel, models: item.models, requiresAccountID: item.requiresAccountID)
-                    Divider()
-                }
-            } else {
-                ForEach(CleanupProviderRegistry.metadata, id: \.kind) { item in
-                    ProviderSetupRow(model: model, purpose: purpose, kind: item.kind, name: item.displayName, defaultModel: item.defaultModel, models: [item.defaultModel], requiresAccountID: item.requiresAccountID)
-                    Divider()
-                }
+            ForEach(providers) { provider in
+                ProviderSetupRow(model: model, purpose: purpose, provider: provider)
+                if provider.kind != providers.last?.kind { Divider() }
             }
         }
         .background(DictatorDesign.control, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -87,12 +80,8 @@ struct ProvidersView: View {
 
 private struct ProviderSetupRow: View {
     @ObservedObject var model: AppModel
-    let purpose: String
-    let kind: ProviderKind
-    let name: String
-    let defaultModel: String
-    let models: [String]
-    let requiresAccountID: Bool
+    let purpose: ProviderPurpose
+    let provider: ProviderMetadata
     @State private var expanded = false
     @State private var apiKey = ""
     @State private var accountID = ""
@@ -101,7 +90,12 @@ private struct ProviderSetupRow: View {
     @State private var status = "Not configured"
     @State private var testing = false
 
-    private var selected: Bool { purpose == "stt" ? model.selectedSTT == kind : model.selectedLLM == kind }
+    private var selected: Bool {
+        switch purpose {
+        case .speechToText: model.selectedSTT == provider.kind
+        case .cleanup: model.selectedLLM == provider.kind
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -112,7 +106,7 @@ private struct ProviderSetupRow: View {
                     Circle().fill(selected ? DictatorDesign.signalInk : DictatorDesign.fog).frame(width: 28, height: 28)
                         .overlay(Image(systemName: selected ? "checkmark" : "key.horizontal").font(.system(size: 10, weight: .bold)).foregroundStyle(selected ? .white : DictatorDesign.muted))
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(name).font(.dictatorBody(14, weight: .semibold))
+                        Text(provider.displayName).font(.dictatorBody(14, weight: .semibold))
                         Text(status).font(.dictatorBody(10.5, weight: .medium)).foregroundStyle(statusColor)
                     }
                     Spacer()
@@ -134,11 +128,11 @@ private struct ProviderSetupRow: View {
             if expanded {
                 VStack(alignment: .leading, spacing: 13) {
                     field("API key") { SecureField("Paste your API key", text: $apiKey).textFieldStyle(DictatorTextFieldStyle()) }
-                    if requiresAccountID { field("Account ID") { TextField("Enter account ID", text: $accountID).textFieldStyle(DictatorTextFieldStyle()) } }
-                    if kind == .openAICompatible { field("Base URL") { TextField("https://api.example.com/v1", text: $baseURL).textFieldStyle(DictatorTextFieldStyle()) } }
-                    if models.count > 1 {
+                    if provider.requiresAccountID { field("Account ID") { TextField("Enter account ID", text: $accountID).textFieldStyle(DictatorTextFieldStyle()) } }
+                    if provider.kind == .openAICompatible { field("Base URL") { TextField("https://api.example.com/v1", text: $baseURL).textFieldStyle(DictatorTextFieldStyle()) } }
+                    if provider.models.count > 1 {
                         field("Model") {
-                            Picker("Model", selection: $selectedModel) { ForEach(models, id: \.self) { Text($0).tag($0) } }
+                            Picker("Model", selection: $selectedModel) { ForEach(provider.models, id: \.self) { Text($0).tag($0) } }
                                 .labelsHidden().pickerStyle(.menu).controlSize(.large)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.horizontal, 4).frame(height: 36)
@@ -159,8 +153,8 @@ private struct ProviderSetupRow: View {
             }
         }
         .onAppear {
-            selectedModel = UserDefaults.standard.string(forKey: "\(purpose)Model.\(kind.rawValue)") ?? defaultModel
-            if let saved = model.credentials(purpose: purpose, provider: kind) {
+            selectedModel = model.configuredModel(for: purpose, provider: provider.kind) ?? provider.defaultModel
+            if let saved = model.credentials(purpose: purpose, provider: provider.kind) {
                 apiKey = saved.apiKey
                 accountID = saved.accountID ?? ""
                 baseURL = saved.baseURL?.absoluteString ?? ""
@@ -182,9 +176,12 @@ private struct ProviderSetupRow: View {
 
     private func saveAndSelect() {
         do {
-            let credentials = ProviderCredentials(apiKey: apiKey, accountID: accountID.nilIfEmpty, baseURL: URL(string: baseURL))
-            try model.saveCredentials(credentials, purpose: purpose, provider: kind, model: selectedModel)
-            if purpose == "stt" { model.selectedSTT = kind } else { model.selectedLLM = kind }
+            let credentials = try enteredCredentials()
+            try model.saveCredentials(credentials, purpose: purpose, provider: provider.kind, model: selectedModel.trimmed)
+            switch purpose {
+            case .speechToText: model.selectedSTT = provider.kind
+            case .cleanup: model.selectedLLM = provider.kind
+            }
             status = "Configured"
         } catch { status = error.localizedDescription }
     }
@@ -193,12 +190,45 @@ private struct ProviderSetupRow: View {
         testing = true
         defer { testing = false }
         do {
-            let credentials = ProviderCredentials(apiKey: apiKey, accountID: accountID.nilIfEmpty, baseURL: URL(string: baseURL))
-            if purpose == "stt", let provider = ProviderRegistry.sttProvider(for: kind) { try await provider.validate(credentials: credentials) }
-            if purpose == "llm", let provider = CleanupProviderRegistry.provider(for: kind) { try await provider.validate(credentials: credentials) }
+            let credentials = try enteredCredentials()
+            switch purpose {
+            case .speechToText:
+                guard let implementation = ProviderRegistry.sttProvider(for: provider.kind) else {
+                    throw ProviderError.invalidConfiguration("This speech provider is unavailable.")
+                }
+                try await implementation.validate(credentials: credentials)
+            case .cleanup:
+                guard let implementation = CleanupProviderRegistry.provider(for: provider.kind) else {
+                    throw ProviderError.invalidConfiguration("This cleanup provider is unavailable.")
+                }
+                try await implementation.validate(credentials: credentials)
+            }
             status = "Connection verified"
         } catch { status = error.localizedDescription }
     }
+
+    private func enteredCredentials() throws -> ProviderCredentials {
+        let key = apiKey.trimmed
+        guard !key.isEmpty else { throw ProviderError.missingCredential("API key") }
+
+        let normalizedAccountID = accountID.trimmed.nilIfEmpty
+        if provider.requiresAccountID, normalizedAccountID == nil {
+            throw ProviderError.missingCredential("account ID")
+        }
+
+        let enteredBaseURL = baseURL.trimmed
+        let url = enteredBaseURL.isEmpty ? nil : URL(string: enteredBaseURL)
+        if provider.kind == .openAICompatible {
+            guard let url,
+                  ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+                  url.host != nil
+            else { throw ProviderError.invalidConfiguration("Enter a valid HTTP or HTTPS base URL.") }
+        }
+        return ProviderCredentials(apiKey: key, accountID: normalizedAccountID, baseURL: url)
+    }
 }
 
-private extension String { var nilIfEmpty: String? { isEmpty ? nil : self } }
+private extension String {
+    var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
+    var nilIfEmpty: String? { isEmpty ? nil : self }
+}

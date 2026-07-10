@@ -1,14 +1,11 @@
 import Foundation
 
 public struct GladiaSTTProvider: SpeechToTextProvider {
-    public let metadata = STTProviderMetadata(
+    public let metadata = ProviderMetadata(
         kind: .gladia,
         displayName: "Gladia",
-        modality: .both,
         defaultModel: "solaria-1",
         models: ["solaria-1"],
-        supportsVocabulary: true,
-        supportsLanguageDetection: true,
         requiresAccountID: false
     )
 
@@ -53,7 +50,7 @@ public struct GladiaSTTProvider: SpeechToTextProvider {
         let created = try JSONDecoder().decode(CreateResponse.self, from: createData)
 
         for _ in 0..<240 {
-            var poll = URLRequest(url: URL(string: created.resultURL)!)
+            var poll = URLRequest(url: try HTTPHelpers.requireHTTPURL(created.resultURL))
             poll.setValue(credentials.apiKey, forHTTPHeaderField: "x-gladia-key")
             let (data, response) = try await transport.data(for: poll)
             try HTTPHelpers.requireSuccess(data: data, response: response)

@@ -1,14 +1,11 @@
 import Foundation
 
 public struct DeepgramSTTProvider: SpeechToTextProvider {
-    public let metadata = STTProviderMetadata(
+    public let metadata = ProviderMetadata(
         kind: .deepgram,
         displayName: "Deepgram",
-        modality: .both,
         defaultModel: "nova-3",
         models: ["nova-3", "nova-3-general"],
-        supportsVocabulary: true,
-        supportsLanguageDetection: true,
         requiresAccountID: false
     )
 
@@ -27,10 +24,15 @@ public struct DeepgramSTTProvider: SpeechToTextProvider {
         let started = ContinuousClock.now
         var components = URLComponents(string: "https://api.deepgram.com/v1/listen")!
         var query = [URLQueryItem(name: "model", value: options.model), URLQueryItem(name: "smart_format", value: "true")]
-        query.append(URLQueryItem(name: "language", value: options.language ?? "en"))
+        if let language = options.language {
+            query.append(URLQueryItem(name: "language", value: language))
+        } else {
+            query.append(URLQueryItem(name: "detect_language", value: "true"))
+        }
         query += options.vocabulary.filter(\.isEnabled).map { URLQueryItem(name: "keyterm", value: $0.value) }
         components.queryItems = query
-        var request = URLRequest(url: components.url!)
+        guard let url = components.url else { throw ProviderError.invalidConfiguration("The Deepgram request options are invalid.") }
+        var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("Token \(credentials.apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("audio/wav", forHTTPHeaderField: "Content-Type")
@@ -38,10 +40,19 @@ public struct DeepgramSTTProvider: SpeechToTextProvider {
         let (data, response) = try await transport.data(for: request)
         try HTTPHelpers.requireSuccess(data: data, response: response)
         let payload = try JSONDecoder().decode(Response.self, from: data)
-        guard let alternative = payload.results.channels.first?.alternatives.first else { throw ProviderError.invalidResponse }
+        guard let channel = payload.results.channels.first,
+              let alternative = channel.alternatives.first
+        else { throw ProviderError.invalidResponse }
         let text = alternative.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { throw ProviderError.emptyTranscript }
-        return TranscriptionResult(text: text, language: alternative.languages?.first, provider: .deepgram, model: options.model, requestID: payload.metadata?.requestID, latency: seconds(since: started))
+        return TranscriptionResult(
+            text: text,
+            language: channel.detectedLanguage ?? alternative.languages?.first ?? options.language,
+            provider: .deepgram,
+            model: options.model,
+            requestID: payload.metadata?.requestID,
+            latency: seconds(since: started)
+        )
     }
 
     private struct Response: Decodable {
@@ -52,8 +63,14 @@ public struct DeepgramSTTProvider: SpeechToTextProvider {
             enum CodingKeys: String, CodingKey { case requestID = "request_id" }
         }
         struct Results: Decodable { let channels: [Channel] }
-        struct Channel: Decodable { let alternatives: [Alternative] }
+        struct Channel: Decodable {
+            let alternatives: [Alternative]
+            let detectedLanguage: String?
+            enum CodingKeys: String, CodingKey {
+                case alternatives
+                case detectedLanguage = "detected_language"
+            }
+        }
         struct Alternative: Decodable { let transcript: String; let languages: [String]? }
     }
 }
-

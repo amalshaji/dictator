@@ -5,7 +5,6 @@ import Foundation
 final class AudioRecorder: @unchecked Sendable {
     private let engine = AVAudioEngine()
     private let buffer = AudioBuffer()
-    private var startedAt: ContinuousClock.Instant?
     var onLevel: (@Sendable (Double) -> Void)?
 
     func requestPermission() async -> Bool {
@@ -35,7 +34,6 @@ final class AudioRecorder: @unchecked Sendable {
         }
         engine.prepare()
         try engine.start()
-        startedAt = .now
     }
 
     func stop() -> RecordedAudio {
@@ -43,15 +41,13 @@ final class AudioRecorder: @unchecked Sendable {
         engine.stop()
         let pcm = buffer.data()
         let duration = Double(pcm.count) / 2 / 16_000
-        startedAt = nil
-        return RecordedAudio(wavData: WAVEncoder.encodePCM16(pcm), pcm16Data: pcm, duration: duration)
+        return RecordedAudio(wavData: WAVEncoder.encodePCM16(pcm), duration: duration)
     }
 
     func cancel() {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         buffer.reset()
-        startedAt = nil
     }
 }
 

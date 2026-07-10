@@ -12,12 +12,6 @@ public enum ProviderKind: String, Codable, CaseIterable, Sendable {
     case openAICompatible = "openai-compatible"
 }
 
-public enum ProviderModality: String, Codable, Sendable {
-    case batch
-    case streaming
-    case both
-}
-
 public struct ProviderCredentials: Codable, Equatable, Sendable {
     public var apiKey: String
     public var accountID: String?
@@ -32,16 +26,17 @@ public struct ProviderCredentials: Codable, Equatable, Sendable {
 
 public struct RecordedAudio: Equatable, Sendable {
     public let wavData: Data
-    public let pcm16Data: Data
     public let duration: TimeInterval
-    public let sampleRate: Int
 
-    public init(wavData: Data, pcm16Data: Data, duration: TimeInterval, sampleRate: Int = 16_000) {
+    public init(wavData: Data, duration: TimeInterval) {
         self.wavData = wavData
-        self.pcm16Data = pcm16Data
         self.duration = duration
-        self.sampleRate = sampleRate
     }
+}
+
+public enum ProviderPurpose: String, Sendable {
+    case speechToText = "stt"
+    case cleanup = "llm"
 }
 
 public struct VocabularyEntry: Identifiable, Codable, Equatable, Sendable {
@@ -106,13 +101,11 @@ public struct TranscriptionOptions: Equatable, Sendable {
     public var model: String
     public var language: String?
     public var vocabulary: [VocabularyEntry]
-    public var receivePartials: Bool
 
-    public init(model: String, language: String? = nil, vocabulary: [VocabularyEntry] = [], receivePartials: Bool = true) {
+    public init(model: String, language: String? = nil, vocabulary: [VocabularyEntry] = []) {
         self.model = model
         self.language = language
         self.vocabulary = vocabulary
-        self.receivePartials = receivePartials
     }
 }
 
@@ -134,29 +127,24 @@ public struct TranscriptionResult: Equatable, Sendable {
     }
 }
 
-public struct STTProviderMetadata: Equatable, Sendable {
+public struct ProviderMetadata: Identifiable, Equatable, Sendable {
     public let kind: ProviderKind
     public let displayName: String
-    public let modality: ProviderModality
     public let defaultModel: String
     public let models: [String]
-    public let supportsVocabulary: Bool
-    public let supportsLanguageDetection: Bool
     public let requiresAccountID: Bool
+
+    public var id: ProviderKind { kind }
 }
 
 public struct CleanupRequest: Equatable, Sendable {
     public var transcript: String
-    public var language: String?
     public var vocabulary: [VocabularyEntry]
-    public var promptVersion: String
     public var styleInstruction: String?
 
-    public init(transcript: String, language: String? = nil, vocabulary: [VocabularyEntry] = [], promptVersion: String = CleanupPrompt.currentVersion, styleInstruction: String? = nil) {
+    public init(transcript: String, vocabulary: [VocabularyEntry] = [], styleInstruction: String? = nil) {
         self.transcript = transcript
-        self.language = language
         self.vocabulary = vocabulary
-        self.promptVersion = promptVersion
         self.styleInstruction = styleInstruction
     }
 }
@@ -177,14 +165,6 @@ public struct CleanupResult: Equatable, Sendable {
         self.outputTokens = outputTokens
         self.latency = latency
     }
-}
-
-public struct LLMProviderMetadata: Equatable, Sendable {
-    public let kind: ProviderKind
-    public let displayName: String
-    public let defaultModel: String
-    public let requiresAccountID: Bool
-    public let supportsDynamicModels: Bool
 }
 
 public struct TranscriptRecord: Identifiable, Codable, Equatable, Sendable {
@@ -226,6 +206,7 @@ public struct TranscriptRecord: Identifiable, Codable, Equatable, Sendable {
 
 public enum ProviderError: LocalizedError, Equatable, Sendable {
     case missingCredential(String)
+    case invalidConfiguration(String)
     case invalidResponse
     case httpStatus(Int, String)
     case emptyTranscript
@@ -235,6 +216,7 @@ public enum ProviderError: LocalizedError, Equatable, Sendable {
     public var errorDescription: String? {
         switch self {
         case .missingCredential(let field): "Missing \(field)."
+        case .invalidConfiguration(let message): message
         case .invalidResponse: "The provider returned an invalid response."
         case .httpStatus(let status, let message): "Provider error \(status): \(message)"
         case .emptyTranscript: "The provider returned an empty transcript."

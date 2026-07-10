@@ -1,12 +1,12 @@
 import Foundation
 
 public struct CloudflareCleanupProvider: CleanupLLMProvider {
-    public let metadata = LLMProviderMetadata(
+    public let metadata = ProviderMetadata(
         kind: .cloudflare,
         displayName: "Cloudflare Workers AI",
         defaultModel: "@cf/qwen/qwen3-30b-a3b-fp8",
-        requiresAccountID: true,
-        supportsDynamicModels: false
+        models: ["@cf/qwen/qwen3-30b-a3b-fp8"],
+        requiresAccountID: true
     )
 
     private let transport: any HTTPTransport
@@ -15,7 +15,8 @@ public struct CloudflareCleanupProvider: CleanupLLMProvider {
     public func validate(credentials: ProviderCredentials) async throws {
         guard !credentials.apiKey.isEmpty else { throw ProviderError.missingCredential("API token") }
         guard let accountID = credentials.accountID, !accountID.isEmpty else { throw ProviderError.missingCredential("account ID") }
-        var request = URLRequest(url: URL(string: "https://api.cloudflare.com/client/v4/accounts/\(accountID)/ai/models/search")!)
+        let url = try HTTPHelpers.requireHTTPURL("https://api.cloudflare.com/client/v4/accounts/\(accountID)/ai/models/search")
+        var request = URLRequest(url: url)
         request.setValue("Bearer \(credentials.apiKey)", forHTTPHeaderField: "Authorization")
         let (data, response) = try await transport.data(for: request)
         try HTTPHelpers.requireSuccess(data: data, response: response)
@@ -28,7 +29,7 @@ public struct CloudflareCleanupProvider: CleanupLLMProvider {
     public func clean(request cleanup: CleanupRequest, model: String, credentials: ProviderCredentials) async throws -> CleanupResult {
         guard let accountID = credentials.accountID, !accountID.isEmpty else { throw ProviderError.missingCredential("account ID") }
         let started = ContinuousClock.now
-        let url = URL(string: "https://api.cloudflare.com/client/v4/accounts/\(accountID)/ai/run/\(model)")!
+        let url = try HTTPHelpers.requireHTTPURL("https://api.cloudflare.com/client/v4/accounts/\(accountID)/ai/run/\(model)")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("Bearer \(credentials.apiKey)", forHTTPHeaderField: "Authorization")
