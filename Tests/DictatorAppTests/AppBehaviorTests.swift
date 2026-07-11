@@ -93,6 +93,14 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertNil(model.selectedStyleID)
     }
 
+    func testSelectingReadyAppleSpeechDoesNotTriggerAReadinessRefresh() {
+        let locale = AppleSpeechLocale(identifier: "en_IN", engine: .speechTranscriber)
+
+        XCTAssertFalse(AppModel.shouldRefreshAppleSpeechAfterSelection(.appleSpeech, readiness: .ready(locale)))
+        XCTAssertTrue(AppModel.shouldRefreshAppleSpeechAfterSelection(.appleSpeech, readiness: .checking))
+        XCTAssertFalse(AppModel.shouldRefreshAppleSpeechAfterSelection(.groq, readiness: .checking))
+    }
+
     func testMissingFocusedTargetNeverTouchesAnotherApp() async {
         let result = await AccessibilityInserter().insert(.dictation("private text"), into: nil)
         XCTAssertEqual(result, .privateClipboard("no editable field was focused"))

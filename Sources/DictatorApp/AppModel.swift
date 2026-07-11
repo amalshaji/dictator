@@ -28,7 +28,9 @@ final class AppModel: ObservableObject {
             } else if selectedSTT != .appleSpeech {
                 defaults.set(selectedSTT.rawValue, forKey: "lastCloudSTT")
             }
-            if selectedSTT == .appleSpeech { Task { await refreshAppleSpeechSetup() } }
+            if Self.shouldRefreshAppleSpeechAfterSelection(selectedSTT, readiness: appleSpeechReadiness) {
+                Task { await refreshAppleSpeechSetup() }
+            }
         }
     }
     @Published var selectedLLM: ProviderKind = .groq { didSet { defaults.set(selectedLLM.rawValue, forKey: "selectedLLM") } }
@@ -121,6 +123,13 @@ final class AppModel: ObservableObject {
     private static func defaultAppleSpeechProvider() -> (any LocalSpeechTranscribing)? {
         if #available(macOS 26.0, *) { return AppleSpeechTranscriber() }
         return nil
+    }
+
+    static func shouldRefreshAppleSpeechAfterSelection(
+        _ provider: ProviderKind,
+        readiness: AppleSpeechReadiness
+    ) -> Bool {
+        provider == .appleSpeech && !readiness.isReady
     }
 
     func startDictation(targetProcessIdentifier: pid_t? = nil) async {
