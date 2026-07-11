@@ -40,6 +40,7 @@ struct DictatorSegmentedSwitcher: View {
                         .foregroundStyle(selection == index ? DictatorDesign.ink : DictatorDesign.muted)
                         .padding(.horizontal, 12)
                         .frame(height: 32)
+                        .contentShape(Rectangle())
                         .background(selection == index ? DictatorDesign.control : .clear, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                         .shadow(color: selection == index ? .black.opacity(0.06) : .clear, radius: 2, y: 1)
                 }
