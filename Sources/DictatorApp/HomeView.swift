@@ -18,6 +18,7 @@ struct HomeView: View {
             .padding(.horizontal, 42)
             .padding(.vertical, 36)
         }
+        .scrollIndicators(.hidden)
         .sheet(item: $selectedTranscript) { record in TranscriptDetailView(model: model, transcriptID: record.id) }
     }
 
