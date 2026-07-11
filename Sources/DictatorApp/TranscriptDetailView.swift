@@ -212,6 +212,7 @@ struct TranscriptDetailView: View {
             Label("Source text", systemImage: "text.alignleft")
                 .font(.dictatorBody(12, weight: .semibold))
         }
+        .disclosureGroupStyle(FullWidthDisclosureGroupStyle())
         .tint(DictatorDesign.muted)
     }
 
@@ -235,6 +236,7 @@ struct TranscriptDetailView: View {
             Label("Technical details", systemImage: "info.circle")
                 .font(.dictatorBody(12, weight: .semibold))
         }
+        .disclosureGroupStyle(FullWidthDisclosureGroupStyle())
         .tint(DictatorDesign.muted)
     }
 
@@ -330,6 +332,32 @@ struct TranscriptDetailView: View {
 
     private func latency(_ value: TimeInterval) -> String {
         String(format: "%.0f ms", value * 1_000)
+    }
+}
+
+private struct FullWidthDisclosureGroupStyle: DisclosureGroupStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                configuration.isExpanded.toggle()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: configuration.isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(DictatorDesign.muted)
+                        .frame(width: 10)
+                    configuration.label
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if configuration.isExpanded {
+                configuration.content
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
     }
 }
 
