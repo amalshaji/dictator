@@ -66,7 +66,7 @@ struct HomeView: View {
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Your first transcript will appear here.").font(.dictatorBody(15, weight: .medium))
-            Text("Dictator keeps text locally for 30 days. Audio is never retained.")
+            Text("Dictator keeps text locally for 30 days and does not store recordings after sending them to your selected provider.")
                 .font(.dictatorBody(13)).foregroundStyle(DictatorDesign.ink.opacity(0.52))
         }
         .padding(.vertical, 42)

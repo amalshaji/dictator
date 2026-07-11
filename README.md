@@ -12,7 +12,7 @@ Dictator is a native macOS menu-bar dictation app. Hold `Fn` to record, release 
 
 Speech-to-text adapters: Groq, Cloudflare Workers AI, xAI, Deepgram, AssemblyAI, and Gladia.
 
-Optional cleanup adapters are configured independently with BYOK credentials: Groq, Cloudflare Workers AI, Gemini, xAI, OpenRouter, and any OpenAI-compatible endpoint. Keys are stored in macOS Keychain. Transcript history, vocabulary, styles, snippets, and private-clipboard data stay in local Application Support storage; recorded audio is not retained.
+Optional cleanup adapters use BYOK credentials: Groq, Cloudflare Workers AI, Gemini, xAI, OpenRouter, and any OpenAI-compatible endpoint. When speech-to-text and cleanup use the same provider, Dictator reuses that provider credential unless you configure a separate cleanup credential. Keys are stored in macOS Keychain. Transcript history, vocabulary, styles, snippets, and private-clipboard data stay in local Application Support storage. Recordings are sent to the selected speech provider for transcription and are not stored by Dictator after processing; the provider's own data-handling policy applies.
 
 ## Install
 

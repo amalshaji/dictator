@@ -54,7 +54,7 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 20) {
             WaveMarkLarge()
             Text("Speak. Release. Keep moving.").font(.dictatorDisplay(38))
-            Text("Dictator turns the Fn key into cloud-powered dictation anywhere on your Mac. Your provider keys stay in Keychain, and audio is never retained.")
+            Text("Dictator turns the Fn key into cloud-powered dictation anywhere on your Mac. Your provider keys stay in Keychain, and recordings are sent to your selected provider for transcription.")
                 .font(.dictatorBody(16)).foregroundStyle(.secondary).lineSpacing(4)
         }.frame(maxWidth: .infinity, alignment: .leading)
     }

@@ -65,11 +65,11 @@ final class ClipboardPaster {
     }
 
     private func postPasteCommand() async -> Bool {
+        // Carry Command on the V events themselves. Separate modifier events can
+        // make some web editors handle the same synthetic paste twice.
         let events = [
-            PostedKeyEvent(keyCode: 0x37, keyDown: true, flags: .maskCommand),
             PostedKeyEvent(keyCode: 0x09, keyDown: true, flags: .maskCommand),
             PostedKeyEvent(keyCode: 0x09, keyDown: false, flags: .maskCommand),
-            PostedKeyEvent(keyCode: 0x37, keyDown: false, flags: []),
         ]
 
         for (index, event) in events.enumerated() {

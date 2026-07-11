@@ -51,6 +51,33 @@ final class CoreTests: XCTestCase {
         )
     }
 
+    func testCleanupPromptFormatsExplicitTodoItemsAsCheckboxes() {
+        let prompt = CleanupPrompt.system(vocabulary: [])
+
+        XCTAssertTrue(prompt.contains("to-do or action items"))
+        XCTAssertTrue(prompt.contains("- [ ]"))
+    }
+
+    func testTranscriptProcessorReturnsCleanedTextAndMetadata() async {
+        let processor = TranscriptProcessor()
+        let cleanup = TranscriptCleanupConfiguration(
+            provider: FormattingCleanupProvider(),
+            model: "formatting-model",
+            credentials: ProviderCredentials(apiKey: "shared-key")
+        )
+
+        let result = await processor.process(
+            rawText: "first sentence second sentence",
+            vocabulary: [],
+            snippets: [],
+            cleanup: cleanup
+        )
+
+        XCTAssertEqual(result.finalText, "First sentence. Second sentence.")
+        XCTAssertEqual(result.cleanupResult?.provider, .groq)
+        XCTAssertEqual(result.cleanupResult?.model, "formatting-model")
+    }
+
     func testPricingCatalogUsesAudioDuration() {
         XCTAssertEqual(PricingCatalog.estimatedSTTCost(provider: .groq, model: "whisper-large-v3-turbo", audioSeconds: 3_600), Decimal(string: "0.04"))
         XCTAssertEqual(PricingCatalog.estimatedSTTCost(provider: .xAI, model: "grok-transcribe", audioSeconds: 1_800), Decimal(string: "0.05"))
@@ -59,5 +86,26 @@ final class CoreTests: XCTestCase {
     func testRegistriesExposeAllPlannedProviders() {
         XCTAssertEqual(Set(ProviderRegistry.sttMetadata.map(\.kind)), Set([.groq, .cloudflare, .xAI, .deepgram, .assemblyAI, .gladia]))
         XCTAssertEqual(Set(CleanupProviderRegistry.metadata.map(\.kind)), Set([.groq, .cloudflare, .gemini, .xAI, .openRouter, .openAICompatible]))
+    }
+}
+
+private struct FormattingCleanupProvider: CleanupLLMProvider {
+    let metadata = ProviderMetadata(
+        kind: .groq,
+        displayName: "Formatting",
+        defaultModel: "formatting-model",
+        models: ["formatting-model"],
+        requiresAccountID: false
+    )
+
+    func validate(credentials: ProviderCredentials) async throws {}
+    func listModels(credentials: ProviderCredentials) async throws -> [String] { metadata.models }
+    func clean(request: CleanupRequest, model: String, credentials: ProviderCredentials) async throws -> CleanupResult {
+        CleanupResult(
+            text: "First sentence. Second sentence.",
+            provider: metadata.kind,
+            model: model,
+            latency: 0
+        )
     }
 }
