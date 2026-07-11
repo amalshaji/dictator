@@ -36,6 +36,7 @@ final class AppModel: ObservableObject {
     private let recorder = AudioRecorder()
     private let hotkey = HotkeyMonitor()
     private let inserter = AccessibilityInserter()
+    private let transcriptProcessor = TranscriptProcessor()
     private let hud = FloatingPanelController()
     private var focusedTarget: FocusedTarget?
 
@@ -121,39 +122,31 @@ final class AppModel: ObservableObject {
             guard let credentials = try keychain.load(for: .speechToText, provider: selectedSTT) else { throw ProviderError.missingCredential("\(provider.metadata.displayName) API key") }
             let model = configuredModel(for: .speechToText, provider: selectedSTT) ?? provider.metadata.defaultModel
             let raw = try await transcribeWithRetry(provider: provider, audio: audio, options: .init(model: model, vocabulary: data.vocabulary), credentials: credentials)
-            let normalized = VocabularyNormalizer.normalize(raw.text, vocabulary: data.vocabulary)
-            let expanded = SnippetExpander.expand(normalized, snippets: data.snippets)
+            let cleanup = try cleanupConfiguration()
+            if cleanup != nil { hud.show(.cleaning) }
+            let processed = await transcriptProcessor.process(
+                rawText: raw.text,
+                vocabulary: data.vocabulary,
+                snippets: data.snippets,
+                cleanup: cleanup
+            )
 
-            var finalText = expanded
-            var cleanupResult: CleanupResult?
-            if cleanupEnabled, let llm = CleanupProviderRegistry.provider(for: selectedLLM),
-               let llmCredentials = try keychain.load(for: .cleanup, provider: selectedLLM) {
-                hud.show(.cleaning)
-                let llmModel = configuredModel(for: .cleanup, provider: selectedLLM) ?? llm.metadata.defaultModel
-                let style = data.styles.first { $0.id == selectedStyleID && $0.isEnabled }?.instruction
-                let outcome = await CleanupCoordinator().cleanOrFallback(rawText: expanded, provider: llm, model: llmModel, credentials: llmCredentials, vocabulary: data.vocabulary, styleInstruction: style)
-                finalText = outcome.text
-                if case .cleaned(let result) = outcome { cleanupResult = result }
-            }
-
-            let insertion = await inserter.insert(finalText, into: focusedTarget)
+            let insertion = await inserter.insert(processed.finalText, into: focusedTarget)
             if case .privateClipboard = insertion {
-                data.clipboard.insert(.init(text: finalText, rawText: raw.text, sourceBundleID: focusedTarget?.bundleIdentifier), at: 0)
-                hud.show(.clipboard)
-            } else {
-                hud.show(.success("Paste sent"))
+                data.clipboard.insert(.init(text: processed.finalText, rawText: raw.text, sourceBundleID: focusedTarget?.bundleIdentifier), at: 0)
             }
+            showCompletion(insertion: insertion, cleanupFallbackReason: processed.cleanupFallbackReason)
             data.transcripts.insert(.init(
                 rawText: raw.text,
-                finalText: finalText,
+                finalText: processed.finalText,
                 sttProvider: selectedSTT,
                 sttModel: model,
-                llmProvider: cleanupResult?.provider,
-                llmModel: cleanupResult?.model,
+                llmProvider: processed.cleanupResult?.provider,
+                llmModel: processed.cleanupResult?.model,
                 sourceBundleID: focusedTarget?.bundleIdentifier,
                 audioDuration: audio.duration,
                 sttLatency: raw.latency,
-                cleanupLatency: cleanupResult?.latency,
+                cleanupLatency: processed.cleanupResult?.latency,
                 insertionOutcome: insertion.label
             ), at: 0)
             await persist()
@@ -183,7 +176,7 @@ final class AppModel: ObservableObject {
     }
 
     func credentials(purpose: ProviderPurpose, provider: ProviderKind) -> ProviderCredentials? {
-        try? keychain.load(for: purpose, provider: provider)
+        try? resolvedCredentials(purpose: purpose, provider: provider)
     }
 
     func saveCredentials(_ credentials: ProviderCredentials, purpose: ProviderPurpose, provider: ProviderKind, model: String) throws {
@@ -320,6 +313,44 @@ final class AppModel: ObservableObject {
 
     private func modelKey(for purpose: ProviderPurpose, provider: ProviderKind) -> String {
         "\(purpose.rawValue)Model.\(provider.rawValue)"
+    }
+
+    private func resolvedCredentials(purpose: ProviderPurpose, provider: ProviderKind) throws -> ProviderCredentials? {
+        if let saved = try keychain.load(for: purpose, provider: provider) { return saved }
+        guard case .cleanup = purpose, provider == selectedSTT else { return nil }
+        return try keychain.load(for: .speechToText, provider: provider)
+    }
+
+    private func cleanupConfiguration() throws -> TranscriptCleanupConfiguration? {
+        guard cleanupEnabled else { return nil }
+        guard let provider = CleanupProviderRegistry.provider(for: selectedLLM) else {
+            throw ProviderError.unsupported("Cleanup provider is not available")
+        }
+        guard let credentials = try resolvedCredentials(purpose: .cleanup, provider: selectedLLM) else {
+            throw ProviderError.missingCredential("\(provider.metadata.displayName) cleanup API key")
+        }
+        let model = configuredModel(for: .cleanup, provider: selectedLLM) ?? provider.metadata.defaultModel
+        let style = data.styles.first { $0.id == selectedStyleID && $0.isEnabled }?.instruction
+        return TranscriptCleanupConfiguration(
+            provider: provider,
+            model: model,
+            credentials: credentials,
+            styleInstruction: style
+        )
+    }
+
+    private func showCompletion(insertion: InsertionResult, cleanupFallbackReason: String?) {
+        if let cleanupFallbackReason {
+            lastError = "Cleanup failed: \(cleanupFallbackReason)"
+            hud.show(.error("Cleanup failed—used raw transcript"))
+            return
+        }
+        lastError = nil
+        if case .privateClipboard = insertion {
+            hud.show(.clipboard)
+        } else {
+            hud.show(.success("Paste sent"))
+        }
     }
 
     private func requestRequiredPermissions() {

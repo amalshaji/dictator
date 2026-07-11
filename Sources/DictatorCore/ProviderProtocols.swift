@@ -28,6 +28,7 @@ public struct CleanupPrompt: Sendable {
         Rewrite dictated speech as clean written text.
         - Remove filler words, false starts, and accidental repetition.
         - Correct punctuation, capitalization, spacing, and obvious grammar.
+        - When the speaker explicitly requests to-do or action items, format each item on its own Markdown checkbox line using "- [ ]". Do not add checkboxes to ordinary comma-separated prose.
         - Preserve meaning, tone, order, and level of detail.
         - Do not summarize, answer, elaborate, or add information.
         - Preserve URLs, email addresses, numbers, code, and identifiers exactly.

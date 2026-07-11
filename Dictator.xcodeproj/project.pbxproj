@@ -44,6 +44,7 @@
 		B47D4061DBC516990EDA7920 /* ProviderContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3864A89C5AE07FEA5AC22F91 /* ProviderContractTests.swift */; };
 		BC76D9FA70E73735DEEE669F /* ProvidersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BC2946D97FB74D99732080D /* ProvidersView.swift */; };
 		BF995194E3386FE8DE6C5E32 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA2E710185E50EE29D648637 /* AppModel.swift */; };
+		C7A84AF13334C3FABB909C5A /* TranscriptProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12978E573C19FCA6692809E5 /* TranscriptProcessor.swift */; };
 		CC9E4059E2B4C2E610C04075 /* WAVEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7ABB143A9B8C3ABD0E9EE40 /* WAVEncoder.swift */; };
 		CFD4B1E8D8FAB2D1FE97A5E5 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DE02E176452630D4943B27E /* Models.swift */; };
 		D30E3FB53DC8A7E4BEB55F5F /* DictatorCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4D3BCE5B8674726D3FB4D6F3 /* DictatorCore.framework */; };
@@ -134,6 +135,7 @@
 		0BC0D96F05B5DF82F1C7A28C /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		0F0C8D622A74DCFF2D223C32 /* AudioRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRecorder.swift; sourceTree = "<group>"; };
 		0FE061C4359D0D4CB4800A62 /* VocabularyNormalizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VocabularyNormalizer.swift; sourceTree = "<group>"; };
+		12978E573C19FCA6692809E5 /* TranscriptProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptProcessor.swift; sourceTree = "<group>"; };
 		12C18ACB4C15683A2DF27C1C /* CleanupSafetyValidator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CleanupSafetyValidator.swift; sourceTree = "<group>"; };
 		132C58396B4BFD90B17D7B18 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		22EAD6EF30C05E4F398325C0 /* HotkeyMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyMonitor.swift; sourceTree = "<group>"; };
@@ -267,6 +269,7 @@
 				76DA46DD749F44062847C2AD /* CloudflareCleanupProvider.swift */,
 				3143D0AF2913301C0A5F241C /* GeminiCleanupProvider.swift */,
 				5A0B6F1005DA2FDA21D5A10C /* OpenAICompatibleCleanupProvider.swift */,
+				12978E573C19FCA6692809E5 /* TranscriptProcessor.swift */,
 			);
 			path = LLM;
 			sourceTree = "<group>";
@@ -603,6 +606,7 @@
 				F33EEEB4F6EE2EE91436E60C /* ProviderProtocols.swift in Sources */,
 				E62AEBAD5CF5868172EDA069 /* ProviderRegistry.swift in Sources */,
 				2DF027FBF31328D3A8349411 /* SnippetExpander.swift in Sources */,
+				C7A84AF13334C3FABB909C5A /* TranscriptProcessor.swift in Sources */,
 				9F0143D1DF09BDDF7DE05677 /* VocabularyNormalizer.swift in Sources */,
 				CC9E4059E2B4C2E610C04075 /* WAVEncoder.swift in Sources */,
 				82DBB841BAAF3FE28593F903 /* XAISTTProvider.swift in Sources */,

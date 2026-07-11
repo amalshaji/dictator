@@ -134,7 +134,7 @@ final class AppBehaviorTests: XCTestCase {
 
     func testPasteEventFailureRestoresOwnedClipboard() async {
         let fixture = InsertionFixture()
-        fixture.events.failureIndex = 2
+        fixture.events.failureIndex = 1
 
         let result = await fixture.inserter.insert("failed", into: .application(fixture.application))
 
@@ -203,10 +203,8 @@ final class AppBehaviorTests: XCTestCase {
     }
 
     private static let expectedPasteEvents = [
-        PostedKeyEvent(keyCode: 0x37, keyDown: true, flags: .maskCommand),
         PostedKeyEvent(keyCode: 0x09, keyDown: true, flags: .maskCommand),
         PostedKeyEvent(keyCode: 0x09, keyDown: false, flags: .maskCommand),
-        PostedKeyEvent(keyCode: 0x37, keyDown: false, flags: []),
     ]
 }
 

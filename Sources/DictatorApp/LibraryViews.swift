@@ -114,9 +114,9 @@ struct SettingsView: View {
                         .disabled(model.shortcutsAvailable).dictatorButton(.secondary)
                     }.padding(.vertical, 11)
                 }
-                settingsSection("Privacy") {
+                settingsSection("Data handling") {
                     settingRow("Transcript retention", detail: "30 days")
-                    settingRow("Audio retention", detail: "Never")
+                    settingRow("Recordings", detail: "Sent to your provider; not stored by Dictator")
                     settingRow("Dictator telemetry", detail: "Off")
                 }
                 settingsSection("Updates") {
