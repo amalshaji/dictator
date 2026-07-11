@@ -192,6 +192,7 @@ private struct ProviderSetupRow: View {
     @State private var selectedModel = ""
     @State private var status = "Not configured"
     @State private var testing = false
+    @State private var loadedCredentials = false
 
     private var selected: Bool {
         switch purpose {
@@ -234,12 +235,9 @@ private struct ProviderSetupRow: View {
         }
         .onAppear {
             selectedModel = model.configuredModel(for: purpose, provider: provider.kind) ?? provider.defaultModel
-            if let saved = model.credentials(purpose: purpose, provider: provider.kind) {
-                apiKey = saved.apiKey
-                accountID = saved.accountID ?? ""
-                baseURL = saved.baseURL?.absoluteString ?? ""
-                status = "Configured"
-            }
+        }
+        .onChange(of: expanded) { _, isExpanded in
+            if isExpanded { loadCredentialsIfNeeded() }
         }
     }
 
@@ -264,6 +262,16 @@ private struct ProviderSetupRow: View {
             }
             status = "Configured"
         } catch { status = error.localizedDescription }
+    }
+
+    private func loadCredentialsIfNeeded() {
+        guard !loadedCredentials else { return }
+        loadedCredentials = true
+        guard let saved = model.credentials(purpose: purpose, provider: provider.kind) else { return }
+        apiKey = saved.apiKey
+        accountID = saved.accountID ?? ""
+        baseURL = saved.baseURL?.absoluteString ?? ""
+        status = "Configured"
     }
 
     private func testConnection() async {
