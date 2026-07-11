@@ -37,7 +37,7 @@ extension CGEventFlags {
 }
 
 final class HotkeyMonitor: @unchecked Sendable {
-    var onPress: (@Sendable () -> Void)?
+    var onPress: (@Sendable (pid_t?) -> Void)?
     var onRelease: (@Sendable () -> Void)?
     var onPasteLatest: (@Sendable () -> Void)?
     var onOpenClipboard: (@Sendable () -> Void)?
@@ -97,12 +97,14 @@ final class HotkeyMonitor: @unchecked Sendable {
     /// Returns true when a Dictator shortcut consumed the event.
     private func handle(_ event: CGEvent, type: CGEventType) -> Bool {
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        let eventTargetPID = event.getIntegerValueField(.eventTargetUnixProcessID)
+        let targetPID = eventTargetPID > 0 ? pid_t(eventTargetPID) : nil
 
         if dictateShortcut.isFunctionModifier, type == .flagsChanged {
             let down = event.flags.contains(.maskSecondaryFn)
             guard down != dictateIsDown else { return false }
             dictateIsDown = down
-            if down { onPress?() } else { onRelease?() }
+            if down { onPress?(targetPID) } else { onRelease?() }
             return false
         }
 
@@ -110,7 +112,7 @@ final class HotkeyMonitor: @unchecked Sendable {
             if type == .keyDown, ShortcutMatcher.matches(dictateShortcut, keyCode: keyCode, flags: event.flags) {
                 guard !dictateIsDown, event.getIntegerValueField(.keyboardEventAutorepeat) == 0 else { return true }
                 dictateIsDown = true
-                onPress?()
+                onPress?(targetPID)
                 return true
             }
             if type == .keyUp, dictateIsDown {

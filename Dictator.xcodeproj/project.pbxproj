@@ -39,6 +39,7 @@
 		A0B378E8E84364D17E3EB2FF /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F0C8D622A74DCFF2D223C32 /* AudioRecorder.swift */; };
 		A7A189ABC847BBA226C81D56 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1516983F9B4D83DC8588AE4 /* Assets.xcassets */; };
 		AF1515E87707FCA1626F3F8D /* CleanupCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F92A436C3DD8B4A45316A8E9 /* CleanupCoordinator.swift */; };
+		B19D4A6E91A94E94B2A12301 /* ClipboardPaster.swift in Sources */ = {isa = PBXBuildFile; fileRef = B19D4A6E91A94E94B2A12302 /* ClipboardPaster.swift */; };
 		B2DFFD6CD43DBA9B18A37301 /* HotkeyMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22EAD6EF30C05E4F398325C0 /* HotkeyMonitor.swift */; };
 		B47D4061DBC516990EDA7920 /* ProviderContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3864A89C5AE07FEA5AC22F91 /* ProviderContractTests.swift */; };
 		BC76D9FA70E73735DEEE669F /* ProvidersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BC2946D97FB74D99732080D /* ProvidersView.swift */; };
@@ -157,6 +158,7 @@
 		A1516983F9B4D83DC8588AE4 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A2177B09D0A361293F057AEB /* DictatorIntegrationTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DictatorIntegrationTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B4E649F883F224BD1E3D28A4 /* GladiaSTTProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GladiaSTTProvider.swift; sourceTree = "<group>"; };
+		B19D4A6E91A94E94B2A12302 /* ClipboardPaster.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardPaster.swift; sourceTree = "<group>"; };
 		B65298E989CE976B8AC87D24 /* ProviderRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderRegistry.swift; sourceTree = "<group>"; };
 		BA2E710185E50EE29D648637 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		BE740544FE4EDA920D782C59 /* StylesSnippetsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StylesSnippetsView.swift; sourceTree = "<group>"; };
@@ -330,6 +332,7 @@
 			isa = PBXGroup;
 			children = (
 				C9CAFBE630B82E2DB2683D43 /* AccessibilityInserter.swift */,
+				B19D4A6E91A94E94B2A12302 /* ClipboardPaster.swift */,
 				BA2E710185E50EE29D648637 /* AppModel.swift */,
 				A1516983F9B4D83DC8588AE4 /* Assets.xcassets */,
 				0F0C8D622A74DCFF2D223C32 /* AudioRecorder.swift */,
@@ -550,6 +553,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				F82BEA1ADB238D21499D4FA6 /* AccessibilityInserter.swift in Sources */,
+				B19D4A6E91A94E94B2A12301 /* ClipboardPaster.swift in Sources */,
 				BF995194E3386FE8DE6C5E32 /* AppModel.swift in Sources */,
 				A0B378E8E84364D17E3EB2FF /* AudioRecorder.swift in Sources */,
 				E5CDA8989C2503893C03952B /* DesignSystem.swift in Sources */,

@@ -51,7 +51,9 @@ final class AppModel: ObservableObject {
         recorder.onLevel = { [weak self] level in
             Task { @MainActor in self?.hud.model.push(level: level) }
         }
-        hotkey.onPress = { [weak self] in Task { @MainActor in await self?.startDictation() } }
+        hotkey.onPress = { [weak self] targetPID in
+            Task { @MainActor in await self?.startDictation(targetProcessIdentifier: targetPID) }
+        }
         hotkey.onRelease = { [weak self] in Task { @MainActor in await self?.stopDictation() } }
         hotkey.onPasteLatest = { [weak self] in Task { @MainActor in await self?.pasteClipboard() } }
         hotkey.onOpenClipboard = { [weak self] in Task { @MainActor in self?.openClipboard() } }
@@ -77,13 +79,13 @@ final class AppModel: ObservableObject {
         } }
     }
 
-    func startDictation() async {
+    func startDictation(targetProcessIdentifier: pid_t? = nil) async {
         guard phase == .idle else { return }
         guard await recorder.requestPermission() else {
             showError("Microphone permission is required")
             return
         }
-        focusedTarget = inserter.captureFocusedTarget()
+        focusedTarget = inserter.captureFocusedTarget(processIdentifier: targetProcessIdentifier)
         do {
             try recorder.start()
             phase = .listening
@@ -139,7 +141,7 @@ final class AppModel: ObservableObject {
                 data.clipboard.insert(.init(text: finalText, rawText: raw.text, sourceBundleID: focusedTarget?.bundleIdentifier), at: 0)
                 hud.show(.clipboard)
             } else {
-                hud.show(.success("Inserted"))
+                hud.show(.success("Paste sent"))
             }
             data.transcripts.insert(.init(
                 rawText: raw.text,
@@ -237,7 +239,7 @@ final class AppModel: ObservableObject {
         let item = entry ?? data.clipboard.first
         guard let item else { return }
         if await inserter.pasteIntoFrontmostApp(item.text) {
-            hud.show(.success("Pasted"))
+            hud.show(.success("Paste sent"))
             hud.hideAfterDelay()
         } else {
             showError("Could not post the paste shortcut")
