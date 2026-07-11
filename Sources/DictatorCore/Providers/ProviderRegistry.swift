@@ -45,6 +45,23 @@ public enum STTProviderSelection {
         guard saved == .appleSpeech, !appleSpeechAvailable else { return saved }
         return lastCloudRawValue.flatMap(ProviderKind.init(rawValue:)).flatMap { $0 == .appleSpeech ? nil : $0 } ?? .groq
     }
+
+    public static func prepareTransition(
+        from current: ProviderKind,
+        to next: ProviderKind,
+        selectedCleanup: ProviderKind,
+        store: any CredentialStoring
+    ) throws -> ProviderKind? {
+        if next == .appleSpeech {
+            try CredentialReuseMigration.preserveCleanupCredential(
+                previousSTT: current,
+                selectedCleanup: selectedCleanup,
+                store: store
+            )
+            return current == .appleSpeech ? nil : current
+        }
+        return next
+    }
 }
 
 func seconds(since instant: ContinuousClock.Instant) -> TimeInterval {

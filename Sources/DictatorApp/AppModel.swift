@@ -13,26 +13,7 @@ enum ShortcutPurpose { case dictate, pasteLatest, openClipboard }
 final class AppModel: ObservableObject {
     @Published var data = PersistedData()
     @Published var phase: DictationPhase = .idle
-    @Published var selectedSTT: ProviderKind = .groq {
-        didSet {
-            defaults.set(selectedSTT.rawValue, forKey: "selectedSTT")
-            guard !isRestoringSettings else { return }
-            if selectedSTT == .appleSpeech, oldValue != .appleSpeech {
-                do {
-                    try CredentialReuseMigration.preserveCleanupCredential(
-                        previousSTT: oldValue,
-                        selectedCleanup: selectedLLM,
-                        store: keychain
-                    )
-                } catch { lastError = error.localizedDescription }
-            } else if selectedSTT != .appleSpeech {
-                defaults.set(selectedSTT.rawValue, forKey: "lastCloudSTT")
-            }
-            if Self.shouldRefreshAppleSpeechAfterSelection(selectedSTT, readiness: appleSpeechReadiness) {
-                Task { await refreshAppleSpeechSetup() }
-            }
-        }
-    }
+    @Published private(set) var selectedSTT: ProviderKind = .groq
     @Published var selectedLLM: ProviderKind = .groq { didSet { defaults.set(selectedLLM.rawValue, forKey: "selectedLLM") } }
     @Published var cleanupEnabled = false { didSet { defaults.set(cleanupEnabled, forKey: "cleanupEnabled") } }
     @Published private(set) var appleSpeechLocales: [AppleSpeechLocale] = []
@@ -64,7 +45,6 @@ final class AppModel: ObservableObject {
     private let transcriptRepairService = TranscriptRepairService()
     private let hud = FloatingPanelController()
     private var focusedTarget: FocusedTarget?
-    private var isRestoringSettings = true
 
     convenience init() {
         self.init(keychain: KeychainStore(), appleSpeechProvider: Self.defaultAppleSpeechProvider())
@@ -86,7 +66,8 @@ final class AppModel: ObservableObject {
         dictateShortcut = loadShortcut(forKey: "shortcut.dictate", fallback: .dictate)
         pasteLatestShortcut = loadShortcut(forKey: "shortcut.pasteLatest", fallback: .pasteLatest)
         openClipboardShortcut = loadShortcut(forKey: "shortcut.openClipboard", fallback: .openClipboard)
-        isRestoringSettings = false
+        defaults.set(selectedSTT.rawValue, forKey: "selectedSTT")
+        if selectedSTT != .appleSpeech { defaults.set(selectedSTT.rawValue, forKey: "lastCloudSTT") }
         configureHotkeys()
         recorder.onLevel = { [weak self] level in
             Task { @MainActor in self?.hud.model.push(level: level) }
@@ -246,6 +227,7 @@ final class AppModel: ObservableObject {
                 finalText: finalText,
                 sttProvider: raw.provider,
                 sttModel: raw.model,
+                sttLocale: raw.language,
                 sourceBundleID: focusedTarget?.bundleIdentifier,
                 audioDuration: audio.duration,
                 sttLatency: raw.latency,
@@ -297,6 +279,22 @@ final class AppModel: ObservableObject {
         try keychain.save(credentials, for: purpose, provider: provider)
         defaults.set(model, forKey: modelKey(for: purpose, provider: provider))
         objectWillChange.send()
+    }
+
+    func selectSTT(_ provider: ProviderKind) throws {
+        guard provider != selectedSTT else { return }
+        let lastCloud = try STTProviderSelection.prepareTransition(
+            from: selectedSTT,
+            to: provider,
+            selectedCleanup: selectedLLM,
+            store: keychain
+        )
+        if let lastCloud { defaults.set(lastCloud.rawValue, forKey: "lastCloudSTT") }
+        selectedSTT = provider
+        defaults.set(provider.rawValue, forKey: "selectedSTT")
+        if Self.shouldRefreshAppleSpeechAfterSelection(provider, readiness: appleSpeechReadiness) {
+            Task { await refreshAppleSpeechSetup() }
+        }
     }
 
     func saveVocabulary(_ entry: VocabularyEntry) throws {
@@ -469,7 +467,7 @@ final class AppModel: ObservableObject {
             guard appleSpeechReadiness.isReady else {
                 throw ProviderError.invalidConfiguration(appleSpeechStatusText)
             }
-            selectedSTT = .appleSpeech
+            try selectSTT(.appleSpeech)
             return
         }
         guard let provider = ProviderRegistry.sttProvider(for: kind) else { throw ProviderError.unsupported("Provider is unavailable") }
@@ -480,7 +478,7 @@ final class AppModel: ObservableObject {
         )
         try await provider.validate(credentials: credentials)
         try saveCredentials(credentials, purpose: .speechToText, provider: kind, model: provider.metadata.defaultModel)
-        selectedSTT = kind
+        try selectSTT(kind)
     }
 
     func finishOnboarding() {

@@ -191,7 +191,10 @@ private struct AppleSpeechSetupRow: View {
 
     private func prepareOrSelect() async {
         if !model.appleSpeechReadiness.isReady { await model.prepareAppleSpeech() }
-        if model.appleSpeechReadiness.isReady { model.selectedSTT = .appleSpeech }
+        if model.appleSpeechReadiness.isReady {
+            do { try model.selectSTT(.appleSpeech) }
+            catch { model.lastError = error.localizedDescription }
+        }
     }
 
     private func field<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
@@ -316,7 +319,7 @@ private struct ProviderSetupRow: View {
             let credentials = try enteredCredentials()
             try model.saveCredentials(credentials, purpose: purpose, provider: provider.kind, model: selectedModel.trimmed)
             switch purpose {
-            case .speechToText: model.selectedSTT = provider.kind
+            case .speechToText: try model.selectSTT(provider.kind)
             case .cleanup: model.selectedLLM = provider.kind
             }
             status = "Configured"

@@ -8,6 +8,7 @@ final class TranscriptUsageModelsTests: XCTestCase {
             finalText: "native",
             sttProvider: .appleSpeech,
             sttModel: AppleTranscriptionEngine.dictationTranscriber.rawValue,
+            sttLocale: "en_IN",
             audioDuration: 1,
             sttLatency: 0.2,
             insertionOutcome: "typed"
@@ -20,6 +21,7 @@ final class TranscriptUsageModelsTests: XCTestCase {
 
         XCTAssertEqual(decoded.sttProvider, .appleSpeech)
         XCTAssertEqual(decoded.sttModel, AppleTranscriptionEngine.dictationTranscriber.rawValue)
+        XCTAssertEqual(decoded.sttLocale, "en_IN")
     }
 
     func testTranscriptEncodesCleanupAsOneExecutionWithoutDuplicatingSTTDuration() throws {

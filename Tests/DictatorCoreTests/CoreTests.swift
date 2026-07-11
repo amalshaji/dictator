@@ -110,16 +110,57 @@ final class CoreTests: XCTestCase {
 
         XCTAssertEqual(try store.load(for: .cleanup, provider: .groq)?.apiKey, "cleanup")
     }
+
+    func testPreparingAppleSwitchCapturesPreviousCloudProvider() throws {
+        let store = InMemoryCredentialStore()
+
+        let lastCloud = try STTProviderSelection.prepareTransition(
+            from: .deepgram,
+            to: .appleSpeech,
+            selectedCleanup: .groq,
+            store: store
+        )
+
+        XCTAssertEqual(lastCloud, .deepgram)
+    }
+
+    func testPreparingAppleSwitchFailsBeforeSelectionWhenCredentialCopyFails() throws {
+        let store = InMemoryCredentialStore(saveError: TestCredentialError.denied)
+        try store.saveInitial(.init(apiKey: "shared"), for: .speechToText, provider: .groq)
+
+        XCTAssertThrowsError(
+            try STTProviderSelection.prepareTransition(
+                from: .groq,
+                to: .appleSpeech,
+                selectedCleanup: .groq,
+                store: store
+            )
+        )
+    }
 }
 
 private final class InMemoryCredentialStore: CredentialStoring, @unchecked Sendable {
     private var values: [String: ProviderCredentials] = [:]
+    private let saveError: Error?
+
+    init(saveError: Error? = nil) {
+        self.saveError = saveError
+    }
 
     func save(_ credentials: ProviderCredentials, for purpose: ProviderPurpose, provider: ProviderKind) throws {
+        if let saveError { throw saveError }
+        try saveInitial(credentials, for: purpose, provider: provider)
+    }
+
+    func saveInitial(_ credentials: ProviderCredentials, for purpose: ProviderPurpose, provider: ProviderKind) throws {
         values["\(purpose.rawValue).\(provider.rawValue)"] = credentials
     }
 
     func load(for purpose: ProviderPurpose, provider: ProviderKind) throws -> ProviderCredentials? {
         values["\(purpose.rawValue).\(provider.rawValue)"]
     }
+}
+
+private enum TestCredentialError: Error {
+    case denied
 }
