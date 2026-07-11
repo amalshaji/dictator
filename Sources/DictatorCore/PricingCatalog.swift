@@ -15,10 +15,10 @@ public struct PricingCatalog: Sendable {
     public static let checkedAt = "2026-07-10"
     public static let sttPricingSource = URL(string: "https://console.groq.com/docs/speech-to-text")!
     public static let fallbackRates: [String: ModelTokenRate] = [
-        "groq/openai/gpt-oss-20b": .init(inputPerMillion: 0.10, outputPerMillion: 0.50),
+        "groq/openai/gpt-oss-20b": .init(inputPerMillion: 0.075, outputPerMillion: 0.30),
         "google/gemini-2.5-flash-lite": .init(inputPerMillion: 0.10, outputPerMillion: 0.40),
-        "xai/grok-4.20-0309-non-reasoning": .init(inputPerMillion: 2, outputPerMillion: 10),
-        "cloudflare-workers-ai/@cf/qwen/qwen3-30b-a3b-fp8": .init(inputPerMillion: 0.051, outputPerMillion: 0.335)
+        "xai/grok-4.20-0309-non-reasoning": .init(inputPerMillion: 1.25, outputPerMillion: 2.5),
+        "cloudflare-workers-ai/@cf/qwen/qwen3-30b-a3b-fp8": .init(inputPerMillion: 0.0509, outputPerMillion: 0.335)
     ]
 
     public static func estimatedSTTCost(provider: ProviderKind, model: String, audioSeconds: TimeInterval) -> Decimal? {

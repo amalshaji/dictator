@@ -227,6 +227,16 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(PricingCatalog.estimatedLLMCost(provider: .groq, model: "openai/gpt-oss-20b", usage: .init(providerReportedCostUSD: 2), rates: rates), 2)
     }
 
+    func testPricingServiceUsesFreshDiskCache() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let cache = directory.appending(path: "pricing.json")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let expected = PricingSnapshot(fetchedAt: Date(), rates: ["groq/test": .init(inputPerMillion: 1, outputPerMillion: 2)])
+        try JSONEncoder().encode(expected).write(to: cache)
+        let actual = try await PricingService(cacheURL: cache).refreshIfNeeded()
+        XCTAssertEqual(actual, expected)
+    }
+
     func testLegacyTranscriptDecodesWithoutPipelineLatencyOrRevisions() throws {
         let record = TranscriptRecord(rawText: "raw", finalText: "final", sttProvider: .groq, sttModel: "m", audioDuration: 1, sttLatency: 0.2, insertionOutcome: "typed")
         var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(record)) as? [String: Any])
@@ -244,6 +254,31 @@ final class CoreTests: XCTestCase {
         let summary = UsageAnalytics.summarize([record], since: .distantPast, rates: PricingCatalog.fallbackRates)
         XCTAssertEqual(summary.dictations, 1); XCTAssertEqual(summary.cleanupRequests, 1)
         XCTAssertEqual(summary.inputTokens, 100); XCTAssertGreaterThan(summary.sttCost, 0); XCTAssertGreaterThan(summary.llmCost, 0)
+    }
+
+    func testPreferredRevisionSuppliesCurrentTextWithoutChangingOriginal() {
+        let revision = TranscriptRevision(text: "Repaired", origin: .manual, repairLatency: 0.1)
+        let record = TranscriptRecord(
+            rawText: "Raw", finalText: "Original", sttProvider: .groq, sttModel: "m",
+            audioDuration: 1, sttLatency: 0.2, pipelineLatency: 0.4, insertionOutcome: "typed",
+            revisions: [revision], preferredRevisionID: revision.id
+        )
+        XCTAssertEqual(record.currentText, "Repaired")
+        XCTAssertEqual(record.rawText, "Raw"); XCTAssertEqual(record.finalText, "Original"); XCTAssertEqual(record.pipelineLatency, 0.4)
+    }
+
+    func testRepairCleanupUsageCountsOnlyAsLLMUsage() {
+        let revision = TranscriptRevision(
+            text: "Repaired", origin: .cleanup, llmProvider: .groq, llmModel: "openai/gpt-oss-20b",
+            repairLatency: 0.3, llmUsage: .init(inputTokens: 10, outputTokens: 3)
+        )
+        let record = TranscriptRecord(
+            rawText: "raw", finalText: "original", sttProvider: .groq, sttModel: "whisper-large-v3-turbo",
+            audioDuration: 60, sttLatency: 0.2, insertionOutcome: "typed", revisions: [revision]
+        )
+        let summary = UsageAnalytics.summarize([record], since: .distantPast, rates: PricingCatalog.fallbackRates)
+        XCTAssertEqual(summary.dictations, 1); XCTAssertEqual(summary.audioSeconds, 60)
+        XCTAssertEqual(summary.cleanupRequests, 1); XCTAssertEqual(summary.inputTokens, 10); XCTAssertEqual(summary.outputTokens, 3)
     }
 
     func testRegistriesExposeAllPlannedProviders() {

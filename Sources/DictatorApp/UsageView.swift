@@ -73,17 +73,48 @@ struct UsageView: View {
     }
 
     private func providerBreakdown(stt: Bool) -> some View {
-        let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: Date())!
-        let records = model.data.transcripts.filter { $0.createdAt >= cutoff }
-        let keys = Set(records.compactMap { record -> String? in
-            if stt { return "\(record.sttProvider.rawValue) · \(record.sttModel)" }
-            guard let provider = record.llmProvider, let model = record.llmModel else { return nil }; return "\(provider.rawValue) · \(model)"
-        }).sorted()
+        let rows = breakdownRows(stt: stt)
         return VStack(alignment: .leading, spacing: 6) {
             Text("PROVIDER / MODEL").font(.dictatorUtility(9)).foregroundStyle(.secondary)
-            ForEach(keys, id: \.self) { key in Text(key).font(.dictatorBody(11, weight: .medium)) }
-            if keys.isEmpty { Text("No usage in this period").font(.dictatorBody(11)).foregroundStyle(.secondary) }
+            ForEach(rows) { row in
+                HStack {
+                    Text(row.name).font(.dictatorBody(11, weight: .medium)); Spacer()
+                    Text(row.detail).font(.dictatorUtility(9)).foregroundStyle(.secondary)
+                }.padding(.vertical, 3)
+            }
+            if rows.isEmpty { Text("No usage in this period").font(.dictatorBody(11)).foregroundStyle(.secondary) }
         }.padding(.top, 8)
+    }
+
+    private struct Breakdown: Identifiable { let name: String; let detail: String; var id: String { name } }
+
+    private func breakdownRows(stt: Bool) -> [Breakdown] {
+        let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: Date())!
+        let records = model.data.transcripts.filter { $0.createdAt >= cutoff }
+        if stt {
+            return Dictionary(grouping: records) { "\($0.sttProvider.rawValue) · \($0.sttModel)" }.map { key, values in
+                let seconds = values.reduce(0) { $0 + $1.audioDuration }
+                let cost = values.compactMap { PricingCatalog.estimatedSTTCost(provider: $0.sttProvider, model: $0.sttModel, audioSeconds: $0.audioDuration) }.reduce(0, +)
+                let median = values.map(\.sttLatency).sorted()[values.count / 2]
+                return Breakdown(name: key, detail: "\(values.count) req · \(String(format: "%.1f", seconds / 60)) min · \(latency(median)) · $\(NSDecimalNumber(decimal: cost).stringValue)")
+            }.sorted { $0.name < $1.name }
+        }
+        struct Event { let key: String; let usage: LLMUsage; let latency: TimeInterval; let provider: ProviderKind; let model: String }
+        var events: [Event] = records.compactMap { record in
+            guard let provider = record.llmProvider, let model = record.llmModel, let usage = record.llmUsage, let latency = record.cleanupLatency else { return nil }
+            return Event(key: "\(provider.rawValue) · \(model)", usage: usage, latency: latency, provider: provider, model: model)
+        }
+        events += records.flatMap(\.revisions).compactMap { revision in
+            guard revision.origin == .cleanup, let provider = revision.llmProvider, let model = revision.llmModel, let usage = revision.llmUsage else { return nil }
+            return Event(key: "\(provider.rawValue) · \(model)", usage: usage, latency: revision.repairLatency, provider: provider, model: model)
+        }
+        return Dictionary(grouping: events, by: \.key).map { key, values in
+            let input = values.reduce(0) { $0 + $1.usage.inputTokens }, output = values.reduce(0) { $0 + $1.usage.outputTokens }
+            let costs = values.compactMap { PricingCatalog.estimatedLLMCost(provider: $0.provider, model: $0.model, usage: $0.usage, rates: model.pricingSnapshot?.rates ?? PricingCatalog.fallbackRates) }
+            let latencies = values.map(\.latency).sorted(); let median = latencies[latencies.count / 2]
+            let costText = costs.count == values.count ? "$\(NSDecimalNumber(decimal: costs.reduce(0, +)).stringValue)" : "cost N/A"
+            return Breakdown(name: key, detail: "\(values.count) req · \(input)/\(output) tokens · \(latency(median)) · \(costText)")
+        }.sorted { $0.name < $1.name }
     }
 
     private func latency(_ value: TimeInterval?) -> String { value.map { String(format: "%.0f ms", $0 * 1_000) } ?? "—" }

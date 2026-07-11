@@ -310,6 +310,60 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func copyTranscriptText(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    func pasteTranscriptText(_ text: String) async {
+        if !(await inserter.pasteIntoFrontmostApp(text)) { showError("Could not post the paste shortcut") }
+    }
+
+    func appendRevision(_ revision: TranscriptRevision, to transcriptID: UUID) {
+        guard let index = data.transcripts.firstIndex(where: { $0.id == transcriptID }) else { return }
+        data.transcripts[index].revisions.append(revision)
+        data.transcripts[index].preferredRevisionID = revision.id
+        schedulePersistence()
+    }
+
+    func reprocessTranscript(_ transcriptID: UUID) async throws -> TranscriptRevision {
+        guard let record = data.transcripts.first(where: { $0.id == transcriptID }) else {
+            throw ProviderError.invalidConfiguration("Transcript is no longer available.")
+        }
+        let started = ContinuousClock.now
+        let processed = await transcriptProcessor.process(
+            rawText: record.rawText,
+            vocabulary: data.vocabulary,
+            snippets: data.snippets,
+            cleanup: try cleanupConfiguration()
+        )
+        let cleanupResult = processed.cleanupResult
+        return TranscriptRevision(
+            text: processed.finalText,
+            origin: cleanupResult == nil ? .localProcessing : .cleanup,
+            llmProvider: cleanupResult?.provider,
+            llmModel: cleanupResult?.model,
+            repairLatency: Self.elapsedSeconds(since: started),
+            llmUsage: cleanupResult.map { .init(
+                inputTokens: $0.inputTokens ?? 0,
+                outputTokens: $0.outputTokens ?? 0,
+                providerReportedCostUSD: $0.providerReportedCostUSD
+            ) }
+        )
+    }
+
+    @discardableResult
+    func teachDictator(incorrect: String, correct: String) -> Bool {
+        let incorrect = incorrect.trimmingCharacters(in: .whitespacesAndNewlines)
+        let correct = correct.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !incorrect.isEmpty, !correct.isEmpty else { lastError = "Both correction fields are required."; return false }
+        if var entry = data.vocabulary.first(where: { $0.value.caseInsensitiveCompare(correct) == .orderedSame }) {
+            entry.variants.append(incorrect)
+            return saveVocabulary(entry)
+        }
+        return saveVocabulary(.init(value: correct, variants: [incorrect]))
+    }
+
     func requestAccessibilityPermission() {
         AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
         _ = CGRequestListenEventAccess()

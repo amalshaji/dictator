@@ -3,6 +3,7 @@ import SwiftUI
 
 struct HomeView: View {
     @ObservedObject var model: AppModel
+    @State private var selectedTranscript: TranscriptRecord?
 
     var body: some View {
         ScrollView {
@@ -17,6 +18,7 @@ struct HomeView: View {
             .padding(.horizontal, 42)
             .padding(.vertical, 36)
         }
+        .sheet(item: $selectedTranscript) { record in TranscriptDetailView(model: model, transcriptID: record.id) }
     }
 
     private var header: some View {
@@ -56,13 +58,12 @@ struct HomeView: View {
     private var transcriptList: some View {
         LazyVStack(alignment: .leading, spacing: 0) {
             ForEach(model.data.transcripts) { record in
-                TranscriptRow(record: record)
+                Button { selectedTranscript = record } label: { TranscriptRow(record: record) }.buttonStyle(.plain)
                 Divider()
             }
         }
         .padding(.top, 12)
     }
-
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Your first transcript will appear here.").font(.dictatorBody(15, weight: .medium))
@@ -123,7 +124,7 @@ private struct TranscriptRow: View {
     let record: TranscriptRecord
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
-            Text(record.finalText).font(.dictatorBody(14)).lineLimit(3).textSelection(.enabled)
+            Text(record.currentText).font(.dictatorBody(14)).lineLimit(3).textSelection(.enabled)
             HStack(spacing: 10) {
                 Text(record.createdAt.dictatorTimestamp)
                 ForEach(TranscriptMetadataFormatter.pipelineSegments(for: record), id: \.self) { segment in
