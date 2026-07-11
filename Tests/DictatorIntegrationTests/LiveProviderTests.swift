@@ -3,6 +3,30 @@ import XCTest
 @testable import DictatorCore
 
 final class LiveProviderTests: XCTestCase {
+    @available(macOS 26.0, *)
+    func testAppleSpeechWithInstalledNativeModel() async throws {
+        let provider = AppleSpeechTranscriber()
+        let locales = await provider.availableLocales()
+        guard let locale = locales.first(where: {
+            Locale(identifier: $0.identifier).language.languageCode == .english
+        }) ?? locales.first else {
+            throw XCTSkip("No Apple speech locale is supported on this Mac")
+        }
+        guard case .ready = await provider.readiness(for: locale.identifier) else {
+            throw XCTSkip("The Apple speech model is not installed for \(locale.identifier)")
+        }
+
+        let result = try await provider.transcribe(
+            audio: referenceAudio(),
+            localeIdentifier: locale.identifier,
+            vocabulary: [.init(value: "Dictator")]
+        )
+        XCTAssertEqual(result.provider, .appleSpeech)
+        XCTAssertEqual(result.language, locale.identifier)
+        XCTAssertEqual(result.model, locale.engine.rawValue)
+        XCTAssertFalse(result.text.isEmpty)
+    }
+
     func testSameAudioAcrossEveryConfiguredSTTProvider() async throws {
         let environment = EnvironmentLoader.load()
         let audio = try referenceAudio()

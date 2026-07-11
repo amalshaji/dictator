@@ -1,7 +1,12 @@
 import Foundation
 import Security
 
-public struct KeychainStore: Sendable {
+public protocol CredentialStoring: Sendable {
+    func save(_ credentials: ProviderCredentials, for purpose: ProviderPurpose, provider: ProviderKind) throws
+    func load(for purpose: ProviderPurpose, provider: ProviderKind) throws -> ProviderCredentials?
+}
+
+public struct KeychainStore: CredentialStoring, Sendable {
     private let service: String
     public init(service: String = "ai.dictator.credentials") { self.service = service }
 
@@ -39,6 +44,20 @@ public struct KeychainStore: Sendable {
         if status == errSecItemNotFound { return nil }
         guard status == errSecSuccess, let data = result as? Data else { throw KeychainError.status(status) }
         return try JSONDecoder().decode(ProviderCredentials.self, from: data)
+    }
+}
+
+public enum CredentialReuseMigration {
+    public static func preserveCleanupCredential(
+        previousSTT: ProviderKind,
+        selectedCleanup: ProviderKind,
+        store: any CredentialStoring
+    ) throws {
+        guard previousSTT == selectedCleanup,
+              try store.load(for: .cleanup, provider: selectedCleanup) == nil,
+              let shared = try store.load(for: .speechToText, provider: previousSTT)
+        else { return }
+        try store.save(shared, for: .cleanup, provider: selectedCleanup)
     }
 }
 

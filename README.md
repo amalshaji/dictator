@@ -1,6 +1,6 @@
 # Dictator
 
-Dictator is a native macOS menu-bar dictation app. Hold `Fn` to record, release to transcribe with a user-selected cloud provider, and insert the result into the field that was focused when recording began. If no editable field was focused, the text is stored in Dictator's private clipboard.
+Dictator is a native macOS menu-bar dictation app. Hold `Fn` to record, release to transcribe on-device with Apple Speech or through a user-selected cloud provider, and insert the result into the field that was focused when recording began. If no editable field was focused, the text is stored in Dictator's private clipboard.
 
 ## Shortcuts
 
@@ -10,9 +10,11 @@ Dictator is a native macOS menu-bar dictation app. Hold `Fn` to record, release 
 
 ## Providers
 
-Speech-to-text adapters: Groq, Cloudflare Workers AI, xAI, Deepgram, AssemblyAI, and Gladia.
+On macOS 26 and later, Apple On-Device is available without an API key and is the default for new installations. Its language model may require an initial download; after that, audio transcription stays on the Mac. SpeechTranscriber is preferred, with DictationTranscriber used when needed for the selected language or hardware.
 
-Optional cleanup adapters use BYOK credentials: Groq, Cloudflare Workers AI, Gemini, xAI, OpenRouter, and any OpenAI-compatible endpoint. When speech-to-text and cleanup use the same provider, Dictator reuses that provider credential unless you configure a separate cleanup credential. Keys are stored in macOS Keychain. Transcript history, vocabulary, styles, snippets, and private-clipboard data stay in local Application Support storage. Recordings are sent to the selected speech provider for transcription and are not stored by Dictator after processing; the provider's own data-handling policy applies.
+Cloud speech-to-text adapters remain available: Groq, Cloudflare Workers AI, xAI, Deepgram, AssemblyAI, and Gladia. On macOS 14 and 15, these are the available speech providers and Groq remains the new-install default.
+
+Optional cleanup adapters use BYOK credentials: Groq, Cloudflare Workers AI, Gemini, xAI, OpenRouter, and any OpenAI-compatible endpoint. Cleanup sends transcript text, never audio. When speech-to-text and cleanup use the same provider, Dictator reuses that provider credential unless you configure a separate cleanup credential. Keys are stored in macOS Keychain. Transcript history, vocabulary, styles, snippets, and private-clipboard data stay in local Application Support storage. Cloud recordings are sent to the selected speech provider and are not stored by Dictator after processing; the provider's own data-handling policy applies.
 
 ## Install
 

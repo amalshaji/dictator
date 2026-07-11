@@ -1,6 +1,7 @@
 import Foundation
 
 public enum ProviderKind: String, Codable, CaseIterable, Sendable {
+    case appleSpeech = "apple-speech"
     case groq
     case cloudflare
     case xAI = "xai"
@@ -10,6 +11,44 @@ public enum ProviderKind: String, Codable, CaseIterable, Sendable {
     case gemini
     case openRouter = "openrouter"
     case openAICompatible = "openai-compatible"
+}
+
+public enum AppleTranscriptionEngine: String, Codable, Equatable, Sendable {
+    case speechTranscriber = "speech-transcriber"
+    case dictationTranscriber = "dictation-transcriber"
+}
+
+public struct AppleSpeechLocale: Identifiable, Codable, Equatable, Sendable {
+    public let identifier: String
+    public let engine: AppleTranscriptionEngine
+
+    public var id: String { identifier }
+
+    public init(identifier: String, engine: AppleTranscriptionEngine) {
+        self.identifier = identifier
+        self.engine = engine
+    }
+}
+
+public enum AppleSpeechReadiness: Equatable, Sendable {
+    case checking
+    case downloadRequired(AppleSpeechLocale)
+    case downloading(AppleSpeechLocale, progress: Double)
+    case ready(AppleSpeechLocale)
+    case unavailable(String)
+    case failed(String)
+
+    public var locale: AppleSpeechLocale? {
+        switch self {
+        case .downloadRequired(let locale), .downloading(let locale, _), .ready(let locale): locale
+        case .checking, .unavailable, .failed: nil
+        }
+    }
+
+    public var isReady: Bool {
+        if case .ready = self { return true }
+        return false
+    }
 }
 
 public struct ProviderCredentials: Codable, Equatable, Sendable {

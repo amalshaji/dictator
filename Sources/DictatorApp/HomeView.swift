@@ -32,7 +32,7 @@ struct HomeView: View {
             Spacer()
             HStack(spacing: 8) {
                 Circle().fill(DictatorDesign.orchid).frame(width: 8, height: 8)
-                Text(model.selectedSTT.rawValue).font(.dictatorUtility(11))
+                Text(providerDisplayName(model.selectedSTT)).font(.dictatorUtility(11))
             }
             .padding(.horizontal, 12).frame(height: 30)
             .background(DictatorDesign.fog, in: Capsule())
@@ -68,7 +68,7 @@ struct HomeView: View {
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Your first transcript will appear here.").font(.dictatorBody(15, weight: .medium))
-            Text("Dictator keeps text locally for 30 days and does not store recordings after sending them to your selected provider.")
+            Text("Dictator keeps text locally for 30 days and never stores recordings after transcription. Apple processing stays on-device; cloud processing sends audio only to your selected provider.")
                 .font(.dictatorBody(13)).foregroundStyle(DictatorDesign.ink.opacity(0.52))
         }
         .padding(.vertical, 42)
@@ -91,6 +91,10 @@ struct HomeView: View {
         guard !latencies.isEmpty else { return nil }
         return latencies.reduce(0, +) / Double(latencies.count)
     }
+
+    private func providerDisplayName(_ kind: ProviderKind) -> String {
+        ProviderRegistry.sttMetadata(includeAppleSpeech: true).first { $0.kind == kind }?.displayName ?? kind.rawValue
+    }
 }
 
 enum TranscriptMetadataFormatter {
@@ -105,7 +109,7 @@ enum TranscriptMetadataFormatter {
     }
 
     private static func sttDisplayName(for kind: ProviderKind) -> String {
-        ProviderRegistry.sttMetadata.first { $0.kind == kind }?.displayName ?? kind.rawValue
+        ProviderRegistry.sttMetadata(includeAppleSpeech: true).first { $0.kind == kind }?.displayName ?? kind.rawValue
     }
 
     private static func cleanupDisplayName(for kind: ProviderKind) -> String {

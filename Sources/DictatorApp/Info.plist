@@ -27,7 +27,7 @@
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright © 2026</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Dictator records only while you hold the dictation shortcut and sends that audio to your selected speech provider.</string>
+	<string>Dictator records only while you hold the dictation shortcut. Audio stays on this Mac with Apple On-Device or is sent to your selected cloud speech provider.</string>
 	<key>SUAllowsAutomaticUpdates</key>
 	<false/>
 	<key>SUAutomaticallyUpdate</key>

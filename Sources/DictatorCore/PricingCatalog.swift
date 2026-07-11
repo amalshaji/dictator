@@ -30,6 +30,7 @@ public struct PricingCatalog: Sendable {
     ]
 
     public static func estimatedSTTCost(provider: ProviderKind, model: String, audioSeconds: TimeInterval) -> Decimal? {
+        if provider == .appleSpeech { return 0 }
         guard let rate = sttRates.first(where: { $0.provider == provider && $0.model == model }) else { return nil }
         let billableSeconds = max(audioSeconds, rate.minimumBillableSeconds ?? 0)
         return rate.hourlyUSD * Decimal(billableSeconds / 3_600)

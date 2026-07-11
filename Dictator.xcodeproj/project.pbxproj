@@ -33,6 +33,7 @@
 		50585B1D9610A9CBBA6943CD /* PricingCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = C28C40D0E2AE218D43B3805C /* PricingCatalog.swift */; };
 		524C57CCB8AFB4B094948D76 /* PersonalizationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA495AAE98B2B5414EE83332 /* PersonalizationTests.swift */; };
 		55E5BF220EAB76BF19372829 /* ModelTokenRate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 317B8990E911CF6A6A2D5680 /* ModelTokenRate.swift */; };
+		584F494ADC7263D1EEB0E2B9 /* AppleSpeechTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A6CA50C1904214E7BC03845 /* AppleSpeechTranscriber.swift */; };
 		5C629C67FC6615B1CE1F6E18 /* TranscriptRepairServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6649573702A8D44CE185618A /* TranscriptRepairServiceTests.swift */; };
 		70A771361D42BE70AB310E1A /* CloudflareCleanupProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76DA46DD749F44062847C2AD /* CloudflareCleanupProvider.swift */; };
 		7ADC4F531BCDA49F77BB5F81 /* PricingSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9001A8ED7FE08B06D1778EA /* PricingSnapshot.swift */; };
@@ -185,6 +186,7 @@
 		73D2DB11C8E00361C39B70DA /* AppBehaviorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppBehaviorTests.swift; sourceTree = "<group>"; };
 		76DA46DD749F44062847C2AD /* CloudflareCleanupProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudflareCleanupProvider.swift; sourceTree = "<group>"; };
 		776C266EA9DD718C0DD487F8 /* CoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreTests.swift; sourceTree = "<group>"; };
+		7A6CA50C1904214E7BC03845 /* AppleSpeechTranscriber.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSpeechTranscriber.swift; sourceTree = "<group>"; };
 		7EEE4712175A90F3E1B13529 /* LiveProviderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveProviderTests.swift; sourceTree = "<group>"; };
 		7F24BA3CFD7AA9EF3829E8EE /* Dictator.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Dictator.entitlements; sourceTree = "<group>"; };
 		852B2D3B0174B4982819E9A6 /* reference.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = reference.wav; sourceTree = "<group>"; };
@@ -316,6 +318,7 @@
 		AF892E42FCACFB371599EB8E /* Providers */ = {
 			isa = PBXGroup;
 			children = (
+				7A6CA50C1904214E7BC03845 /* AppleSpeechTranscriber.swift */,
 				68951BFD4E2C57E9E33F4D4F /* AssemblyAISTTProvider.swift */,
 				58AC81E5B5340A692F7DD0F6 /* CloudflareSTTProvider.swift */,
 				27687BA351341A73CB22A924 /* DeepgramSTTProvider.swift */,
@@ -644,6 +647,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				584F494ADC7263D1EEB0E2B9 /* AppleSpeechTranscriber.swift in Sources */,
 				9468E6BBB680C5FAA06F9B4D /* AssemblyAISTTProvider.swift in Sources */,
 				AF1515E87707FCA1626F3F8D /* CleanupCoordinator.swift in Sources */,
 				4EDCCE579CB196319CE5FFEE /* CleanupProviderRegistry.swift in Sources */,

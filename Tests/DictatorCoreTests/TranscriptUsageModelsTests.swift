@@ -2,6 +2,26 @@ import DictatorCore
 import XCTest
 
 final class TranscriptUsageModelsTests: XCTestCase {
+    func testAppleFallbackEngineProvenanceRoundTrips() throws {
+        let record = TranscriptRecord(
+            rawText: "native",
+            finalText: "native",
+            sttProvider: .appleSpeech,
+            sttModel: AppleTranscriptionEngine.dictationTranscriber.rawValue,
+            audioDuration: 1,
+            sttLatency: 0.2,
+            insertionOutcome: "typed"
+        )
+
+        let decoded = try JSONDecoder().decode(
+            TranscriptRecord.self,
+            from: JSONEncoder().encode(record)
+        )
+
+        XCTAssertEqual(decoded.sttProvider, .appleSpeech)
+        XCTAssertEqual(decoded.sttModel, AppleTranscriptionEngine.dictationTranscriber.rawValue)
+    }
+
     func testTranscriptEncodesCleanupAsOneExecutionWithoutDuplicatingSTTDuration() throws {
         let cleanup = CleanupExecution(
             provider: .groq,
