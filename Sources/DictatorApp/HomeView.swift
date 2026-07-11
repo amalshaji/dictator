@@ -90,6 +90,35 @@ struct HomeView: View {
     }
 }
 
+enum TranscriptMetadataFormatter {
+    static func pipelineSegments(for record: TranscriptRecord) -> [String] {
+        var segments = ["STT: \(sttDisplayName(for: record.sttProvider)), \(milliseconds(record.sttLatency))"]
+        guard let cleanupProvider = record.llmProvider else { return segments }
+
+        let providerName = cleanupDisplayName(for: cleanupProvider)
+        guard let cleanupLatency = record.cleanupLatency else {
+            segments.append("Cleanup: \(providerName)")
+            return segments
+        }
+
+        segments.append("Cleanup: \(providerName), \(milliseconds(cleanupLatency))")
+        segments.append("Total: \(milliseconds(record.sttLatency + cleanupLatency))")
+        return segments
+    }
+
+    private static func sttDisplayName(for kind: ProviderKind) -> String {
+        ProviderRegistry.sttMetadata.first { $0.kind == kind }?.displayName ?? kind.rawValue
+    }
+
+    private static func cleanupDisplayName(for kind: ProviderKind) -> String {
+        CleanupProviderRegistry.metadata.first { $0.kind == kind }?.displayName ?? kind.rawValue
+    }
+
+    private static func milliseconds(_ latency: TimeInterval) -> String {
+        String(format: "%.0f ms", latency * 1_000)
+    }
+}
+
 private struct TranscriptRow: View {
     let record: TranscriptRecord
     var body: some View {
@@ -97,9 +126,9 @@ private struct TranscriptRow: View {
             Text(record.finalText).font(.dictatorBody(14)).lineLimit(3).textSelection(.enabled)
             HStack(spacing: 10) {
                 Text(record.createdAt.dictatorTimestamp)
-                Text(record.sttProvider.rawValue)
-                Text(String(format: "%.0f ms", record.sttLatency * 1_000))
-                if let llm = record.llmProvider { Text("cleaned · \(llm.rawValue)") }
+                ForEach(TranscriptMetadataFormatter.pipelineSegments(for: record), id: \.self) { segment in
+                    Text(segment)
+                }
             }
             .font(.dictatorUtility(10)).foregroundStyle(DictatorDesign.ink.opacity(0.42))
         }

@@ -1,6 +1,8 @@
 import ApplicationServices
+import AppKit
 import Combine
 import CoreGraphics
+import DictatorCore
 import Foundation
 import XCTest
 @testable import Dictator
@@ -19,6 +21,48 @@ final class AppBehaviorTests: XCTestCase {
         func checkForUpdates() {
             checkCount += 1
         }
+    }
+
+    func testWindowChromeBackgroundMatchesSidebarAndContentAtEveryWidth() throws {
+        for width in [920.0, 1_400.0] {
+            let image = WindowChromeStyle.backgroundImage(windowWidth: width)
+            let bitmap = try XCTUnwrap(image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
+            func color(at point: CGFloat) -> NSColor? {
+                let pixel = min(bitmap.pixelsWide - 1, Int(point / image.size.width * CGFloat(bitmap.pixelsWide)))
+                return bitmap.colorAt(x: pixel, y: 0)
+            }
+
+            XCTAssertEqual(image.size.width, width)
+            assertColor(color(at: 0), red: 23, green: 21, blue: 26)
+            assertColor(color(at: DictatorDesign.sidebarWidth - 1), red: 23, green: 21, blue: 26)
+            assertColor(color(at: DictatorDesign.sidebarWidth), red: 246, green: 244, blue: 240)
+            assertColor(color(at: width - 1), red: 246, green: 244, blue: 240)
+        }
+    }
+
+    func testTranscriptMetadataLabelsSTTProviderAndLatency() {
+        let record = TranscriptRecord(
+            rawText: "Hello", finalText: "Hello", sttProvider: .groq, sttModel: "whisper",
+            audioDuration: 1, sttLatency: 0.301, insertionOutcome: "inserted"
+        )
+
+        XCTAssertEqual(
+            TranscriptMetadataFormatter.pipelineSegments(for: record),
+            ["STT: Groq, 301 ms"]
+        )
+    }
+
+    func testTranscriptMetadataLabelsCleanupAndTotalPipelineLatency() {
+        let record = TranscriptRecord(
+            rawText: "hello", finalText: "Hello.", sttProvider: .groq, sttModel: "whisper",
+            llmProvider: .groq, llmModel: "gpt-oss", audioDuration: 1,
+            sttLatency: 0.301, cleanupLatency: 0.184, insertionOutcome: "inserted"
+        )
+
+        XCTAssertEqual(
+            TranscriptMetadataFormatter.pipelineSegments(for: record),
+            ["STT: Groq, 301 ms", "Cleanup: Groq, 184 ms", "Total: 485 ms"]
+        )
     }
 
     func testPrivateClipboardShortcutsAreExact() {
@@ -200,6 +244,23 @@ final class AppBehaviorTests: XCTestCase {
         let data = try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
         try data.write(to: contents.appending(path: "Info.plist"))
         return try XCTUnwrap(Bundle(url: root))
+    }
+
+    private func assertColor(
+        _ color: NSColor?,
+        red: CGFloat,
+        green: CGFloat,
+        blue: CGFloat,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        guard let color = color?.usingColorSpace(.deviceRGB) else {
+            return XCTFail("Expected an RGB color", file: file, line: line)
+        }
+        XCTAssertEqual(color.redComponent, red / 255, accuracy: 0.04, file: file, line: line)
+        XCTAssertEqual(color.greenComponent, green / 255, accuracy: 0.04, file: file, line: line)
+        XCTAssertEqual(color.blueComponent, blue / 255, accuracy: 0.04, file: file, line: line)
+        XCTAssertEqual(color.alphaComponent, 1, accuracy: 0.001, file: file, line: line)
     }
 
     private static let expectedPasteEvents = [
