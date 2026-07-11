@@ -113,30 +113,11 @@ struct FloatingHUDView: View {
 
     @ViewBuilder private var content: some View {
         switch model.phase {
-        case .idle: idleState
+        case .idle: EmptyView()
         case .listening: listeningState
         case .transcribing, .cleaning: processingState
         default: resultState
         }
-    }
-
-    private var idleState: some View {
-        TimelineView(.animation(minimumInterval: 1 / 24, paused: reduceMotion)) { timeline in
-            let pulse = reduceMotion ? 0.5 : (sin(timeline.date.timeIntervalSinceReferenceDate * 2.1) + 1) / 2
-            HStack(spacing: 7) {
-                ZStack {
-                    Circle().stroke(DictatorDesign.orchid.opacity(0.16 + pulse * 0.2), lineWidth: 1)
-                        .frame(width: 9 + pulse * 2, height: 9 + pulse * 2)
-                    Circle().fill(DictatorDesign.orchid).frame(width: 3, height: 3)
-                }.frame(width: 12, height: 12)
-                HStack(spacing: 2) {
-                    ForEach([2.0, 4, 7, 4, 2], id: \.self) { height in
-                        Capsule().fill(Color.white.opacity(0.38)).frame(width: 1.5, height: height)
-                    }
-                }
-            }
-        }
-        .accessibilityLabel("Dictator ready")
     }
 
     private var listeningState: some View {

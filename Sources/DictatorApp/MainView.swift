@@ -34,7 +34,7 @@ struct MainView: View {
         }
         .background(DictatorDesign.paper)
         .background(WindowChromeConfigurator())
-        .ignoresSafeArea(.container, edges: [.top, .leading])
+        .ignoresSafeArea(.container)
         .preferredColorScheme(.light)
         .overlay {
             if !model.onboardingComplete {

@@ -19,6 +19,43 @@ enum DictatorDesign {
 
 enum DictatorButtonKind { case primary, secondary, ghost, destructive }
 
+struct DictatorSegmentedSwitcher: View {
+    struct Option {
+        let title: String
+        let icon: String
+    }
+
+    let label: String
+    let options: [Option]
+    @Binding var selection: Int
+
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(options.indices, id: \.self) { index in
+                Button {
+                    withAnimation(.easeOut(duration: 0.16)) { selection = index }
+                } label: {
+                    Label(options[index].title, systemImage: options[index].icon)
+                        .font(.dictatorBody(12, weight: .semibold))
+                        .foregroundStyle(selection == index ? DictatorDesign.ink : DictatorDesign.muted)
+                        .padding(.horizontal, 12)
+                        .frame(height: 32)
+                        .background(selection == index ? DictatorDesign.control : .clear, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        .shadow(color: selection == index ? .black.opacity(0.06) : .clear, radius: 2, y: 1)
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selection == index ? .isSelected : [])
+            }
+        }
+        .padding(3)
+        .background(DictatorDesign.fog.opacity(0.8), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(DictatorDesign.border.opacity(0.7)))
+        .fixedSize()
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(label)
+    }
+}
+
 struct DictatorButtonStyle: ButtonStyle {
     let kind: DictatorButtonKind
     @Environment(\.isEnabled) private var isEnabled
