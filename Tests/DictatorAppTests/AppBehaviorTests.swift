@@ -4,6 +4,7 @@ import Combine
 import CoreGraphics
 import DictatorCore
 import Foundation
+import DictatorCore
 import XCTest
 @testable import Dictator
 
@@ -48,21 +49,31 @@ final class AppBehaviorTests: XCTestCase {
 
         XCTAssertEqual(
             TranscriptMetadataFormatter.pipelineSegments(for: record),
-            ["STT: Groq, 301 ms"]
+            ["STT: Groq, 301 ms", "Total: —"]
         )
     }
 
     func testTranscriptMetadataLabelsCleanupAndTotalPipelineLatency() {
         let record = TranscriptRecord(
             rawText: "hello", finalText: "Hello.", sttProvider: .groq, sttModel: "whisper",
-            llmProvider: .groq, llmModel: "gpt-oss", audioDuration: 1,
-            sttLatency: 0.301, cleanupLatency: 0.184, insertionOutcome: "inserted"
+            audioDuration: 1, sttLatency: 0.301, pipelineLatency: 0.612,
+            cleanup: .init(provider: .groq, model: "gpt-oss", latency: 0.184),
+            insertionOutcome: "inserted"
         )
 
         XCTAssertEqual(
             TranscriptMetadataFormatter.pipelineSegments(for: record),
-            ["STT: Groq, 301 ms", "Cleanup: Groq, 184 ms", "Total: 485 ms"]
+            ["STT: Groq, 301 ms", "Cleanup: Groq, 184 ms", "Total: 612 ms"]
         )
+    }
+
+    func testUsageCurrencyFormattingUsesStableFractionPrecision() {
+        XCTAssertEqual(
+            UsageDisplayFormatter.currency(Decimal(string: "0.0119277777777777793024")!, complete: true),
+            "$0.0119"
+        )
+        XCTAssertEqual(UsageDisplayFormatter.currency(2, complete: true), "$2.00")
+        XCTAssertEqual(UsageDisplayFormatter.currency(1, complete: false), "Partially available")
     }
 
     func testPrivateClipboardShortcutsAreExact() {
@@ -71,6 +82,15 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertFalse(ShortcutMatcher.matches(shortcut, keyCode: 8, flags: [.maskCommand]))
         XCTAssertFalse(ShortcutMatcher.matches(shortcut, keyCode: 9, flags: [.maskCommand, .maskControl]))
         XCTAssertEqual(shortcut.displayName, "⌃⌘C")
+    }
+
+    func testDisabledStyleCannotBeSelected() {
+        let model = AppModel()
+        let disabled = WritingStyle(name: "Disabled", instruction: "Do not use", isEnabled: false)
+        model.data.styles = [disabled]
+        model.selectedStyleID = nil
+        model.selectStyle(disabled.id)
+        XCTAssertNil(model.selectedStyleID)
     }
 
     func testMissingFocusedTargetNeverTouchesAnotherApp() async {

@@ -67,6 +67,7 @@ public struct OpenAICompatibleCleanupProvider: CleanupLLMProvider {
             model: model,
             inputTokens: payload.usage?.promptTokens,
             outputTokens: payload.usage?.completionTokens,
+            providerReportedCostUSD: payload.usage?.cost.map { Decimal($0) },
             latency: seconds(since: started)
         )
     }
@@ -100,7 +101,8 @@ public struct OpenAICompatibleCleanupProvider: CleanupLLMProvider {
         struct Usage: Decodable {
             let promptTokens: Int?
             let completionTokens: Int?
-            enum CodingKeys: String, CodingKey { case promptTokens = "prompt_tokens"; case completionTokens = "completion_tokens" }
+            let cost: Double?
+            enum CodingKeys: String, CodingKey { case promptTokens = "prompt_tokens"; case completionTokens = "completion_tokens"; case cost }
         }
     }
 }

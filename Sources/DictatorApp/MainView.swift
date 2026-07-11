@@ -8,6 +8,7 @@ enum Destination: String, CaseIterable, Identifiable {
     case vocabulary = "Vocabulary"
     case rules = "Styles & snippets"
     case clipboard = "Clipboard"
+    case usage = "Usage"
     case settings = "Settings"
     var id: String { rawValue }
     var icon: String {
@@ -17,6 +18,7 @@ enum Destination: String, CaseIterable, Identifiable {
         case .vocabulary: "text.book.closed"
         case .rules: "wand.and.stars"
         case .clipboard: "doc.on.clipboard"
+        case .usage: "chart.bar.xaxis"
         case .settings: "slider.horizontal.3"
         }
     }
@@ -97,6 +99,7 @@ struct MainView: View {
         case .vocabulary: VocabularyView(model: model)
         case .rules: StylesSnippetsView(model: model)
         case .clipboard: ClipboardView(model: model)
+        case .usage: UsageView(model: model)
         case .settings: SettingsView(model: model)
         }
     }

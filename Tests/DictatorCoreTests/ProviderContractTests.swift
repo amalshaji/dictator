@@ -65,7 +65,7 @@ final class ProviderContractTests: XCTestCase {
     }
 
     func testOpenAICompatibleCleanupParsesJSONAndUsage() async throws {
-        let response = #"{"choices":[{"message":{"content":"{\"intent\":\"transcription\",\"text\":\"Ship Dictator 2.4 at https://example.com.\"}"}}],"usage":{"prompt_tokens":20,"completion_tokens":9}}"#
+        let response = #"{"choices":[{"message":{"content":"{\"intent\":\"transcription\",\"text\":\"Ship Dictator 2.4 at https://example.com.\"}"}}],"usage":{"prompt_tokens":20,"completion_tokens":9,"cost":0.004}}"#
         let transport = MockTransport { _ in (response.data(using: .utf8)!, 200) }
         let provider = OpenAICompatibleCleanupProvider(
             kind: .groq,
@@ -84,6 +84,18 @@ final class ProviderContractTests: XCTestCase {
         )
         XCTAssertEqual(result.text, "Ship Dictator 2.4 at https://example.com.")
         XCTAssertEqual(result.inputTokens, 20)
+        XCTAssertEqual(result.providerReportedCostUSD, Decimal(string: "0.004"))
+    }
+
+    func testCloudflareCleanupParsesUsage() async throws {
+        let response = #"{"result":{"response":"{\"intent\":\"transcription\",\"text\":\"Hello Dictator.\"}","usage":{"prompt_tokens":12,"completion_tokens":4}}}"#
+        let provider = CloudflareCleanupProvider(transport: MockTransport { _ in (response.data(using: .utf8)!, 200) })
+        let result = try await provider.clean(
+            request: .init(input: .transcription("Hello Dictator."), vocabulary: [.init(value: "Dictator")]),
+            model: "test",
+            credentials: .init(apiKey: "test", accountID: "account")
+        )
+        XCTAssertEqual(result.inputTokens, 12); XCTAssertEqual(result.outputTokens, 4)
     }
 
     func testOpenAICompatibleCleanupRoutesSelectedTextTransformation() async throws {

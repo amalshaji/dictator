@@ -29,6 +29,7 @@ final class AppModel: ObservableObject {
     @Published var selectedStyleID: UUID? = nil {
         didSet { defaults.set(selectedStyleID?.uuidString, forKey: "selectedStyleID") }
     }
+    let pricing = PricingStore()
 
     private let defaults = UserDefaults.standard
     private let store = LocalStore(fileURL: LocalStore.applicationSupportURL())
@@ -37,6 +38,7 @@ final class AppModel: ObservableObject {
     private let hotkey = HotkeyMonitor()
     private let inserter = AccessibilityInserter()
     private let transcriptProcessor = TranscriptProcessor()
+    private let transcriptRepairService = TranscriptRepairService()
     private let hud = FloatingPanelController()
     private var focusedTarget: FocusedTarget?
 
@@ -97,6 +99,7 @@ final class AppModel: ObservableObject {
     func stopDictation() async {
         guard phase == .listening else { return }
         phase = .processing
+        let pipelineStarted = ContinuousClock.now
         let audio = recorder.stop()
         guard audio.duration >= 0.15 else {
             phase = .idle
@@ -104,7 +107,7 @@ final class AppModel: ObservableObject {
             hud.hideAfterDelay()
             return
         }
-        await process(audio)
+        await process(audio, pipelineStarted: pipelineStarted)
     }
 
     func cancelDictation() {
@@ -115,7 +118,7 @@ final class AppModel: ObservableObject {
         hud.hideAfterDelay()
     }
 
-    private func process(_ audio: RecordedAudio) async {
+    private func process(_ audio: RecordedAudio, pipelineStarted: ContinuousClock.Instant) async {
         hud.show(.transcribing)
         do {
             guard let provider = ProviderRegistry.sttProvider(for: selectedSTT) else { throw ProviderError.unsupported("Provider is not available") }
@@ -159,6 +162,7 @@ final class AppModel: ObservableObject {
             }
 
             let insertion = await inserter.insert(requestedInsertion, into: focusedTarget)
+            let pipelineLatency = Self.elapsedSeconds(since: pipelineStarted)
             if case .privateClipboard = insertion {
                 data.clipboard.insert(.init(text: finalText, rawText: raw.text, sourceBundleID: focusedTarget?.bundleIdentifier), at: 0)
             }
@@ -168,12 +172,11 @@ final class AppModel: ObservableObject {
                 finalText: finalText,
                 sttProvider: selectedSTT,
                 sttModel: model,
-                llmProvider: cleanupResult?.provider,
-                llmModel: cleanupResult?.model,
                 sourceBundleID: focusedTarget?.bundleIdentifier,
                 audioDuration: audio.duration,
                 sttLatency: raw.latency,
-                cleanupLatency: cleanupResult?.latency,
+                pipelineLatency: pipelineLatency,
+                cleanup: cleanupResult.map(CleanupExecution.init(result:)),
                 insertionOutcome: insertion.label
             ), at: 0)
             await persist()
@@ -182,6 +185,11 @@ final class AppModel: ObservableObject {
         } catch {
             showError(error.localizedDescription)
         }
+    }
+
+    private static func elapsedSeconds(since instant: ContinuousClock.Instant) -> TimeInterval {
+        let components = instant.duration(to: .now).components
+        return Double(components.seconds) + Double(components.attoseconds) / 1e18
     }
 
     private func transcribeWithRetry(provider: any SpeechToTextProvider, audio: RecordedAudio, options: TranscriptionOptions, credentials: ProviderCredentials) async throws -> TranscriptionResult {
@@ -214,11 +222,16 @@ final class AppModel: ObservableObject {
         objectWillChange.send()
     }
 
-    func addVocabulary(_ value: String) {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        data.vocabulary.insert(.init(value: trimmed), at: 0)
+    func saveVocabulary(_ entry: VocabularyEntry) throws {
+        let entry = try PersonalizationValidator.validateVocabulary(entry, among: data.vocabulary)
+        if let index = data.vocabulary.firstIndex(where: { $0.id == entry.id }) { data.vocabulary[index] = entry }
+        else { data.vocabulary.insert(entry, at: 0) }
         schedulePersistence()
+    }
+
+    func setVocabularyEnabled(_ id: UUID, _ enabled: Bool) {
+        guard let index = data.vocabulary.firstIndex(where: { $0.id == id }) else { return }
+        data.vocabulary[index].isEnabled = enabled; schedulePersistence()
     }
 
     func deleteVocabulary(_ id: UUID) {
@@ -226,14 +239,25 @@ final class AppModel: ObservableObject {
         schedulePersistence()
     }
 
-    func addStyle(name: String, instruction: String) {
-        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let instruction = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, !instruction.isEmpty else { return }
-        let style = WritingStyle(name: name, instruction: instruction)
-        data.styles.insert(style, at: 0)
-        selectedStyleID = style.id
+    func saveStyle(_ style: WritingStyle) throws {
+        let style = try PersonalizationValidator.validateStyle(style, among: data.styles)
+        if let index = data.styles.firstIndex(where: { $0.id == style.id }) { data.styles[index] = style }
+        else { data.styles.insert(style, at: 0); selectedStyleID = style.id }
+        if !style.isEnabled, selectedStyleID == style.id { selectedStyleID = nil }
         schedulePersistence()
+    }
+
+    func setStyleEnabled(_ id: UUID, _ enabled: Bool) {
+        guard let index = data.styles.firstIndex(where: { $0.id == id }) else { return }
+        data.styles[index].isEnabled = enabled
+        if !enabled, selectedStyleID == id { selectedStyleID = nil }
+        schedulePersistence()
+    }
+
+    func selectStyle(_ id: UUID?) {
+        guard let id else { selectedStyleID = nil; return }
+        guard data.styles.contains(where: { $0.id == id && $0.isEnabled }) else { return }
+        selectedStyleID = id
     }
 
     func deleteStyle(_ id: UUID) {
@@ -242,11 +266,16 @@ final class AppModel: ObservableObject {
         schedulePersistence()
     }
 
-    func addSnippet(trigger: String, expansion: String) {
-        let trigger = trigger.trimmingCharacters(in: .whitespacesAndNewlines)
-        let expansion = expansion.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trigger.isEmpty, !expansion.isEmpty else { return }
-        data.snippets.insert(.init(trigger: trigger, expansion: expansion), at: 0)
+    func saveSnippet(_ snippet: SnippetEntry) throws {
+        let snippet = try PersonalizationValidator.validateSnippet(snippet, among: data.snippets)
+        if let index = data.snippets.firstIndex(where: { $0.id == snippet.id }) { data.snippets[index] = snippet }
+        else { data.snippets.insert(snippet, at: 0) }
+        schedulePersistence()
+    }
+
+    func setSnippetEnabled(_ id: UUID, _ enabled: Bool) {
+        guard let index = data.snippets.firstIndex(where: { $0.id == id }) else { return }
+        data.snippets[index].isEnabled = enabled
         schedulePersistence()
     }
 
@@ -264,6 +293,48 @@ final class AppModel: ObservableObject {
         } else {
             showError("Could not post the paste shortcut")
         }
+    }
+
+    func copyTranscriptText(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    func pasteTranscriptText(_ text: String) async {
+        if !(await inserter.pasteIntoFrontmostApp(text)) { showError("Could not post the paste shortcut") }
+    }
+
+    func appendRevision(_ revision: TranscriptRevision, to transcriptID: UUID) {
+        guard let index = data.transcripts.firstIndex(where: { $0.id == transcriptID }) else { return }
+        data.transcripts[index].revisions.append(revision)
+        data.transcripts[index].preferredRevisionID = revision.id
+        schedulePersistence()
+    }
+
+    func reprocessTranscript(_ transcriptID: UUID) async throws -> TranscriptRevision {
+        guard let record = data.transcripts.first(where: { $0.id == transcriptID }) else {
+            throw ProviderError.invalidConfiguration("Transcript is no longer available.")
+        }
+        return try await transcriptRepairService.reprocess(
+            record: record,
+            vocabulary: data.vocabulary,
+            snippets: data.snippets,
+            cleanup: try cleanupConfiguration()
+        )
+    }
+
+    func teachDictator(incorrect: String, correct: String) throws {
+        let incorrect = incorrect.trimmingCharacters(in: .whitespacesAndNewlines)
+        let correct = correct.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !incorrect.isEmpty, !correct.isEmpty else {
+            throw PersonalizationValidationError.emptyValue("Correction fields")
+        }
+        if var entry = data.vocabulary.first(where: { $0.value.caseInsensitiveCompare(correct) == .orderedSame }) {
+            entry.variants.append(incorrect)
+            try saveVocabulary(entry)
+            return
+        }
+        try saveVocabulary(.init(value: correct, variants: [incorrect]))
     }
 
     func requestAccessibilityPermission() {
@@ -443,7 +514,10 @@ final class AppModel: ObservableObject {
     }
 
     private func load() async {
-        do { data = try await store.load() } catch { lastError = error.localizedDescription }
+        do {
+            data = try await store.load()
+            if let selectedStyleID, !data.styles.contains(where: { $0.id == selectedStyleID && $0.isEnabled }) { self.selectedStyleID = nil }
+        } catch { lastError = error.localizedDescription }
     }
 
     private func schedulePersistence() {

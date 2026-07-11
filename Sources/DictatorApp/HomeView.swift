@@ -3,6 +3,7 @@ import SwiftUI
 
 struct HomeView: View {
     @ObservedObject var model: AppModel
+    @State private var selectedTranscript: TranscriptRecord?
 
     var body: some View {
         ScrollView {
@@ -17,6 +18,8 @@ struct HomeView: View {
             .padding(.horizontal, 42)
             .padding(.vertical, 36)
         }
+        .scrollIndicators(.hidden)
+        .sheet(item: $selectedTranscript) { record in TranscriptDetailView(model: model, transcriptID: record.id) }
     }
 
     private var header: some View {
@@ -40,7 +43,7 @@ struct HomeView: View {
         HStack(spacing: 0) {
             metric(value: "\(wordsThisWeek)", label: "words this week")
             metric(value: averageWPM.map(String.init) ?? "—", label: "average wpm")
-            metric(value: averageLatency.map { String(format: "%.0f ms", $0 * 1_000) } ?? "—", label: "STT latency")
+            metric(value: averageLatency.map { String(format: "%.0f ms", $0 * 1_000) } ?? "—", label: "pipeline latency")
         }
         .padding(.top, 34)
     }
@@ -56,13 +59,12 @@ struct HomeView: View {
     private var transcriptList: some View {
         LazyVStack(alignment: .leading, spacing: 0) {
             ForEach(model.data.transcripts) { record in
-                TranscriptRow(record: record)
+                Button { selectedTranscript = record } label: { TranscriptRow(record: record) }.buttonStyle(.plain)
                 Divider()
             }
         }
         .padding(.top, 12)
     }
-
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Your first transcript will appear here.").font(.dictatorBody(15, weight: .medium))
@@ -85,24 +87,20 @@ struct HomeView: View {
     }
 
     private var averageLatency: Double? {
-        guard !model.data.transcripts.isEmpty else { return nil }
-        return model.data.transcripts.reduce(0) { $0 + $1.sttLatency } / Double(model.data.transcripts.count)
+        let latencies = model.data.transcripts.compactMap(\.pipelineLatency)
+        guard !latencies.isEmpty else { return nil }
+        return latencies.reduce(0, +) / Double(latencies.count)
     }
 }
 
 enum TranscriptMetadataFormatter {
     static func pipelineSegments(for record: TranscriptRecord) -> [String] {
         var segments = ["STT: \(sttDisplayName(for: record.sttProvider)), \(milliseconds(record.sttLatency))"]
-        guard let cleanupProvider = record.llmProvider else { return segments }
-
-        let providerName = cleanupDisplayName(for: cleanupProvider)
-        guard let cleanupLatency = record.cleanupLatency else {
-            segments.append("Cleanup: \(providerName)")
-            return segments
+        if let cleanup = record.cleanup {
+            let providerName = cleanupDisplayName(for: cleanup.provider)
+            segments.append("Cleanup: \(providerName), \(milliseconds(cleanup.latency))")
         }
-
-        segments.append("Cleanup: \(providerName), \(milliseconds(cleanupLatency))")
-        segments.append("Total: \(milliseconds(record.sttLatency + cleanupLatency))")
+        segments.append(record.pipelineLatency.map { "Total: \(milliseconds($0))" } ?? "Total: —")
         return segments
     }
 
@@ -123,7 +121,7 @@ private struct TranscriptRow: View {
     let record: TranscriptRecord
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
-            Text(record.finalText).font(.dictatorBody(14)).lineLimit(3).textSelection(.enabled)
+            Text(record.currentText).font(.dictatorBody(14)).lineLimit(3).textSelection(.enabled)
             HStack(spacing: 10) {
                 Text(record.createdAt.dictatorTimestamp)
                 ForEach(TranscriptMetadataFormatter.pipelineSegments(for: record), id: \.self) { segment in
