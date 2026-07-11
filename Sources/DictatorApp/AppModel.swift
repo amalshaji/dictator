@@ -23,15 +23,13 @@ final class AppModel: ObservableObject {
     @Published var inputMonitoringGranted = CGPreflightListenEventAccess()
     @Published var microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     @Published var onboardingComplete = UserDefaults.standard.bool(forKey: "onboardingComplete")
-    @Published var pricingSnapshot: PricingSnapshot?
-    @Published var pricingRefreshInProgress = false
-    @Published var pricingError: String?
     @Published private(set) var dictateShortcut = GlobalShortcut.dictate
     @Published private(set) var pasteLatestShortcut = GlobalShortcut.pasteLatest
     @Published private(set) var openClipboardShortcut = GlobalShortcut.openClipboard
     @Published var selectedStyleID: UUID? = nil {
         didSet { defaults.set(selectedStyleID?.uuidString, forKey: "selectedStyleID") }
     }
+    let pricing = PricingStore()
 
     private let defaults = UserDefaults.standard
     private let store = LocalStore(fileURL: LocalStore.applicationSupportURL())
@@ -40,7 +38,7 @@ final class AppModel: ObservableObject {
     private let hotkey = HotkeyMonitor()
     private let inserter = AccessibilityInserter()
     private let transcriptProcessor = TranscriptProcessor()
-    private let pricingService = PricingService()
+    private let transcriptRepairService = TranscriptRepairService()
     private let hud = FloatingPanelController()
     private var focusedTarget: FocusedTarget?
 
@@ -224,17 +222,12 @@ final class AppModel: ObservableObject {
         objectWillChange.send()
     }
 
-    @discardableResult
-    func saveVocabulary(_ entry: VocabularyEntry) -> Bool {
-        do {
-            let entry = try PersonalizationValidator.validateVocabulary(entry, among: data.vocabulary)
-            if let index = data.vocabulary.firstIndex(where: { $0.id == entry.id }) { data.vocabulary[index] = entry }
-            else { data.vocabulary.insert(entry, at: 0) }
-            lastError = nil; schedulePersistence(); return true
-        } catch { lastError = error.localizedDescription; return false }
+    func saveVocabulary(_ entry: VocabularyEntry) throws {
+        let entry = try PersonalizationValidator.validateVocabulary(entry, among: data.vocabulary)
+        if let index = data.vocabulary.firstIndex(where: { $0.id == entry.id }) { data.vocabulary[index] = entry }
+        else { data.vocabulary.insert(entry, at: 0) }
+        schedulePersistence()
     }
-
-    func addVocabulary(_ value: String) { _ = saveVocabulary(.init(value: value)) }
 
     func setVocabularyEnabled(_ id: UUID, _ enabled: Bool) {
         guard let index = data.vocabulary.firstIndex(where: { $0.id == id }) else { return }
@@ -246,22 +239,19 @@ final class AppModel: ObservableObject {
         schedulePersistence()
     }
 
-    @discardableResult
-    func saveStyle(_ style: WritingStyle) -> Bool {
-        do {
-            let style = try PersonalizationValidator.validateStyle(style, among: data.styles)
-            if let index = data.styles.firstIndex(where: { $0.id == style.id }) { data.styles[index] = style }
-            else { data.styles.insert(style, at: 0); selectedStyleID = style.id }
-            if !style.isEnabled, selectedStyleID == style.id { selectedStyleID = nil }
-            lastError = nil; schedulePersistence(); return true
-        } catch { lastError = error.localizedDescription; return false }
+    func saveStyle(_ style: WritingStyle) throws {
+        let style = try PersonalizationValidator.validateStyle(style, among: data.styles)
+        if let index = data.styles.firstIndex(where: { $0.id == style.id }) { data.styles[index] = style }
+        else { data.styles.insert(style, at: 0); selectedStyleID = style.id }
+        if !style.isEnabled, selectedStyleID == style.id { selectedStyleID = nil }
+        schedulePersistence()
     }
 
-    func addStyle(name: String, instruction: String) { _ = saveStyle(.init(name: name, instruction: instruction)) }
-
     func setStyleEnabled(_ id: UUID, _ enabled: Bool) {
-        guard let style = data.styles.first(where: { $0.id == id }) else { return }
-        var updated = style; updated.isEnabled = enabled; _ = saveStyle(updated)
+        guard let index = data.styles.firstIndex(where: { $0.id == id }) else { return }
+        data.styles[index].isEnabled = enabled
+        if !enabled, selectedStyleID == id { selectedStyleID = nil }
+        schedulePersistence()
     }
 
     func selectStyle(_ id: UUID?) {
@@ -276,21 +266,17 @@ final class AppModel: ObservableObject {
         schedulePersistence()
     }
 
-    @discardableResult
-    func saveSnippet(_ snippet: SnippetEntry) -> Bool {
-        do {
-            let snippet = try PersonalizationValidator.validateSnippet(snippet, among: data.snippets)
-            if let index = data.snippets.firstIndex(where: { $0.id == snippet.id }) { data.snippets[index] = snippet }
-            else { data.snippets.insert(snippet, at: 0) }
-            lastError = nil; schedulePersistence(); return true
-        } catch { lastError = error.localizedDescription; return false }
+    func saveSnippet(_ snippet: SnippetEntry) throws {
+        let snippet = try PersonalizationValidator.validateSnippet(snippet, among: data.snippets)
+        if let index = data.snippets.firstIndex(where: { $0.id == snippet.id }) { data.snippets[index] = snippet }
+        else { data.snippets.insert(snippet, at: 0) }
+        schedulePersistence()
     }
 
-    func addSnippet(trigger: String, expansion: String) { _ = saveSnippet(.init(trigger: trigger, expansion: expansion)) }
-
     func setSnippetEnabled(_ id: UUID, _ enabled: Bool) {
-        guard let snippet = data.snippets.first(where: { $0.id == id }) else { return }
-        var updated = snippet; updated.isEnabled = enabled; _ = saveSnippet(updated)
+        guard let index = data.snippets.firstIndex(where: { $0.id == id }) else { return }
+        data.snippets[index].isEnabled = enabled
+        schedulePersistence()
     }
 
     func deleteSnippet(_ id: UUID) {
@@ -329,31 +315,26 @@ final class AppModel: ObservableObject {
         guard let record = data.transcripts.first(where: { $0.id == transcriptID }) else {
             throw ProviderError.invalidConfiguration("Transcript is no longer available.")
         }
-        let started = ContinuousClock.now
-        let processed = await transcriptProcessor.process(
-            rawText: record.rawText,
+        return await transcriptRepairService.reprocess(
+            record: record,
             vocabulary: data.vocabulary,
             snippets: data.snippets,
             cleanup: try cleanupConfiguration()
         )
-        let cleanupResult = processed.cleanupResult
-        return TranscriptRevision(
-            text: processed.finalText,
-            origin: cleanupResult.map { .cleanup(.init(result: $0)) } ?? .localProcessing,
-            repairLatency: Self.elapsedSeconds(since: started)
-        )
     }
 
-    @discardableResult
-    func teachDictator(incorrect: String, correct: String) -> Bool {
+    func teachDictator(incorrect: String, correct: String) throws {
         let incorrect = incorrect.trimmingCharacters(in: .whitespacesAndNewlines)
         let correct = correct.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !incorrect.isEmpty, !correct.isEmpty else { lastError = "Both correction fields are required."; return false }
+        guard !incorrect.isEmpty, !correct.isEmpty else {
+            throw PersonalizationValidationError.emptyValue("Correction fields")
+        }
         if var entry = data.vocabulary.first(where: { $0.value.caseInsensitiveCompare(correct) == .orderedSame }) {
             entry.variants.append(incorrect)
-            return saveVocabulary(entry)
+            try saveVocabulary(entry)
+            return
         }
-        return saveVocabulary(.init(value: correct, variants: [incorrect]))
+        try saveVocabulary(.init(value: correct, variants: [incorrect]))
     }
 
     func requestAccessibilityPermission() {
@@ -547,15 +528,6 @@ final class AppModel: ObservableObject {
         let snapshot = data
         do { try await store.save(snapshot) }
         catch { lastError = "Could not save local data: \(error.localizedDescription)" }
-    }
-
-    func refreshPricing(force: Bool = false) async {
-        pricingRefreshInProgress = true; defer { pricingRefreshInProgress = false }
-        do { pricingSnapshot = try await pricingService.refreshIfNeeded(force: force); pricingError = nil }
-        catch {
-            pricingSnapshot = await pricingService.current()
-            pricingError = "Could not refresh pricing. Showing the last available catalog."
-        }
     }
 
     private func showError(_ message: String) {

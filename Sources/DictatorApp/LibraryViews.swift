@@ -41,8 +41,13 @@ struct VocabularyView: View {
         .sheet(item: $editing) { entry in VocabularyEditor(model: model, entry: entry) }
     }
     private func add() {
-        if model.saveVocabulary(.init(value: newTerm)) { newTerm = ""; addError = nil }
-        else { addError = model.lastError }
+        do {
+            try model.saveVocabulary(.init(value: newTerm))
+            newTerm = ""
+            addError = nil
+        } catch {
+            addError = error.localizedDescription
+        }
     }
 }
 
@@ -68,7 +73,12 @@ private struct VocabularyEditor: View {
             if let validationError { Text(validationError).font(.dictatorBody(11, weight: .medium)).foregroundStyle(.red) }
             HStack { Spacer(); Button("Cancel") { dismiss() }.dictatorButton(.ghost); Button("Save") {
                 entry.variants = variants.components(separatedBy: .newlines)
-                if model.saveVocabulary(entry) { dismiss() } else { validationError = model.lastError ?? "Could not save this vocabulary entry." }
+                do {
+                    try model.saveVocabulary(entry)
+                    dismiss()
+                } catch {
+                    validationError = error.localizedDescription
+                }
             }.dictatorButton() }
         }.padding(24).frame(width: 460)
     }

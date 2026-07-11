@@ -3,13 +3,19 @@ import SwiftUI
 
 struct UsageView: View {
     @ObservedObject var model: AppModel
+    @ObservedObject private var pricing: PricingStore
     @State private var days = 7
+
+    init(model: AppModel) {
+        self.model = model
+        _pricing = ObservedObject(wrappedValue: model.pricing)
+    }
 
     private var report: UsageReport {
         UsageAnalytics.report(
             model.data.transcripts,
             since: Calendar.current.date(byAdding: .day, value: -days, to: Date())!,
-            rates: model.pricingSnapshot?.rates ?? PricingCatalog.fallbackRates
+            rates: pricing.snapshot?.rates ?? PricingCatalog.fallbackRates
         )
     }
 
@@ -43,7 +49,7 @@ struct UsageView: View {
             .frame(maxWidth: DictatorDesign.contentWidth, alignment: .leading)
             .padding(42)
         }
-        .task { await model.refreshPricing() }
+        .task { await pricing.refresh() }
     }
 
     private var header: some View {
@@ -88,17 +94,17 @@ struct UsageView: View {
     private var pricingFooter: some View {
         HStack {
             VStack(alignment: .leading, spacing: 3) {
-                Text(model.pricingSnapshot.map { "models.dev catalog refreshed \($0.fetchedAt.dictatorTimestamp)" } ?? "Using dated fallback prices")
+                Text(pricing.snapshot.map { "models.dev catalog refreshed \($0.fetchedAt.dictatorTimestamp)" } ?? "Using dated fallback prices")
                 Text("Estimates exclude free tiers, credits, discounts, taxes, and account contracts.")
-                if let error = model.pricingError { Text(error).foregroundStyle(.orange) }
+                if let error = pricing.errorMessage { Text(error).foregroundStyle(.orange) }
             }
             .font(.dictatorBody(11))
             .foregroundStyle(.secondary)
             Spacer()
-            Button(model.pricingRefreshInProgress ? "Refreshing…" : "Refresh pricing") {
-                Task { await model.refreshPricing(force: true) }
+            Button(pricing.isRefreshing ? "Refreshing…" : "Refresh pricing") {
+                Task { await pricing.refresh(force: true) }
             }
-            .disabled(model.pricingRefreshInProgress)
+            .disabled(pricing.isRefreshing)
             .dictatorButton(.secondary)
         }
     }
