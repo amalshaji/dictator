@@ -10,6 +10,8 @@ struct StylesSnippetsView: View {
     @State private var expansion = ""
     @State private var editingStyle: WritingStyle?
     @State private var editingSnippet: SnippetEntry?
+    @State private var styleError: String?
+    @State private var snippetError: String?
 
     var body: some View {
         ScrollView {
@@ -32,6 +34,8 @@ struct StylesSnippetsView: View {
             .frame(maxWidth: DictatorDesign.contentWidth, alignment: .leading)
             .padding(.horizontal, 42).padding(.vertical, 36)
         }
+        .sheet(item: $editingStyle) { item in RuleEditor(model: model, style: item) }
+        .sheet(item: $editingSnippet) { item in RuleEditor(model: model, snippet: item) }
     }
 
     private var styles: some View {
@@ -44,10 +48,11 @@ struct StylesSnippetsView: View {
                     TextField("e.g. Use short paragraphs and a warm professional tone", text: $instruction).textFieldStyle(DictatorTextFieldStyle())
                 }
                 Button("Add style") {
-                    model.addStyle(name: name, instruction: instruction)
-                    name = ""; instruction = ""
+                    if model.saveStyle(.init(name: name, instruction: instruction)) { name = ""; instruction = ""; styleError = nil }
+                    else { styleError = model.lastError }
                 }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .dictatorButton()
+                if let styleError { validationMessage(styleError) }
             }
             sectionLabel("Your styles")
             VStack(spacing: 0) {
@@ -57,9 +62,9 @@ struct StylesSnippetsView: View {
             ForEach(model.data.styles) { style in
                 Divider().padding(.leading, 52)
                 HStack {
-                    Button { model.selectedStyleID = style.id } label: {
+                    Button { model.selectStyle(style.id) } label: {
                         ruleRow(title: style.name, detail: style.instruction, selected: model.selectedStyleID == style.id)
-                    }.buttonStyle(.plain)
+                    }.buttonStyle(.plain).disabled(!style.isEnabled).opacity(style.isEnabled ? 1 : 0.5)
                     Toggle("", isOn: Binding(get: { style.isEnabled }, set: { model.setStyleEnabled(style.id, $0) })).labelsHidden().toggleStyle(.switch)
                     Button("Edit") { editingStyle = style }.dictatorButton(.ghost)
                     Button(role: .destructive) { model.deleteStyle(style.id) } label: { Image(systemName: "trash") }.dictatorButton(.destructive)
@@ -81,10 +86,11 @@ struct StylesSnippetsView: View {
                         .dictatorEditor()
                 }
                 Button("Add snippet") {
-                    model.addSnippet(trigger: trigger, expansion: expansion)
-                    trigger = ""; expansion = ""
+                    if model.saveSnippet(.init(trigger: trigger, expansion: expansion)) { trigger = ""; expansion = ""; snippetError = nil }
+                    else { snippetError = model.lastError }
                 }.disabled(trigger.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || expansion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .dictatorButton()
+                if let snippetError { validationMessage(snippetError) }
             }
             sectionLabel("Your snippets")
             if model.data.snippets.isEmpty {
@@ -104,8 +110,6 @@ struct StylesSnippetsView: View {
                 .ruleListChrome()
             }
         }
-        .sheet(item: $editingStyle) { item in RuleEditor(model: model, style: item) }
-        .sheet(item: $editingSnippet) { item in RuleEditor(model: model, snippet: item) }
     }
 
     private func ruleRow(title: String, detail: String, selected: Bool) -> some View {
@@ -144,6 +148,10 @@ struct StylesSnippetsView: View {
         Text(title.uppercased()).font(.dictatorUtility(9)).foregroundStyle(DictatorDesign.muted)
     }
 
+    private func validationMessage(_ message: String) -> some View {
+        Text(message).font(.dictatorBody(11, weight: .medium)).foregroundStyle(.red)
+    }
+
     private func emptyState(icon: String, title: String, detail: String) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon).font(.system(size: 12, weight: .semibold)).foregroundStyle(DictatorDesign.focus)
@@ -167,6 +175,7 @@ private struct RuleEditor: View {
     @State private var snippet: SnippetEntry?
     @State private var primary: String
     @State private var secondary: String
+    @State private var validationError: String?
 
     init(model: AppModel, style: WritingStyle) {
         self.model = model; _style = State(initialValue: style); _snippet = State(initialValue: nil)
@@ -181,12 +190,13 @@ private struct RuleEditor: View {
             Text(style == nil ? "Edit snippet" : "Edit style").font(.dictatorDisplay(22))
             TextField(style == nil ? "Trigger" : "Name", text: $primary).textFieldStyle(DictatorTextFieldStyle())
             TextEditor(text: $secondary).frame(minHeight: 120).dictatorEditor()
+            if let validationError { Text(validationError).font(.dictatorBody(11, weight: .medium)).foregroundStyle(.red) }
             HStack { Spacer(); Button("Cancel") { dismiss() }.dictatorButton(.ghost); Button("Save") {
                 let saved: Bool
                 if var style { style.name = primary; style.instruction = secondary; saved = model.saveStyle(style) }
                 else if var snippet { snippet.trigger = primary; snippet.expansion = secondary; saved = model.saveSnippet(snippet) }
                 else { saved = false }
-                if saved { dismiss() }
+                if saved { dismiss() } else { validationError = model.lastError ?? "Could not save this rule." }
             }.dictatorButton() }
         }.padding(24).frame(width: 460)
     }

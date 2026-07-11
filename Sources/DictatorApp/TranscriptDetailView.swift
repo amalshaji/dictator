@@ -10,6 +10,7 @@ struct TranscriptDetailView: View {
     @State private var teaching = false
     @State private var incorrect = ""
     @State private var correct = ""
+    @State private var teachError: String?
     @State private var confirmReprocess = false
     @State private var preview: TranscriptRevision?
     @State private var working = false
@@ -90,7 +91,7 @@ struct TranscriptDetailView: View {
             Text("STT: \(record.sttProvider.rawValue) · \(record.sttModel)").font(.dictatorBody(11))
             if let provider = record.llmProvider, let model = record.llmModel { Text("Cleanup: \(provider.rawValue) · \(model)").font(.dictatorBody(11)) }
             Text("Insertion: \(record.insertionOutcome)" + (record.sourceBundleID.map { " · \($0)" } ?? "")).font(.dictatorBody(11))
-            if let usage = record.llmUsage { Text("Tokens: \(usage.inputTokens) in / \(usage.outputTokens) out").font(.dictatorBody(11)) }
+            if let usage = record.llmUsage { Text("Tokens: \(tokenText(usage))").font(.dictatorBody(11)) }
             if let usage = record.llmUsage, let provider = record.llmProvider, let modelName = record.llmModel {
                 Text("LLM cost: \(costText(provider: provider, model: modelName, usage: usage))").font(.dictatorBody(11))
             }
@@ -114,7 +115,11 @@ struct TranscriptDetailView: View {
             TextField("Incorrect phrase", text: $incorrect).textFieldStyle(DictatorTextFieldStyle())
             TextField("Correct phrase", text: $correct).textFieldStyle(DictatorTextFieldStyle())
             Text("Nothing is learned automatically. Saving creates or updates a vocabulary rule.").font(.dictatorBody(11)).foregroundStyle(.secondary)
-            HStack { Spacer(); Button("Cancel") { teaching = false }.dictatorButton(.ghost); Button("Save rule") { if model.teachDictator(incorrect: incorrect, correct: correct) { teaching = false; incorrect = ""; correct = "" } }.dictatorButton() }
+            if let teachError { Text(teachError).font(.dictatorBody(11, weight: .medium)).foregroundStyle(.red) }
+            HStack { Spacer(); Button("Cancel") { teaching = false; teachError = nil }.dictatorButton(.ghost); Button("Save rule") {
+                if model.teachDictator(incorrect: incorrect, correct: correct) { teaching = false; incorrect = ""; correct = ""; teachError = nil }
+                else { teachError = model.lastError ?? "Could not save this correction." }
+            }.dictatorButton() }
         }.padding(24).frame(width: 480)
     }
 
@@ -136,7 +141,7 @@ struct TranscriptDetailView: View {
     private func revisionMetadata(_ revision: TranscriptRevision) -> String {
         var parts = [revision.origin.rawValue, latency(revision.repairLatency), revision.createdAt.dictatorTimestamp]
         if let usage = revision.llmUsage {
-            parts.append("\(usage.inputTokens)/\(usage.outputTokens) tokens")
+            parts.append(tokenText(usage))
             if let provider = revision.llmProvider, let model = revision.llmModel { parts.append(costText(provider: provider, model: model, usage: usage)) }
         }
         return parts.joined(separator: " · ")
@@ -146,6 +151,10 @@ struct TranscriptDetailView: View {
         let rates = model.pricingSnapshot?.rates ?? PricingCatalog.fallbackRates
         guard let cost = PricingCatalog.estimatedLLMCost(provider: provider, model: modelName, usage: usage, rates: rates) else { return "unavailable" }
         return "$" + NSDecimalNumber(decimal: cost).stringValue + (usage.providerReportedCostUSD == nil ? " estimated" : " reported")
+    }
+    private func tokenText(_ usage: LLMUsage) -> String {
+        guard let input = usage.inputTokens, let output = usage.outputTokens else { return "unavailable" }
+        return "\(input) in / \(output) out"
     }
 
     private func value(_ label: String, _ text: String) -> some View { VStack(alignment: .leading, spacing: 3) { Text(text).font(.dictatorDisplay(15)); Text(label).font(.dictatorBody(9)).foregroundStyle(.secondary) }.frame(maxWidth: .infinity, alignment: .leading) }

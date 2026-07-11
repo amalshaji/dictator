@@ -38,8 +38,8 @@ struct UsageView: View {
                 usageSection("LLM cleanup") {
                     metricGrid([
                         ("Cleanup requests", "\(summary.cleanupRequests)"),
-                        ("Input tokens", "\(summary.inputTokens)"),
-                        ("Output tokens", "\(summary.outputTokens)"),
+                        ("Input tokens", tokenSummary(summary.inputTokens, samples: summary.inputTokenSamples)),
+                        ("Output tokens", tokenSummary(summary.outputTokens, samples: summary.outputTokenSamples)),
                         ("LLM cost", currency(summary.llmCost, complete: summary.pricedLLMCount == summary.cleanupRequests)),
                         ("Median cleanup", latency(summary.cleanupMedianLatency))
                     ])
@@ -95,25 +95,28 @@ struct UsageView: View {
             return Dictionary(grouping: records) { "\($0.sttProvider.rawValue) · \($0.sttModel)" }.map { key, values in
                 let seconds = values.reduce(0) { $0 + $1.audioDuration }
                 let cost = values.compactMap { PricingCatalog.estimatedSTTCost(provider: $0.sttProvider, model: $0.sttModel, audioSeconds: $0.audioDuration) }.reduce(0, +)
-                let median = values.map(\.sttLatency).sorted()[values.count / 2]
-                return Breakdown(name: key, detail: "\(values.count) req · \(String(format: "%.1f", seconds / 60)) min · \(latency(median)) · $\(NSDecimalNumber(decimal: cost).stringValue)")
+                let median = UsageAnalytics.median(values.map(\.sttLatency))
+                let costText = values.compactMap { PricingCatalog.estimatedSTTCost(provider: $0.sttProvider, model: $0.sttModel, audioSeconds: $0.audioDuration) }.count == values.count ? "$\(NSDecimalNumber(decimal: cost).stringValue)" : "cost N/A"
+                return Breakdown(name: key, detail: "\(values.count) req · \(String(format: "%.1f", seconds / 60)) min · \(latency(median)) · \(costText)")
             }.sorted { $0.name < $1.name }
         }
-        struct Event { let key: String; let usage: LLMUsage; let latency: TimeInterval; let provider: ProviderKind; let model: String }
+        struct Event { let key: String; let usage: LLMUsage?; let latency: TimeInterval?; let provider: ProviderKind; let model: String }
         var events: [Event] = records.compactMap { record in
-            guard let provider = record.llmProvider, let model = record.llmModel, let usage = record.llmUsage, let latency = record.cleanupLatency else { return nil }
-            return Event(key: "\(provider.rawValue) · \(model)", usage: usage, latency: latency, provider: provider, model: model)
+            guard let provider = record.llmProvider, let model = record.llmModel else { return nil }
+            return Event(key: "\(provider.rawValue) · \(model)", usage: record.llmUsage, latency: record.cleanupLatency, provider: provider, model: model)
         }
         events += records.flatMap(\.revisions).compactMap { revision in
-            guard revision.origin == .cleanup, let provider = revision.llmProvider, let model = revision.llmModel, let usage = revision.llmUsage else { return nil }
-            return Event(key: "\(provider.rawValue) · \(model)", usage: usage, latency: revision.repairLatency, provider: provider, model: model)
+            guard revision.origin == .cleanup, let provider = revision.llmProvider, let model = revision.llmModel else { return nil }
+            return Event(key: "\(provider.rawValue) · \(model)", usage: revision.llmUsage, latency: revision.repairLatency, provider: provider, model: model)
         }
         return Dictionary(grouping: events, by: \.key).map { key, values in
-            let input = values.reduce(0) { $0 + $1.usage.inputTokens }, output = values.reduce(0) { $0 + $1.usage.outputTokens }
-            let costs = values.compactMap { PricingCatalog.estimatedLLMCost(provider: $0.provider, model: $0.model, usage: $0.usage, rates: model.pricingSnapshot?.rates ?? PricingCatalog.fallbackRates) }
-            let latencies = values.map(\.latency).sorted(); let median = latencies[latencies.count / 2]
+            let inputValues = values.compactMap { $0.usage?.inputTokens }, outputValues = values.compactMap { $0.usage?.outputTokens }
+            let input = inputValues.reduce(0, +), output = outputValues.reduce(0, +)
+            let costs = values.compactMap { event in event.usage.flatMap { PricingCatalog.estimatedLLMCost(provider: event.provider, model: event.model, usage: $0, rates: model.pricingSnapshot?.rates ?? PricingCatalog.fallbackRates) } }
+            let median = UsageAnalytics.median(values.compactMap(\.latency))
             let costText = costs.count == values.count ? "$\(NSDecimalNumber(decimal: costs.reduce(0, +)).stringValue)" : "cost N/A"
-            return Breakdown(name: key, detail: "\(values.count) req · \(input)/\(output) tokens · \(latency(median)) · \(costText)")
+            let tokenText = inputValues.count == values.count && outputValues.count == values.count ? "\(input)/\(output) tokens" : "tokens N/A"
+            return Breakdown(name: key, detail: "\(values.count) req · \(tokenText) · \(latency(median)) · \(costText)")
         }.sorted { $0.name < $1.name }
     }
 
@@ -121,5 +124,9 @@ struct UsageView: View {
     private func currency(_ value: Decimal, complete: Bool) -> String {
         guard complete else { return "Partially available" }
         return "$" + NSDecimalNumber(decimal: value).stringValue
+    }
+    private func tokenSummary(_ value: Int, samples: Int) -> String {
+        guard samples > 0 else { return "Unavailable" }
+        return "\(value)" + (samples < summary.cleanupRequests ? " (partial)" : "")
     }
 }

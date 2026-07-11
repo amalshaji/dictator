@@ -4,6 +4,7 @@ import Combine
 import CoreGraphics
 import DictatorCore
 import Foundation
+import DictatorCore
 import XCTest
 @testable import Dictator
 
@@ -72,6 +73,15 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertFalse(ShortcutMatcher.matches(shortcut, keyCode: 8, flags: [.maskCommand]))
         XCTAssertFalse(ShortcutMatcher.matches(shortcut, keyCode: 9, flags: [.maskCommand, .maskControl]))
         XCTAssertEqual(shortcut.displayName, "⌃⌘C")
+    }
+
+    func testDisabledStyleCannotBeSelected() {
+        let model = AppModel()
+        let disabled = WritingStyle(name: "Disabled", instruction: "Do not use", isEnabled: false)
+        model.data.styles = [disabled]
+        model.selectedStyleID = nil
+        model.selectStyle(disabled.id)
+        XCTAssertNil(model.selectedStyleID)
     }
 
     func testMissingFocusedTargetNeverTouchesAnotherApp() async {

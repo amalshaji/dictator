@@ -218,6 +218,11 @@ final class CoreTests: XCTestCase {
         )
     }
 
+    func testUnknownSTTModelHasNoEstimatedCost() {
+        XCTAssertNil(PricingCatalog.estimatedSTTCost(provider: .groq, model: "unknown", audioSeconds: 60))
+        XCTAssertNil(PricingCatalog.estimatedSTTCost(provider: .deepgram, model: "future-model", audioSeconds: 60))
+    }
+
     func testModelsDevPricingDecodesExactProviderAndModel() throws {
         let data = #"{"groq":{"models":{"openai/gpt-oss-20b":{"cost":{"input":0.1,"output":0.5}}}}}"#.data(using: .utf8)!
         let rates = try PricingService.decodeRates(from: data)
@@ -235,6 +240,32 @@ final class CoreTests: XCTestCase {
         try JSONEncoder().encode(expected).write(to: cache)
         let actual = try await PricingService(cacheURL: cache).refreshIfNeeded()
         XCTAssertEqual(actual, expected)
+    }
+
+    func testMissingLLMTokensKeepsRequestButMakesCostUnavailable() {
+        let usage = LLMUsage()
+        XCTAssertNil(PricingCatalog.estimatedLLMCost(provider: .groq, model: "openai/gpt-oss-20b", usage: usage, rates: PricingCatalog.fallbackRates))
+        let record = TranscriptRecord(
+            rawText: "raw", finalText: "final", sttProvider: .groq, sttModel: "whisper-large-v3-turbo",
+            llmProvider: .groq, llmModel: "openai/gpt-oss-20b", audioDuration: 1, sttLatency: 0.1,
+            cleanupLatency: 0.2, llmUsage: usage, insertionOutcome: "typed"
+        )
+        let summary = UsageAnalytics.summarize([record], since: .distantPast, rates: PricingCatalog.fallbackRates)
+        XCTAssertEqual(summary.cleanupRequests, 1); XCTAssertEqual(summary.pricedLLMCount, 0)
+        XCTAssertEqual(summary.inputTokenSamples, 0); XCTAssertEqual(summary.outputTokenSamples, 0)
+    }
+
+    func testProviderReportedLLMCostWorksWithoutTokens() {
+        XCTAssertEqual(
+            PricingCatalog.estimatedLLMCost(provider: .openAICompatible, model: "custom", usage: .init(providerReportedCostUSD: 0.25), rates: [:]),
+            Decimal(string: "0.25")
+        )
+    }
+
+    func testUsageMedianAveragesEvenMiddlePairAndHandlesOddCounts() {
+        XCTAssertEqual(UsageAnalytics.median([4, 1, 3, 2]), 2.5)
+        XCTAssertEqual(UsageAnalytics.median([9, 1, 4]), 4)
+        XCTAssertNil(UsageAnalytics.median([]))
     }
 
     func testLegacyTranscriptDecodesWithoutPipelineLatencyOrRevisions() throws {

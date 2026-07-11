@@ -182,8 +182,8 @@ final class AppModel: ObservableObject {
                 cleanupLatency: cleanupResult?.latency,
                 pipelineLatency: pipelineLatency,
                 llmUsage: cleanupResult.map { .init(
-                    inputTokens: $0.inputTokens ?? 0,
-                    outputTokens: $0.outputTokens ?? 0,
+                    inputTokens: $0.inputTokens,
+                    outputTokens: $0.outputTokens,
                     providerReportedCostUSD: $0.providerReportedCostUSD
                 ) },
                 insertionOutcome: insertion.label
@@ -271,6 +271,12 @@ final class AppModel: ObservableObject {
         var updated = style; updated.isEnabled = enabled; _ = saveStyle(updated)
     }
 
+    func selectStyle(_ id: UUID?) {
+        guard let id else { selectedStyleID = nil; return }
+        guard data.styles.contains(where: { $0.id == id && $0.isEnabled }) else { return }
+        selectedStyleID = id
+    }
+
     func deleteStyle(_ id: UUID) {
         data.styles.removeAll { $0.id == id }
         if selectedStyleID == id { selectedStyleID = nil }
@@ -345,8 +351,8 @@ final class AppModel: ObservableObject {
             llmModel: cleanupResult?.model,
             repairLatency: Self.elapsedSeconds(since: started),
             llmUsage: cleanupResult.map { .init(
-                inputTokens: $0.inputTokens ?? 0,
-                outputTokens: $0.outputTokens ?? 0,
+                inputTokens: $0.inputTokens,
+                outputTokens: $0.outputTokens,
                 providerReportedCostUSD: $0.providerReportedCostUSD
             ) }
         )
@@ -541,7 +547,10 @@ final class AppModel: ObservableObject {
     }
 
     private func load() async {
-        do { data = try await store.load() } catch { lastError = error.localizedDescription }
+        do {
+            data = try await store.load()
+            if let selectedStyleID, !data.styles.contains(where: { $0.id == selectedStyleID && $0.isEnabled }) { self.selectedStyleID = nil }
+        } catch { lastError = error.localizedDescription }
     }
 
     private func schedulePersistence() {

@@ -227,10 +227,10 @@ public struct STTUsage: Codable, Equatable, Sendable {
 }
 
 public struct LLMUsage: Codable, Equatable, Sendable {
-    public var inputTokens: Int
-    public var outputTokens: Int
+    public var inputTokens: Int?
+    public var outputTokens: Int?
     public var providerReportedCostUSD: Decimal?
-    public init(inputTokens: Int = 0, outputTokens: Int = 0, providerReportedCostUSD: Decimal? = nil) {
+    public init(inputTokens: Int? = nil, outputTokens: Int? = nil, providerReportedCostUSD: Decimal? = nil) {
         self.inputTokens = inputTokens; self.outputTokens = outputTokens; self.providerReportedCostUSD = providerReportedCostUSD
     }
 }

@@ -6,6 +6,7 @@ struct VocabularyView: View {
     @ObservedObject var model: AppModel
     @State private var newTerm = ""
     @State private var editing: VocabularyEntry?
+    @State private var addError: String?
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
@@ -16,6 +17,7 @@ struct VocabularyView: View {
                     TextField("Add a word or phrase", text: $newTerm).textFieldStyle(DictatorTextFieldStyle()).onSubmit(add)
                     Button("Add", action: add).dictatorButton()
                 }
+                if let addError { Text(addError).font(.dictatorBody(11, weight: .medium)).foregroundStyle(.red) }
                 VStack(spacing: 0) {
                     ForEach(model.data.vocabulary) { entry in
                         HStack {
@@ -38,7 +40,10 @@ struct VocabularyView: View {
         }
         .sheet(item: $editing) { entry in VocabularyEditor(model: model, entry: entry) }
     }
-    private func add() { model.addVocabulary(newTerm); newTerm = "" }
+    private func add() {
+        if model.saveVocabulary(.init(value: newTerm)) { newTerm = ""; addError = nil }
+        else { addError = model.lastError }
+    }
 }
 
 private struct VocabularyEditor: View {
@@ -46,6 +51,7 @@ private struct VocabularyEditor: View {
     @Environment(\.dismiss) private var dismiss
     @State private var entry: VocabularyEntry
     @State private var variants: String
+    @State private var validationError: String?
 
     init(model: AppModel, entry: VocabularyEntry) {
         self.model = model
@@ -59,9 +65,10 @@ private struct VocabularyEditor: View {
             TextField("Canonical term", text: $entry.value).textFieldStyle(DictatorTextFieldStyle())
             Text("Spoken variants — one per line").font(.dictatorBody(11, weight: .semibold))
             TextEditor(text: $variants).frame(minHeight: 120).dictatorEditor()
+            if let validationError { Text(validationError).font(.dictatorBody(11, weight: .medium)).foregroundStyle(.red) }
             HStack { Spacer(); Button("Cancel") { dismiss() }.dictatorButton(.ghost); Button("Save") {
                 entry.variants = variants.components(separatedBy: .newlines)
-                if model.saveVocabulary(entry) { dismiss() }
+                if model.saveVocabulary(entry) { dismiss() } else { validationError = model.lastError ?? "Could not save this vocabulary entry." }
             }.dictatorButton() }
         }.padding(24).frame(width: 460)
     }
