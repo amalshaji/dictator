@@ -63,6 +63,7 @@ struct ClipboardView: View {
 
 struct SettingsView: View {
     @ObservedObject var model: AppModel
+    @EnvironmentObject private var updater: AppUpdater
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 26) {
@@ -117,6 +118,25 @@ struct SettingsView: View {
                     settingRow("Transcript retention", detail: "30 days")
                     settingRow("Audio retention", detail: "Never")
                     settingRow("Dictator telemetry", detail: "Off")
+                }
+                settingsSection("Updates") {
+                    HStack(spacing: 20) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(updater.versionDescription).font(.dictatorBody(14, weight: .medium))
+                            Text("Dictator checks once a day and always asks before installing.")
+                                .font(.dictatorBody(11)).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Check now") { updater.checkForUpdates() }
+                            .disabled(!updater.canCheckForUpdates)
+                            .dictatorButton(.secondary)
+                    }
+                    .padding(.vertical, 10)
+                    .overlay(alignment: .bottom) { Divider() }
+                    Toggle("Automatically check for updates", isOn: $updater.automaticallyChecksForUpdates)
+                        .toggleStyle(.switch).tint(DictatorDesign.signalInk)
+                        .font(.dictatorBody(14, weight: .medium))
+                        .padding(.vertical, 11)
                 }
                 settingsSection("App") {
                     Toggle("Launch Dictator at login", isOn: Binding(

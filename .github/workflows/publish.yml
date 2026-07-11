@@ -1,0 +1,88 @@
+name: Build draft release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: draft-release-${{ github.ref_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: macos-15
+    environment: release
+    steps:
+      - name: Resolve tag
+        id: meta
+        env:
+          DISPATCH_TAG: ${{ inputs.tag }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="$DISPATCH_TAG"
+          fi
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid tag: $tag" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ steps.meta.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Reject an existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; refusing to replace its assets" >&2
+            exit 1
+          fi
+
+      - name: Install XcodeGen
+        run: |
+          brew install xcodegen
+          xcodegen --version
+
+      - name: Build release assets
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: scripts/release/build-release.sh "$VERSION" "$GITHUB_RUN_NUMBER" release
+
+      - name: Attest release assets
+        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
+        with:
+          subject-path: |
+            release/Dictator-${{ steps.meta.outputs.version }}-universal.dmg
+            release/SHA256SUMS.txt
+
+      - name: Create draft GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          gh release create "$TAG" \
+            "release/Dictator-${VERSION}-universal.dmg" \
+            release/SHA256SUMS.txt \
+            --verify-tag \
+            --draft \
+            --generate-notes \
+            --title "$TAG"
