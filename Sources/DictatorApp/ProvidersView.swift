@@ -107,51 +107,54 @@ private struct AppleSpeechSetupRow: View {
             }
             .buttonStyle(.plain)
 
-            if expanded {
-                VStack(alignment: .leading, spacing: 13) {
-                    Text("Audio is transcribed entirely on this Mac after the initial language model download.")
-                        .font(.dictatorBody(12)).foregroundStyle(.secondary)
+            VStack(spacing: 0) {
+                if expanded {
+                    VStack(alignment: .leading, spacing: 13) {
+                        Text("Audio is transcribed entirely on this Mac after the initial language model download.")
+                            .font(.dictatorBody(12)).foregroundStyle(.secondary)
 
-                    if !model.appleSpeechLocales.isEmpty {
-                        field("Language") {
-                            DictatorMenuField(
-                                label: "Language",
-                                options: model.appleSpeechLocales.map {
-                                    .init(value: $0.identifier, label: localeDisplayName($0.identifier))
-                                },
-                                selection: localeBinding
-                            )
+                        if !model.appleSpeechLocales.isEmpty {
+                            field("Language") {
+                                DictatorMenuField(
+                                    label: "Language",
+                                    options: model.appleSpeechLocales.map {
+                                        .init(value: $0.identifier, label: localeDisplayName($0.identifier))
+                                    },
+                                    selection: localeBinding
+                                )
+                            }
+                        }
+
+                        if let locale = model.appleSpeechReadiness.locale {
+                            field("Active engine") {
+                                Text(engineDisplayName(locale.engine))
+                                    .font(.dictatorBody(12, weight: .medium))
+                            }
+                        }
+
+                        if case let .downloading(_, progress) = model.appleSpeechReadiness {
+                            ProgressView(value: progress) {
+                                Text("Downloading speech model… \(Int(progress * 100))%")
+                                    .font(.dictatorBody(11)).foregroundStyle(.secondary)
+                            }
+                        }
+
+                        HStack(spacing: 8) {
+                            Button(actionTitle) { Task { await prepareOrSelect() } }
+                                .dictatorButton()
+                                .disabled(actionDisabled)
+                            if case .failed = model.appleSpeechReadiness {
+                                Button("Retry status") { Task { await model.refreshAppleSpeechSetup() } }
+                                    .dictatorButton(.secondary)
+                            }
                         }
                     }
-
-                    if let locale = model.appleSpeechReadiness.locale {
-                        field("Active engine") {
-                            Text(engineDisplayName(locale.engine))
-                                .font(.dictatorBody(12, weight: .medium))
-                        }
-                    }
-
-                    if case let .downloading(_, progress) = model.appleSpeechReadiness {
-                        ProgressView(value: progress) {
-                            Text("Downloading speech model… \(Int(progress * 100))%")
-                                .font(.dictatorBody(11)).foregroundStyle(.secondary)
-                        }
-                    }
-
-                    HStack(spacing: 8) {
-                        Button(actionTitle) { Task { await prepareOrSelect() } }
-                            .dictatorButton()
-                            .disabled(actionDisabled)
-                        if case .failed = model.appleSpeechReadiness {
-                            Button("Retry status") { Task { await model.refreshAppleSpeechSetup() } }
-                                .dictatorButton(.secondary)
-                        }
-                    }
+                    .padding(16)
+                    .background(DictatorDesign.paper.opacity(0.72))
+                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
-                .padding(16)
-                .background(DictatorDesign.paper.opacity(0.72))
-                .transition(.opacity.combined(with: .move(edge: .top)))
             }
+            .clipped()
         }
         .task { await model.refreshAppleSpeechSetup() }
     }
