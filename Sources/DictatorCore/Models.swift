@@ -235,21 +235,106 @@ public struct LLMUsage: Codable, Equatable, Sendable {
     }
 }
 
-public enum TranscriptRevisionOrigin: String, Codable, Equatable, Sendable { case manual, localProcessing, cleanup }
+public struct CleanupExecution: Codable, Equatable, Sendable {
+    public var provider: ProviderKind
+    public var model: String
+    public var latency: TimeInterval
+    public var usage: LLMUsage?
+
+    public init(provider: ProviderKind, model: String, latency: TimeInterval, usage: LLMUsage? = nil) {
+        self.provider = provider
+        self.model = model
+        self.latency = latency
+        self.usage = usage
+    }
+
+    public init(result: CleanupResult) {
+        self.init(
+            provider: result.provider,
+            model: result.model,
+            latency: result.latency,
+            usage: .init(
+                inputTokens: result.inputTokens,
+                outputTokens: result.outputTokens,
+                providerReportedCostUSD: result.providerReportedCostUSD
+            )
+        )
+    }
+}
+
+public enum TranscriptRevisionOrigin: Equatable, Sendable {
+    case manual
+    case localProcessing
+    case cleanup(CleanupExecution)
+
+    public var label: String {
+        switch self {
+        case .manual: "manual"
+        case .localProcessing: "localProcessing"
+        case .cleanup: "cleanup"
+        }
+    }
+}
 
 public struct TranscriptRevision: Identifiable, Codable, Equatable, Sendable {
     public let id: UUID
     public let createdAt: Date
     public var text: String
     public var origin: TranscriptRevisionOrigin
-    public var llmProvider: ProviderKind?
-    public var llmModel: String?
     public var repairLatency: TimeInterval
-    public var llmUsage: LLMUsage?
 
-    public init(id: UUID = UUID(), createdAt: Date = Date(), text: String, origin: TranscriptRevisionOrigin, llmProvider: ProviderKind? = nil, llmModel: String? = nil, repairLatency: TimeInterval, llmUsage: LLMUsage? = nil) {
-        self.id = id; self.createdAt = createdAt; self.text = text; self.origin = origin
-        self.llmProvider = llmProvider; self.llmModel = llmModel; self.repairLatency = repairLatency; self.llmUsage = llmUsage
+    public init(id: UUID = UUID(), createdAt: Date = Date(), text: String, origin: TranscriptRevisionOrigin, repairLatency: TimeInterval) {
+        self.id = id
+        self.createdAt = createdAt
+        self.text = text
+        self.origin = origin
+        self.repairLatency = repairLatency
+    }
+
+    private enum OriginKind: String, Codable { case manual, localProcessing, cleanup }
+    private enum CodingKeys: String, CodingKey {
+        case id, createdAt, text, origin, cleanup, repairLatency
+        case llmProvider, llmModel, llmUsage
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(UUID.self, forKey: .id)
+        createdAt = try values.decode(Date.self, forKey: .createdAt)
+        text = try values.decode(String.self, forKey: .text)
+        repairLatency = try values.decode(TimeInterval.self, forKey: .repairLatency)
+        switch try values.decode(OriginKind.self, forKey: .origin) {
+        case .manual:
+            origin = .manual
+        case .localProcessing:
+            origin = .localProcessing
+        case .cleanup:
+            if let execution = try values.decodeIfPresent(CleanupExecution.self, forKey: .cleanup) {
+                origin = .cleanup(execution)
+            } else {
+                let provider = try values.decode(ProviderKind.self, forKey: .llmProvider)
+                let model = try values.decode(String.self, forKey: .llmModel)
+                let usage = try values.decodeIfPresent(LLMUsage.self, forKey: .llmUsage)
+                origin = .cleanup(.init(provider: provider, model: model, latency: repairLatency, usage: usage))
+            }
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(id, forKey: .id)
+        try values.encode(createdAt, forKey: .createdAt)
+        try values.encode(text, forKey: .text)
+        try values.encode(repairLatency, forKey: .repairLatency)
+        switch origin {
+        case .manual:
+            try values.encode(OriginKind.manual, forKey: .origin)
+        case .localProcessing:
+            try values.encode(OriginKind.localProcessing, forKey: .origin)
+        case .cleanup(let execution):
+            try values.encode(OriginKind.cleanup, forKey: .origin)
+            try values.encode(execution, forKey: .cleanup)
+        }
     }
 }
 
@@ -260,15 +345,11 @@ public struct TranscriptRecord: Identifiable, Codable, Equatable, Sendable {
     public var finalText: String
     public var sttProvider: ProviderKind
     public var sttModel: String
-    public var llmProvider: ProviderKind?
-    public var llmModel: String?
     public var sourceBundleID: String?
     public var audioDuration: TimeInterval
     public var sttLatency: TimeInterval
-    public var cleanupLatency: TimeInterval?
     public var pipelineLatency: TimeInterval?
-    public var sttUsage: STTUsage
-    public var llmUsage: LLMUsage?
+    public var cleanup: CleanupExecution?
     public var insertionOutcome: String
     public var revisions: [TranscriptRevision]
     public var preferredRevisionID: UUID?
@@ -278,12 +359,12 @@ public struct TranscriptRecord: Identifiable, Codable, Equatable, Sendable {
         return revision.text
     }
 
+    public var sttUsage: STTUsage { STTUsage(audioSeconds: audioDuration) }
+
     public init(
         id: UUID = UUID(), createdAt: Date = Date(), rawText: String, finalText: String,
-        sttProvider: ProviderKind, sttModel: String, llmProvider: ProviderKind? = nil,
-        llmModel: String? = nil, sourceBundleID: String? = nil, audioDuration: TimeInterval,
-        sttLatency: TimeInterval, cleanupLatency: TimeInterval? = nil, pipelineLatency: TimeInterval? = nil,
-        sttUsage: STTUsage? = nil, llmUsage: LLMUsage? = nil, insertionOutcome: String,
+        sttProvider: ProviderKind, sttModel: String, sourceBundleID: String? = nil, audioDuration: TimeInterval,
+        sttLatency: TimeInterval, pipelineLatency: TimeInterval? = nil, cleanup: CleanupExecution? = nil, insertionOutcome: String,
         revisions: [TranscriptRevision] = [], preferredRevisionID: UUID? = nil
     ) {
         self.id = id
@@ -292,23 +373,20 @@ public struct TranscriptRecord: Identifiable, Codable, Equatable, Sendable {
         self.finalText = finalText
         self.sttProvider = sttProvider
         self.sttModel = sttModel
-        self.llmProvider = llmProvider
-        self.llmModel = llmModel
         self.sourceBundleID = sourceBundleID
         self.audioDuration = audioDuration
         self.sttLatency = sttLatency
-        self.cleanupLatency = cleanupLatency
         self.pipelineLatency = pipelineLatency
-        self.sttUsage = sttUsage ?? STTUsage(audioSeconds: audioDuration)
-        self.llmUsage = llmUsage
+        self.cleanup = cleanup
         self.insertionOutcome = insertionOutcome
         self.revisions = revisions
         self.preferredRevisionID = preferredRevisionID
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, createdAt, rawText, finalText, sttProvider, sttModel, llmProvider, llmModel, sourceBundleID
-        case audioDuration, sttLatency, cleanupLatency, pipelineLatency, sttUsage, llmUsage, insertionOutcome, revisions, preferredRevisionID
+        case id, createdAt, rawText, finalText, sttProvider, sttModel, sourceBundleID
+        case audioDuration, sttLatency, pipelineLatency, cleanup, insertionOutcome, revisions, preferredRevisionID
+        case llmProvider, llmModel, cleanupLatency, llmUsage
     }
 
     public init(from decoder: Decoder) throws {
@@ -316,14 +394,39 @@ public struct TranscriptRecord: Identifiable, Codable, Equatable, Sendable {
         id = try c.decode(UUID.self, forKey: .id); createdAt = try c.decode(Date.self, forKey: .createdAt)
         rawText = try c.decode(String.self, forKey: .rawText); finalText = try c.decode(String.self, forKey: .finalText)
         sttProvider = try c.decode(ProviderKind.self, forKey: .sttProvider); sttModel = try c.decode(String.self, forKey: .sttModel)
-        llmProvider = try c.decodeIfPresent(ProviderKind.self, forKey: .llmProvider); llmModel = try c.decodeIfPresent(String.self, forKey: .llmModel)
         sourceBundleID = try c.decodeIfPresent(String.self, forKey: .sourceBundleID)
         audioDuration = try c.decode(TimeInterval.self, forKey: .audioDuration); sttLatency = try c.decode(TimeInterval.self, forKey: .sttLatency)
-        cleanupLatency = try c.decodeIfPresent(TimeInterval.self, forKey: .cleanupLatency); pipelineLatency = try c.decodeIfPresent(TimeInterval.self, forKey: .pipelineLatency)
-        sttUsage = try c.decodeIfPresent(STTUsage.self, forKey: .sttUsage) ?? .init(audioSeconds: audioDuration)
-        llmUsage = try c.decodeIfPresent(LLMUsage.self, forKey: .llmUsage); insertionOutcome = try c.decode(String.self, forKey: .insertionOutcome)
+        pipelineLatency = try c.decodeIfPresent(TimeInterval.self, forKey: .pipelineLatency)
+        if let execution = try c.decodeIfPresent(CleanupExecution.self, forKey: .cleanup) {
+            cleanup = execution
+        } else if let provider = try c.decodeIfPresent(ProviderKind.self, forKey: .llmProvider),
+                  let model = try c.decodeIfPresent(String.self, forKey: .llmModel) {
+            cleanup = .init(
+                provider: provider,
+                model: model,
+                latency: try c.decodeIfPresent(TimeInterval.self, forKey: .cleanupLatency) ?? 0,
+                usage: try c.decodeIfPresent(LLMUsage.self, forKey: .llmUsage)
+            )
+        } else {
+            cleanup = nil
+        }
+        insertionOutcome = try c.decode(String.self, forKey: .insertionOutcome)
         revisions = try c.decodeIfPresent([TranscriptRevision].self, forKey: .revisions) ?? []
         preferredRevisionID = try c.decodeIfPresent(UUID.self, forKey: .preferredRevisionID)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id); try c.encode(createdAt, forKey: .createdAt)
+        try c.encode(rawText, forKey: .rawText); try c.encode(finalText, forKey: .finalText)
+        try c.encode(sttProvider, forKey: .sttProvider); try c.encode(sttModel, forKey: .sttModel)
+        try c.encodeIfPresent(sourceBundleID, forKey: .sourceBundleID)
+        try c.encode(audioDuration, forKey: .audioDuration); try c.encode(sttLatency, forKey: .sttLatency)
+        try c.encodeIfPresent(pipelineLatency, forKey: .pipelineLatency)
+        try c.encodeIfPresent(cleanup, forKey: .cleanup)
+        try c.encode(insertionOutcome, forKey: .insertionOutcome)
+        try c.encode(revisions, forKey: .revisions)
+        try c.encodeIfPresent(preferredRevisionID, forKey: .preferredRevisionID)
     }
 }
 

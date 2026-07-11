@@ -95,13 +95,9 @@ struct HomeView: View {
 enum TranscriptMetadataFormatter {
     static func pipelineSegments(for record: TranscriptRecord) -> [String] {
         var segments = ["STT: \(sttDisplayName(for: record.sttProvider)), \(milliseconds(record.sttLatency))"]
-        if let cleanupProvider = record.llmProvider {
-            let providerName = cleanupDisplayName(for: cleanupProvider)
-            if let cleanupLatency = record.cleanupLatency {
-                segments.append("Cleanup: \(providerName), \(milliseconds(cleanupLatency))")
-            } else {
-                segments.append("Cleanup: \(providerName)")
-            }
+        if let cleanup = record.cleanup {
+            let providerName = cleanupDisplayName(for: cleanup.provider)
+            segments.append("Cleanup: \(providerName), \(milliseconds(cleanup.latency))")
         }
         segments.append(record.pipelineLatency.map { "Total: \(milliseconds($0))" } ?? "Total: —")
         return segments

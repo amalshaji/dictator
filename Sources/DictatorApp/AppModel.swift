@@ -174,18 +174,11 @@ final class AppModel: ObservableObject {
                 finalText: finalText,
                 sttProvider: selectedSTT,
                 sttModel: model,
-                llmProvider: cleanupResult?.provider,
-                llmModel: cleanupResult?.model,
                 sourceBundleID: focusedTarget?.bundleIdentifier,
                 audioDuration: audio.duration,
                 sttLatency: raw.latency,
-                cleanupLatency: cleanupResult?.latency,
                 pipelineLatency: pipelineLatency,
-                llmUsage: cleanupResult.map { .init(
-                    inputTokens: $0.inputTokens,
-                    outputTokens: $0.outputTokens,
-                    providerReportedCostUSD: $0.providerReportedCostUSD
-                ) },
+                cleanup: cleanupResult.map(CleanupExecution.init(result:)),
                 insertionOutcome: insertion.label
             ), at: 0)
             await persist()
@@ -346,15 +339,8 @@ final class AppModel: ObservableObject {
         let cleanupResult = processed.cleanupResult
         return TranscriptRevision(
             text: processed.finalText,
-            origin: cleanupResult == nil ? .localProcessing : .cleanup,
-            llmProvider: cleanupResult?.provider,
-            llmModel: cleanupResult?.model,
-            repairLatency: Self.elapsedSeconds(since: started),
-            llmUsage: cleanupResult.map { .init(
-                inputTokens: $0.inputTokens,
-                outputTokens: $0.outputTokens,
-                providerReportedCostUSD: $0.providerReportedCostUSD
-            ) }
+            origin: cleanupResult.map { .cleanup(.init(result: $0)) } ?? .localProcessing,
+            repairLatency: Self.elapsedSeconds(since: started)
         )
     }
 

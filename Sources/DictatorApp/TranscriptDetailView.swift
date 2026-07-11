@@ -78,10 +78,10 @@ struct TranscriptDetailView: View {
 
     private func latencySection(_ record: TranscriptRecord) -> some View {
         let total = record.pipelineLatency
-        let overhead = total.map { max(0, $0 - record.sttLatency - (record.cleanupLatency ?? 0)) }
+        let overhead = total.map { max(0, $0 - record.sttLatency - (record.cleanup?.latency ?? 0)) }
         return VStack(alignment: .leading, spacing: 7) {
             Text("LATENCY").font(.dictatorUtility(9)).foregroundStyle(.secondary)
-            HStack { value("Total pipeline", total.map(latency) ?? "—"); value("STT request", latency(record.sttLatency)); value("LLM cleanup", record.cleanupLatency.map(latency) ?? "—"); value("Other overhead", overhead.map(latency) ?? "—") }
+            HStack { value("Total pipeline", total.map(latency) ?? "—"); value("STT request", latency(record.sttLatency)); value("LLM cleanup", record.cleanup.map { latency($0.latency) } ?? "—"); value("Other overhead", overhead.map(latency) ?? "—") }
         }
     }
 
@@ -89,11 +89,11 @@ struct TranscriptDetailView: View {
         VStack(alignment: .leading, spacing: 5) {
             Text("PROVENANCE").font(.dictatorUtility(9)).foregroundStyle(.secondary)
             Text("STT: \(record.sttProvider.rawValue) · \(record.sttModel)").font(.dictatorBody(11))
-            if let provider = record.llmProvider, let model = record.llmModel { Text("Cleanup: \(provider.rawValue) · \(model)").font(.dictatorBody(11)) }
+            if let cleanup = record.cleanup { Text("Cleanup: \(cleanup.provider.rawValue) · \(cleanup.model)").font(.dictatorBody(11)) }
             Text("Insertion: \(record.insertionOutcome)" + (record.sourceBundleID.map { " · \($0)" } ?? "")).font(.dictatorBody(11))
-            if let usage = record.llmUsage { Text("Tokens: \(tokenText(usage))").font(.dictatorBody(11)) }
-            if let usage = record.llmUsage, let provider = record.llmProvider, let modelName = record.llmModel {
-                Text("LLM cost: \(costText(provider: provider, model: modelName, usage: usage))").font(.dictatorBody(11))
+            if let cleanup = record.cleanup, let usage = cleanup.usage {
+                Text("Tokens: \(tokenText(usage))").font(.dictatorBody(11))
+                Text("LLM cost: \(costText(provider: cleanup.provider, model: cleanup.model, usage: usage))").font(.dictatorBody(11))
             }
         }
     }
@@ -127,7 +127,7 @@ struct TranscriptDetailView: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Reprocessed preview").font(.dictatorDisplay(22))
             Text(revision.text).font(.dictatorBody(13)).textSelection(.enabled).padding(12).background(DictatorDesign.control, in: RoundedRectangle(cornerRadius: 10))
-            Text("\(revision.origin.rawValue) · \(latency(revision.repairLatency))").font(.dictatorBody(11)).foregroundStyle(.secondary)
+            Text("\(revision.origin.label) · \(latency(revision.repairLatency))").font(.dictatorBody(11)).foregroundStyle(.secondary)
             HStack { Spacer(); Button("Cancel") { preview = nil }.dictatorButton(.ghost); Button("Save revision") { model.appendRevision(revision, to: transcriptID); preview = nil }.dictatorButton() }
         }.padding(24).frame(width: 520)
     }
@@ -139,10 +139,10 @@ struct TranscriptDetailView: View {
     }
 
     private func revisionMetadata(_ revision: TranscriptRevision) -> String {
-        var parts = [revision.origin.rawValue, latency(revision.repairLatency), revision.createdAt.dictatorTimestamp]
-        if let usage = revision.llmUsage {
+        var parts = [revision.origin.label, latency(revision.repairLatency), revision.createdAt.dictatorTimestamp]
+        if case .cleanup(let cleanup) = revision.origin, let usage = cleanup.usage {
             parts.append(tokenText(usage))
-            if let provider = revision.llmProvider, let model = revision.llmModel { parts.append(costText(provider: provider, model: model, usage: usage)) }
+            parts.append(costText(provider: cleanup.provider, model: cleanup.model, usage: usage))
         }
         return parts.joined(separator: " · ")
     }
