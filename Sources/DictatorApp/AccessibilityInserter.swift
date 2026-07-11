@@ -77,33 +77,43 @@ final class AccessibilityInserter {
             _ = AXUIElementSetAttributeValue(target.element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
             try? await Task.sleep(for: .milliseconds(40))
         }
-        await pastePreservingClipboard(text)
+        guard await pastePreservingClipboard(text) else {
+            return .privateClipboard("the paste shortcut could not be posted")
+        }
         return .pasteboardFallback
     }
 
     /// The user explicitly invoked Paste Latest, so let the frontmost app decide
     /// whether its current responder accepts paste instead of requiring AX support.
-    func pasteIntoFrontmostApp(_ text: String) async {
+    func pasteIntoFrontmostApp(_ text: String) async -> Bool {
         await pastePreservingClipboard(text)
     }
 
-    private func pastePreservingClipboard(_ text: String) async {
+    private func pastePreservingClipboard(_ text: String) async -> Bool {
         let pasteboard = NSPasteboard.general
         let snapshot = PasteboardSnapshot(pasteboard)
         pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
+        guard pasteboard.setString(text, forType: .string) else {
+            snapshot.restore(to: pasteboard)
+            return false
+        }
         let writtenChangeCount = pasteboard.changeCount
-        postPaste()
+        guard postPaste() else {
+            snapshot.restore(to: pasteboard)
+            return false
+        }
         // Web-based editors may read the pasteboard on a later run-loop turn.
         try? await Task.sleep(for: .milliseconds(350))
         if pasteboard.changeCount == writtenChangeCount { snapshot.restore(to: pasteboard) }
+        return true
     }
 
     private func focusedElement(in root: AXUIElement) -> AXUIElement? {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(root, kAXFocusedUIElementAttribute as CFString, &value) == .success,
-              let value else { return nil }
-        return unsafeDowncast(value, to: AXUIElement.self)
+              let element = axElement(value)
+        else { return nil }
+        return element
     }
 
     private func editableAncestor(from element: AXUIElement) -> AXUIElement? {
@@ -113,8 +123,9 @@ final class AccessibilityInserter {
             if isEditable(candidate) { return candidate }
             var parentValue: CFTypeRef?
             guard AXUIElementCopyAttributeValue(candidate, kAXParentAttribute as CFString, &parentValue) == .success,
-                  let parentValue else { return nil }
-            current = unsafeDowncast(parentValue, to: AXUIElement.self)
+                  let parent = axElement(parentValue)
+            else { return nil }
+            current = parent
         }
         return nil
     }
@@ -155,14 +166,20 @@ final class AccessibilityInserter {
         return subrole == kAXSecureTextFieldSubrole
     }
 
-    private func postPaste() {
+    private func axElement(_ value: CFTypeRef?) -> AXUIElement? {
+        guard let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+        return unsafeDowncast(value, to: AXUIElement.self)
+    }
+
+    private func postPaste() -> Bool {
         guard let source = CGEventSource(stateID: .combinedSessionState),
               let down = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
-              let up = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else { return }
+              let up = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else { return false }
         down.flags = .maskCommand
         up.flags = .maskCommand
         down.post(tap: .cghidEventTap)
         up.post(tap: .cghidEventTap)
+        return true
     }
 }
 

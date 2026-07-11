@@ -5,27 +5,32 @@ public struct KeychainStore: Sendable {
     private let service: String
     public init(service: String = "ai.dictator.credentials") { self.service = service }
 
-    public func save(_ credentials: ProviderCredentials, for purpose: String, provider: ProviderKind) throws {
-        let account = "\(purpose).\(provider.rawValue)"
+    public func save(_ credentials: ProviderCredentials, for purpose: ProviderPurpose, provider: ProviderKind) throws {
+        let account = "\(purpose.rawValue).\(provider.rawValue)"
         let data = try JSONEncoder().encode(credentials)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account
         ]
-        SecItemDelete(query as CFDictionary)
-        var add = query
-        add[kSecValueData as String] = data
-        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        let status = SecItemAdd(add as CFDictionary, nil)
-        guard status == errSecSuccess else { throw KeychainError.status(status) }
+        let attributes: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        ]
+        let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        if updateStatus == errSecSuccess { return }
+        guard updateStatus == errSecItemNotFound else { throw KeychainError.status(updateStatus) }
+
+        let item = query.merging(attributes) { _, new in new }
+        let addStatus = SecItemAdd(item as CFDictionary, nil)
+        guard addStatus == errSecSuccess else { throw KeychainError.status(addStatus) }
     }
 
-    public func load(for purpose: String, provider: ProviderKind) throws -> ProviderCredentials? {
+    public func load(for purpose: ProviderPurpose, provider: ProviderKind) throws -> ProviderCredentials? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: "\(purpose).\(provider.rawValue)",
+            kSecAttrAccount as String: "\(purpose.rawValue).\(provider.rawValue)",
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
@@ -43,4 +48,3 @@ public enum KeychainError: LocalizedError {
         switch self { case .status(let value): "Keychain operation failed (\(value))." }
     }
 }
-

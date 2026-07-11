@@ -1,14 +1,11 @@
 import Foundation
 
 public struct CloudflareSTTProvider: SpeechToTextProvider {
-    public let metadata = STTProviderMetadata(
+    public let metadata = ProviderMetadata(
         kind: .cloudflare,
         displayName: "Cloudflare Workers AI",
-        modality: .batch,
         defaultModel: "@cf/openai/whisper-large-v3-turbo",
         models: ["@cf/openai/whisper-large-v3-turbo", "@cf/openai/whisper"],
-        supportsVocabulary: true,
-        supportsLanguageDetection: true,
         requiresAccountID: true
     )
 
@@ -18,7 +15,8 @@ public struct CloudflareSTTProvider: SpeechToTextProvider {
     public func validate(credentials: ProviderCredentials) async throws {
         guard !credentials.apiKey.isEmpty else { throw ProviderError.missingCredential("API token") }
         guard let accountID = credentials.accountID, !accountID.isEmpty else { throw ProviderError.missingCredential("account ID") }
-        var request = URLRequest(url: URL(string: "https://api.cloudflare.com/client/v4/accounts/\(accountID)/ai/models/search")!)
+        let url = try HTTPHelpers.requireHTTPURL("https://api.cloudflare.com/client/v4/accounts/\(accountID)/ai/models/search")
+        var request = URLRequest(url: url)
         request.setValue("Bearer \(credentials.apiKey)", forHTTPHeaderField: "Authorization")
         let (data, response) = try await transport.data(for: request)
         try HTTPHelpers.requireSuccess(data: data, response: response)
@@ -33,7 +31,7 @@ public struct CloudflareSTTProvider: SpeechToTextProvider {
         let vocabulary = options.vocabulary.filter(\.isEnabled).map(\.value).joined(separator: ", ")
         if !vocabulary.isEmpty { body["initial_prompt"] = vocabulary }
 
-        var request = URLRequest(url: URL(string: endpoint)!)
+        var request = URLRequest(url: try HTTPHelpers.requireHTTPURL(endpoint))
         request.httpMethod = "POST"
         request.setValue("Bearer \(credentials.apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -53,4 +51,3 @@ public struct CloudflareSTTProvider: SpeechToTextProvider {
         struct Result: Decodable { let text: String }
     }
 }
-

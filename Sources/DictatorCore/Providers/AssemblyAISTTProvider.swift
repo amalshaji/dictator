@@ -1,14 +1,11 @@
 import Foundation
 
 public struct AssemblyAISTTProvider: SpeechToTextProvider {
-    public let metadata = STTProviderMetadata(
+    public let metadata = ProviderMetadata(
         kind: .assemblyAI,
         displayName: "AssemblyAI",
-        modality: .both,
         defaultModel: "universal-3-pro",
         models: ["universal-3-pro", "universal-2"],
-        supportsVocabulary: true,
-        supportsLanguageDetection: true,
         requiresAccountID: false
     )
 
@@ -52,7 +49,8 @@ public struct AssemblyAISTTProvider: SpeechToTextProvider {
         let created = try JSONDecoder().decode(JobResponse.self, from: createData)
 
         for _ in 0..<240 {
-            var poll = URLRequest(url: URL(string: "https://api.assemblyai.com/v2/transcript/\(created.id)")!)
+            let pollURL = try HTTPHelpers.requireHTTPURL("https://api.assemblyai.com/v2/transcript/\(created.id)")
+            var poll = URLRequest(url: pollURL)
             poll.setValue(credentials.apiKey, forHTTPHeaderField: "Authorization")
             let (data, response) = try await transport.data(for: poll)
             try HTTPHelpers.requireSuccess(data: data, response: response)

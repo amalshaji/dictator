@@ -13,10 +13,9 @@ public enum CleanupProviderRegistry {
         }
     }
 
-    public static var metadata: [LLMProviderMetadata] {
+    public static var metadata: [ProviderMetadata] {
         [OpenAICompatibleCleanupProvider.groq().metadata, CloudflareCleanupProvider().metadata,
          GeminiCleanupProvider().metadata, OpenAICompatibleCleanupProvider.xAI().metadata,
          OpenAICompatibleCleanupProvider.openRouter().metadata, OpenAICompatibleCleanupProvider.custom().metadata]
     }
 }
-

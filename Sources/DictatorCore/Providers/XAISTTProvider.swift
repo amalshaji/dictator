@@ -1,14 +1,11 @@
 import Foundation
 
 public struct XAISTTProvider: SpeechToTextProvider {
-    public let metadata = STTProviderMetadata(
+    public let metadata = ProviderMetadata(
         kind: .xAI,
         displayName: "xAI",
-        modality: .both,
         defaultModel: "grok-transcribe",
         models: ["grok-transcribe"],
-        supportsVocabulary: true,
-        supportsLanguageDetection: false,
         requiresAccountID: false
     )
 

@@ -3,7 +3,7 @@ import XCTest
 @testable import DictatorCore
 
 final class ProviderContractTests: XCTestCase {
-    private let audio = RecordedAudio(wavData: WAVEncoder.encodePCM16(Data(repeating: 0, count: 320)), pcm16Data: Data(repeating: 0, count: 320), duration: 0.01)
+    private let audio = RecordedAudio(wavData: WAVEncoder.encodePCM16(Data(repeating: 0, count: 320)), duration: 0.01)
 
     func testGroqParsesTranscriptAndSendsVocabulary() async throws {
         let transport = MockTransport { request in
@@ -22,14 +22,31 @@ final class ProviderContractTests: XCTestCase {
     }
 
     func testDeepgramParsesNestedAlternative() async throws {
-        let json = #"{"metadata":{"request_id":"dg_1"},"results":{"channels":[{"alternatives":[{"transcript":"Hello from Deepgram","languages":["en"]}]}]}}"#
+        let json = #"{"metadata":{"request_id":"dg_1"},"results":{"channels":[{"detected_language":"en","alternatives":[{"transcript":"Hello from Deepgram"}]}]}}"#
         let transport = MockTransport { request in
             XCTAssertTrue(request.url?.query?.contains("model=nova-3") == true)
+            XCTAssertTrue(request.url?.query?.contains("detect_language=true") == true)
+            XCTAssertFalse(request.url?.query?.contains("language=en") == true)
             return (json.data(using: .utf8)!, 200)
         }
         let result = try await DeepgramSTTProvider(transport: transport).transcribe(audio: audio, options: .init(model: "nova-3"), credentials: .init(apiKey: "test"))
         XCTAssertEqual(result.text, "Hello from Deepgram")
         XCTAssertEqual(result.language, "en")
+    }
+
+    func testDeepgramUsesExplicitLanguageInsteadOfDetection() async throws {
+        let json = #"{"results":{"channels":[{"alternatives":[{"transcript":"Bonjour"}]}]}}"#
+        let transport = MockTransport { request in
+            XCTAssertTrue(request.url?.query?.contains("language=fr") == true)
+            XCTAssertFalse(request.url?.query?.contains("detect_language") == true)
+            return (json.data(using: .utf8)!, 200)
+        }
+        let result = try await DeepgramSTTProvider(transport: transport).transcribe(
+            audio: audio,
+            options: .init(model: "nova-3", language: "fr"),
+            credentials: .init(apiKey: "test")
+        )
+        XCTAssertEqual(result.language, "fr")
     }
 
     func testXAIUsesRepeatableKeytermFields() async throws {
@@ -64,6 +81,20 @@ final class ProviderContractTests: XCTestCase {
         )
         XCTAssertEqual(result.text, "Ship Dictator 2.4 at https://example.com.")
         XCTAssertEqual(result.inputTokens, 20)
+    }
+
+    func testCustomOpenAIProviderRequiresAnAbsoluteBaseURL() async {
+        let provider = OpenAICompatibleCleanupProvider.custom(transport: MockTransport { _ in
+            XCTFail("Invalid configuration must fail before making a request")
+            return (Data(), 500)
+        })
+
+        do {
+            _ = try await provider.listModels(credentials: .init(apiKey: "test"))
+            XCTFail("Expected the missing base URL to be rejected")
+        } catch {
+            XCTAssertEqual(error as? ProviderError, .missingCredential("base URL"))
+        }
     }
 }
 

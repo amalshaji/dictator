@@ -116,8 +116,8 @@ final class AppModel: ObservableObject {
         hud.show(.transcribing)
         do {
             guard let provider = ProviderRegistry.sttProvider(for: selectedSTT) else { throw ProviderError.unsupported("Provider is not available") }
-            guard let credentials = try keychain.load(for: "stt", provider: selectedSTT) else { throw ProviderError.missingCredential("\(provider.metadata.displayName) API key") }
-            let model = defaults.string(forKey: "sttModel.\(selectedSTT.rawValue)") ?? provider.metadata.defaultModel
+            guard let credentials = try keychain.load(for: .speechToText, provider: selectedSTT) else { throw ProviderError.missingCredential("\(provider.metadata.displayName) API key") }
+            let model = configuredModel(for: .speechToText, provider: selectedSTT) ?? provider.metadata.defaultModel
             let raw = try await transcribeWithRetry(provider: provider, audio: audio, options: .init(model: model, vocabulary: data.vocabulary), credentials: credentials)
             let normalized = VocabularyNormalizer.normalize(raw.text, vocabulary: data.vocabulary)
             let expanded = SnippetExpander.expand(normalized, snippets: data.snippets)
@@ -125,9 +125,9 @@ final class AppModel: ObservableObject {
             var finalText = expanded
             var cleanupResult: CleanupResult?
             if cleanupEnabled, let llm = CleanupProviderRegistry.provider(for: selectedLLM),
-               let llmCredentials = try keychain.load(for: "llm", provider: selectedLLM) {
+               let llmCredentials = try keychain.load(for: .cleanup, provider: selectedLLM) {
                 hud.show(.cleaning)
-                let llmModel = defaults.string(forKey: "llmModel.\(selectedLLM.rawValue)") ?? llm.metadata.defaultModel
+                let llmModel = configuredModel(for: .cleanup, provider: selectedLLM) ?? llm.metadata.defaultModel
                 let style = data.styles.first { $0.id == selectedStyleID && $0.isEnabled }?.instruction
                 let outcome = await CleanupCoordinator().cleanOrFallback(rawText: expanded, provider: llm, model: llmModel, credentials: llmCredentials, vocabulary: data.vocabulary, styleInstruction: style)
                 finalText = outcome.text
@@ -154,7 +154,7 @@ final class AppModel: ObservableObject {
                 cleanupLatency: cleanupResult?.latency,
                 insertionOutcome: insertion.label
             ), at: 0)
-            try await save()
+            await persist()
             phase = .idle
             hud.hideAfterDelay()
         } catch {
@@ -180,13 +180,15 @@ final class AppModel: ObservableObject {
         return error is URLError
     }
 
-    func credentials(purpose: String, provider: ProviderKind) -> ProviderCredentials? {
+    func credentials(purpose: ProviderPurpose, provider: ProviderKind) -> ProviderCredentials? {
         try? keychain.load(for: purpose, provider: provider)
     }
 
-    func saveCredentials(_ credentials: ProviderCredentials, purpose: String, provider: ProviderKind, model: String) throws {
+    func saveCredentials(_ credentials: ProviderCredentials, purpose: ProviderPurpose, provider: ProviderKind, model: String) throws {
+        guard !credentials.apiKey.isEmpty else { throw ProviderError.missingCredential("API key") }
+        guard !model.isEmpty else { throw ProviderError.invalidConfiguration("Enter a model name.") }
         try keychain.save(credentials, for: purpose, provider: provider)
-        defaults.set(model, forKey: "\(purpose)Model.\(provider.rawValue)")
+        defaults.set(model, forKey: modelKey(for: purpose, provider: provider))
         objectWillChange.send()
     }
 
@@ -194,12 +196,12 @@ final class AppModel: ObservableObject {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         data.vocabulary.insert(.init(value: trimmed), at: 0)
-        Task { try? await save() }
+        schedulePersistence()
     }
 
     func deleteVocabulary(_ id: UUID) {
         data.vocabulary.removeAll { $0.id == id }
-        Task { try? await save() }
+        schedulePersistence()
     }
 
     func addStyle(name: String, instruction: String) {
@@ -209,13 +211,13 @@ final class AppModel: ObservableObject {
         let style = WritingStyle(name: name, instruction: instruction)
         data.styles.insert(style, at: 0)
         selectedStyleID = style.id
-        Task { try? await save() }
+        schedulePersistence()
     }
 
     func deleteStyle(_ id: UUID) {
         data.styles.removeAll { $0.id == id }
         if selectedStyleID == id { selectedStyleID = nil }
-        Task { try? await save() }
+        schedulePersistence()
     }
 
     func addSnippet(trigger: String, expansion: String) {
@@ -223,20 +225,23 @@ final class AppModel: ObservableObject {
         let expansion = expansion.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trigger.isEmpty, !expansion.isEmpty else { return }
         data.snippets.insert(.init(trigger: trigger, expansion: expansion), at: 0)
-        Task { try? await save() }
+        schedulePersistence()
     }
 
     func deleteSnippet(_ id: UUID) {
         data.snippets.removeAll { $0.id == id }
-        Task { try? await save() }
+        schedulePersistence()
     }
 
     func pasteClipboard(_ entry: ClipboardEntry? = nil) async {
         let item = entry ?? data.clipboard.first
         guard let item else { return }
-        await inserter.pasteIntoFrontmostApp(item.text)
-        hud.show(.success("Pasted"))
-        hud.hideAfterDelay()
+        if await inserter.pasteIntoFrontmostApp(item.text) {
+            hud.show(.success("Pasted"))
+            hud.hideAfterDelay()
+        } else {
+            showError("Could not post the paste shortcut")
+        }
     }
 
     func requestAccessibilityPermission() {
@@ -296,7 +301,7 @@ final class AppModel: ObservableObject {
             accountID: normalizedAccountID?.isEmpty == false ? normalizedAccountID : nil
         )
         try await provider.validate(credentials: credentials)
-        try saveCredentials(credentials, purpose: "stt", provider: kind, model: provider.metadata.defaultModel)
+        try saveCredentials(credentials, purpose: .speechToText, provider: kind, model: provider.metadata.defaultModel)
         selectedSTT = kind
     }
 
@@ -305,7 +310,15 @@ final class AppModel: ObservableObject {
         defaults.set(true, forKey: "onboardingComplete")
     }
 
-    var selectedSTTIsConfigured: Bool { credentials(purpose: "stt", provider: selectedSTT)?.apiKey.isEmpty == false }
+    var selectedSTTIsConfigured: Bool { credentials(purpose: .speechToText, provider: selectedSTT)?.apiKey.isEmpty == false }
+
+    func configuredModel(for purpose: ProviderPurpose, provider: ProviderKind) -> String? {
+        defaults.string(forKey: modelKey(for: purpose, provider: provider))
+    }
+
+    private func modelKey(for purpose: ProviderPurpose, provider: ProviderKind) -> String {
+        "\(purpose.rawValue)Model.\(provider.rawValue)"
+    }
 
     private func requestRequiredPermissions() {
         if !AXIsProcessTrusted() {
@@ -373,7 +386,15 @@ final class AppModel: ObservableObject {
         do { data = try await store.load() } catch { lastError = error.localizedDescription }
     }
 
-    private func save() async throws { try await store.save(data) }
+    private func schedulePersistence() {
+        Task { @MainActor [weak self] in await self?.persist() }
+    }
+
+    private func persist() async {
+        let snapshot = data
+        do { try await store.save(snapshot) }
+        catch { lastError = "Could not save local data: \(error.localizedDescription)" }
+    }
 
     private func showError(_ message: String) {
         lastError = message

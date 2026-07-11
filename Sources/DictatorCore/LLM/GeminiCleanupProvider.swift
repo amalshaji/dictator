@@ -1,12 +1,12 @@
 import Foundation
 
 public struct GeminiCleanupProvider: CleanupLLMProvider {
-    public let metadata = LLMProviderMetadata(
+    public let metadata = ProviderMetadata(
         kind: .gemini,
         displayName: "Google Gemini",
         defaultModel: "gemini-2.5-flash-lite",
-        requiresAccountID: false,
-        supportsDynamicModels: true
+        models: ["gemini-2.5-flash-lite"],
+        requiresAccountID: false
     )
 
     private let transport: any HTTPTransport
@@ -18,7 +18,8 @@ public struct GeminiCleanupProvider: CleanupLLMProvider {
         guard !credentials.apiKey.isEmpty else { throw ProviderError.missingCredential("API key") }
         var components = URLComponents(string: "https://generativelanguage.googleapis.com/v1beta/models")!
         components.queryItems = [URLQueryItem(name: "key", value: credentials.apiKey)]
-        let (data, response) = try await transport.data(for: URLRequest(url: components.url!))
+        guard let url = components.url else { throw ProviderError.invalidConfiguration("The Gemini API key is invalid.") }
+        let (data, response) = try await transport.data(for: URLRequest(url: url))
         try HTTPHelpers.requireSuccess(data: data, response: response)
         let payload = try JSONDecoder().decode(ModelsResponse.self, from: data)
         return payload.models.map { $0.name.replacingOccurrences(of: "models/", with: "") }.sorted()
@@ -28,7 +29,8 @@ public struct GeminiCleanupProvider: CleanupLLMProvider {
         let started = ContinuousClock.now
         var components = URLComponents(string: "https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent")!
         components.queryItems = [URLQueryItem(name: "key", value: credentials.apiKey)]
-        var request = URLRequest(url: components.url!)
+        guard let url = components.url else { throw ProviderError.invalidConfiguration("The Gemini model name is invalid.") }
+        var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let body = RequestBody(

@@ -41,6 +41,16 @@ final class CoreTests: XCTestCase {
         XCTAssertThrowsError(try CleanupSafetyValidator.validate(raw: "Hello there", cleaned: String(repeating: "This adds information. ", count: 20), vocabulary: []))
     }
 
+    func testCleanupValidatorPreservesRepeatedProtectedTokens() {
+        XCTAssertThrowsError(
+            try CleanupSafetyValidator.validate(
+                raw: "Use port 8080, then retry port 8080.",
+                cleaned: "Use port 8080, then retry.",
+                vocabulary: []
+            )
+        )
+    }
+
     func testPricingCatalogUsesAudioDuration() {
         XCTAssertEqual(PricingCatalog.estimatedSTTCost(provider: .groq, model: "whisper-large-v3-turbo", audioSeconds: 3_600), Decimal(string: "0.04"))
         XCTAssertEqual(PricingCatalog.estimatedSTTCost(provider: .xAI, model: "grok-transcribe", audioSeconds: 1_800), Decimal(string: "0.05"))

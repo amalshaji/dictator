@@ -63,7 +63,7 @@ final class LiveProviderTests: XCTestCase {
         }
         let wav = try Data(contentsOf: bundleURL)
         let pcm = wav.count > 44 ? wav.dropFirst(44) : Data()
-        return RecordedAudio(wavData: wav, pcm16Data: Data(pcm), duration: Double(pcm.count) / 2 / 16_000)
+        return RecordedAudio(wavData: wav, duration: Double(pcm.count) / 2 / 16_000)
     }
 }
 

@@ -13,7 +13,7 @@ public enum ProviderRegistry {
         }
     }
 
-    public static var sttMetadata: [STTProviderMetadata] {
+    public static var sttMetadata: [ProviderMetadata] {
         [GroqSTTProvider().metadata, CloudflareSTTProvider().metadata, XAISTTProvider().metadata,
          DeepgramSTTProvider().metadata, AssemblyAISTTProvider().metadata, GladiaSTTProvider().metadata]
     }

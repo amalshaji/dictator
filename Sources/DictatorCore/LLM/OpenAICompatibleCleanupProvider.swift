@@ -1,7 +1,7 @@
 import Foundation
 
 public struct OpenAICompatibleCleanupProvider: CleanupLLMProvider {
-    public let metadata: LLMProviderMetadata
+    public let metadata: ProviderMetadata
     private let defaultBaseURL: URL
     private let transport: any HTTPTransport
 
@@ -12,12 +12,12 @@ public struct OpenAICompatibleCleanupProvider: CleanupLLMProvider {
         defaultBaseURL: URL,
         transport: any HTTPTransport = URLSessionTransport()
     ) {
-        self.metadata = LLMProviderMetadata(
+        self.metadata = ProviderMetadata(
             kind: kind,
             displayName: displayName,
             defaultModel: defaultModel,
-            requiresAccountID: false,
-            supportsDynamicModels: true
+            models: [defaultModel],
+            requiresAccountID: false
         )
         self.defaultBaseURL = defaultBaseURL
         self.transport = transport
@@ -29,7 +29,7 @@ public struct OpenAICompatibleCleanupProvider: CleanupLLMProvider {
 
     public func listModels(credentials: ProviderCredentials) async throws -> [String] {
         guard !credentials.apiKey.isEmpty else { throw ProviderError.missingCredential("API key") }
-        let baseURL = credentials.baseURL ?? defaultBaseURL
+        let baseURL = try resolvedBaseURL(credentials)
         var request = URLRequest(url: baseURL.appending(path: "models"))
         request.setValue("Bearer \(credentials.apiKey)", forHTTPHeaderField: "Authorization")
         let (data, response) = try await transport.data(for: request)
@@ -41,7 +41,7 @@ public struct OpenAICompatibleCleanupProvider: CleanupLLMProvider {
     public func clean(request cleanup: CleanupRequest, model: String, credentials: ProviderCredentials) async throws -> CleanupResult {
         guard !credentials.apiKey.isEmpty else { throw ProviderError.missingCredential("API key") }
         let started = ContinuousClock.now
-        let baseURL = credentials.baseURL ?? defaultBaseURL
+        let baseURL = try resolvedBaseURL(credentials)
         var request = URLRequest(url: baseURL.appending(path: "chat/completions"))
         request.httpMethod = "POST"
         request.setValue("Bearer \(credentials.apiKey)", forHTTPHeaderField: "Authorization")
@@ -73,6 +73,17 @@ public struct OpenAICompatibleCleanupProvider: CleanupLLMProvider {
             outputTokens: payload.usage?.completionTokens,
             latency: seconds(since: started)
         )
+    }
+
+    private func resolvedBaseURL(_ credentials: ProviderCredentials) throws -> URL {
+        if metadata.kind == .openAICompatible, credentials.baseURL == nil {
+            throw ProviderError.missingCredential("base URL")
+        }
+        let url = credentials.baseURL ?? defaultBaseURL
+        guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil else {
+            throw ProviderError.invalidConfiguration("Enter a valid HTTP or HTTPS base URL.")
+        }
+        return url
     }
 
     private struct ModelsResponse: Decodable { let data: [Model]; struct Model: Decodable { let id: String } }
