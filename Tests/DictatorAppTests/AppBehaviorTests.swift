@@ -67,6 +67,15 @@ final class AppBehaviorTests: XCTestCase {
         )
     }
 
+    func testUsageCurrencyFormattingUsesStableFractionPrecision() {
+        XCTAssertEqual(
+            UsageDisplayFormatter.currency(Decimal(string: "0.0119277777777777793024")!, complete: true),
+            "$0.0119"
+        )
+        XCTAssertEqual(UsageDisplayFormatter.currency(2, complete: true), "$2.00")
+        XCTAssertEqual(UsageDisplayFormatter.currency(1, complete: false), "Partially available")
+    }
+
     func testPrivateClipboardShortcutsAreExact() {
         let shortcut = GlobalShortcut(keyCode: 8, modifiers: [.maskCommand, .maskControl], keyLabel: "C")
         XCTAssertTrue(ShortcutMatcher.matches(shortcut, keyCode: 8, flags: [.maskCommand, .maskControl]))

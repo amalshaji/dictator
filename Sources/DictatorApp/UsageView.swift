@@ -1,6 +1,19 @@
 import DictatorCore
 import SwiftUI
 
+enum UsageDisplayFormatter {
+    static func currency(_ value: Decimal, complete: Bool) -> String {
+        guard complete else { return "Partially available" }
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.minimumFractionDigits = 2
+        formatter.maximumFractionDigits = 4
+        formatter.roundingMode = .halfUp
+        return "$" + (formatter.string(from: NSDecimalNumber(decimal: value)) ?? "0.00")
+    }
+}
+
 struct UsageView: View {
     @ObservedObject var model: AppModel
     @ObservedObject private var pricing: PricingStore
@@ -20,36 +33,45 @@ struct UsageView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 26) {
-                header
-                usageSection("Speech to text") {
-                    metricGrid([
-                        ("Dictations", "\(report.stt.dictations)"),
-                        ("Audio", String(format: "%.1f min", report.stt.audioSeconds / 60)),
-                        ("Words", "\(report.stt.words)"),
-                        ("STT cost", currency(report.stt.cost, complete: report.stt.pricedRequests == report.stt.dictations)),
-                        ("Median request", latency(report.stt.medianLatency)),
-                        ("STT tokens", "N/A — billed by audio duration")
-                    ])
-                    sttBreakdown
-                }
-                usageSection("LLM cleanup") {
-                    metricGrid([
-                        ("Cleanup requests", "\(report.llm.requests)"),
-                        ("Input tokens", tokenSummary(report.llm.inputTokens, samples: report.llm.inputTokenSamples)),
-                        ("Output tokens", tokenSummary(report.llm.outputTokens, samples: report.llm.outputTokenSamples)),
-                        ("LLM cost", currency(report.llm.cost, complete: report.llm.pricedRequests == report.llm.requests)),
-                        ("Median cleanup", latency(report.llm.medianLatency))
-                    ])
-                    llmBreakdown
-                }
-                pricingFooter
+        ViewThatFits(in: .vertical) {
+            pageContent.fixedSize(horizontal: false, vertical: true)
+            ScrollView {
+                pageContent
             }
-            .frame(maxWidth: DictatorDesign.contentWidth, alignment: .leading)
-            .padding(42)
         }
         .task { await pricing.refresh() }
+    }
+
+    private var pageContent: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            header
+            usageSection("Speech to text") {
+                metricGrid([
+                    ("Dictations", "\(report.stt.dictations)"),
+                    ("Audio", String(format: "%.1f min", report.stt.audioSeconds / 60)),
+                    ("Words", "\(report.stt.words)"),
+                    ("STT cost", UsageDisplayFormatter.currency(report.stt.cost, complete: report.stt.pricedRequests == report.stt.dictations)),
+                    ("Median request", latency(report.stt.medianLatency)),
+                    ("STT tokens", "N/A — billed by audio duration")
+                ])
+                sttBreakdown
+            }
+            usageSection("LLM cleanup") {
+                metricGrid([
+                    ("Cleanup requests", "\(report.llm.requests)"),
+                    ("Input tokens", tokenSummary(report.llm.inputTokens, samples: report.llm.inputTokenSamples)),
+                    ("Output tokens", tokenSummary(report.llm.outputTokens, samples: report.llm.outputTokenSamples)),
+                    ("LLM cost", UsageDisplayFormatter.currency(report.llm.cost, complete: report.llm.pricedRequests == report.llm.requests)),
+                    ("Median cleanup", latency(report.llm.medianLatency))
+                ])
+                llmBreakdown
+            }
+            pricingFooter
+        }
+        .frame(maxWidth: DictatorDesign.contentWidth, alignment: .leading)
+        .padding(.horizontal, 42)
+        .padding(.vertical, 30)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
     private var header: some View {
@@ -74,7 +96,7 @@ struct UsageView: View {
             ForEach(report.sttBreakdown) { row in
                 breakdownRow(
                     name: "\(row.provider.rawValue) · \(row.model)",
-                    detail: "\(row.requests) req · \(String(format: "%.1f", row.audioSeconds / 60)) min · \(latency(row.medianLatency)) · \(currency(row.cost, complete: row.pricedRequests == row.requests))"
+                    detail: "\(row.requests) req · \(String(format: "%.1f", row.audioSeconds / 60)) min · \(latency(row.medianLatency)) · \(UsageDisplayFormatter.currency(row.cost, complete: row.pricedRequests == row.requests))"
                 )
             }
         }
@@ -85,7 +107,7 @@ struct UsageView: View {
             ForEach(report.llmBreakdown) { row in
                 breakdownRow(
                     name: "\(row.provider.rawValue) · \(row.model)",
-                    detail: "\(row.requests) req · \(breakdownTokens(row)) · \(latency(row.medianLatency)) · \(currency(row.cost, complete: row.pricedRequests == row.requests))"
+                    detail: "\(row.requests) req · \(breakdownTokens(row)) · \(latency(row.medianLatency)) · \(UsageDisplayFormatter.currency(row.cost, complete: row.pricedRequests == row.requests))"
                 )
             }
         }
@@ -110,17 +132,17 @@ struct UsageView: View {
     }
 
     private func usageSection<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             Text(title).font(.dictatorDisplay(20))
             content()
         }
-        .padding(18)
+        .padding(16)
         .background(DictatorDesign.control, in: RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(DictatorDesign.border))
     }
 
     private func metricGrid(_ values: [(String, String)]) -> some View {
-        LazyVGrid(columns: [.init(.adaptive(minimum: 145))], alignment: .leading, spacing: 16) {
+        LazyVGrid(columns: [.init(.adaptive(minimum: 145))], alignment: .leading, spacing: 12) {
             ForEach(Array(values.enumerated()), id: \.offset) { _, value in
                 VStack(alignment: .leading, spacing: 4) {
                     Text(value.1).font(.dictatorDisplay(17)).lineLimit(2)
@@ -138,7 +160,7 @@ struct UsageView: View {
                 Text("No usage in this period").font(.dictatorBody(11)).foregroundStyle(.secondary)
             }
         }
-        .padding(.top, 8)
+        .padding(.top, 6)
     }
 
     private func breakdownRow(name: String, detail: String) -> some View {
@@ -147,7 +169,7 @@ struct UsageView: View {
             Spacer()
             Text(detail).font(.dictatorUtility(9)).foregroundStyle(.secondary)
         }
-        .padding(.vertical, 3)
+        .padding(.vertical, 2)
     }
 
     private func breakdownTokens(_ row: UsageReport.LLMBreakdown) -> String {
@@ -157,11 +179,6 @@ struct UsageView: View {
 
     private func latency(_ value: TimeInterval?) -> String {
         value.map { String(format: "%.0f ms", $0 * 1_000) } ?? "—"
-    }
-
-    private func currency(_ value: Decimal, complete: Bool) -> String {
-        guard complete else { return "Partially available" }
-        return "$" + NSDecimalNumber(decimal: value).stringValue
     }
 
     private func tokenSummary(_ value: Int, samples: Int) -> String {
