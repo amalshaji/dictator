@@ -211,6 +211,41 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(PricingCatalog.estimatedSTTCost(provider: .xAI, model: "grok-transcribe", audioSeconds: 1_800), Decimal(string: "0.05"))
     }
 
+    func testGroqSTTPricingUsesTenSecondMinimum() {
+        XCTAssertEqual(
+            PricingCatalog.estimatedSTTCost(provider: .groq, model: "whisper-large-v3-turbo", audioSeconds: 1),
+            PricingCatalog.estimatedSTTCost(provider: .groq, model: "whisper-large-v3-turbo", audioSeconds: 10)
+        )
+    }
+
+    func testModelsDevPricingDecodesExactProviderAndModel() throws {
+        let data = #"{"groq":{"models":{"openai/gpt-oss-20b":{"cost":{"input":0.1,"output":0.5}}}}}"#.data(using: .utf8)!
+        let rates = try PricingService.decodeRates(from: data)
+        XCTAssertEqual(rates["groq/openai/gpt-oss-20b"], .init(inputPerMillion: 0.1, outputPerMillion: 0.5))
+        XCTAssertNil(PricingCatalog.estimatedLLMCost(provider: .groq, model: "similar-model", usage: .init(inputTokens: 10), rates: rates))
+        XCTAssertEqual(PricingCatalog.estimatedLLMCost(provider: .groq, model: "openai/gpt-oss-20b", usage: .init(inputTokens: 1_000_000, outputTokens: 1_000_000), rates: rates), Decimal(string: "0.6"))
+        XCTAssertEqual(PricingCatalog.estimatedLLMCost(provider: .groq, model: "openai/gpt-oss-20b", usage: .init(providerReportedCostUSD: 2), rates: rates), 2)
+    }
+
+    func testLegacyTranscriptDecodesWithoutPipelineLatencyOrRevisions() throws {
+        let record = TranscriptRecord(rawText: "raw", finalText: "final", sttProvider: .groq, sttModel: "m", audioDuration: 1, sttLatency: 0.2, insertionOutcome: "typed")
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(record)) as? [String: Any])
+        object.removeValue(forKey: "pipelineLatency"); object.removeValue(forKey: "revisions"); object.removeValue(forKey: "preferredRevisionID")
+        let decoded = try JSONDecoder().decode(TranscriptRecord.self, from: JSONSerialization.data(withJSONObject: object))
+        XCTAssertNil(decoded.pipelineLatency); XCTAssertTrue(decoded.revisions.isEmpty); XCTAssertEqual(decoded.currentText, "final")
+    }
+
+    func testUsageAnalyticsKeepsSTTAndLLMSeparate() {
+        let record = TranscriptRecord(
+            rawText: "hello", finalText: "Hello", sttProvider: .groq, sttModel: "whisper-large-v3-turbo",
+            llmProvider: .groq, llmModel: "openai/gpt-oss-20b", audioDuration: 60, sttLatency: 0.3,
+            llmUsage: .init(inputTokens: 100, outputTokens: 20), insertionOutcome: "typed"
+        )
+        let summary = UsageAnalytics.summarize([record], since: .distantPast, rates: PricingCatalog.fallbackRates)
+        XCTAssertEqual(summary.dictations, 1); XCTAssertEqual(summary.cleanupRequests, 1)
+        XCTAssertEqual(summary.inputTokens, 100); XCTAssertGreaterThan(summary.sttCost, 0); XCTAssertGreaterThan(summary.llmCost, 0)
+    }
+
     func testRegistriesExposeAllPlannedProviders() {
         XCTAssertEqual(Set(ProviderRegistry.sttMetadata.map(\.kind)), Set([.groq, .cloudflare, .xAI, .deepgram, .assemblyAI, .gladia]))
         XCTAssertEqual(Set(CleanupProviderRegistry.metadata.map(\.kind)), Set([.groq, .cloudflare, .gemini, .xAI, .openRouter, .openAICompatible]))

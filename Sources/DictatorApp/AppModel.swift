@@ -23,6 +23,9 @@ final class AppModel: ObservableObject {
     @Published var inputMonitoringGranted = CGPreflightListenEventAccess()
     @Published var microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     @Published var onboardingComplete = UserDefaults.standard.bool(forKey: "onboardingComplete")
+    @Published var pricingSnapshot: PricingSnapshot?
+    @Published var pricingRefreshInProgress = false
+    @Published var pricingError: String?
     @Published private(set) var dictateShortcut = GlobalShortcut.dictate
     @Published private(set) var pasteLatestShortcut = GlobalShortcut.pasteLatest
     @Published private(set) var openClipboardShortcut = GlobalShortcut.openClipboard
@@ -37,6 +40,7 @@ final class AppModel: ObservableObject {
     private let hotkey = HotkeyMonitor()
     private let inserter = AccessibilityInserter()
     private let transcriptProcessor = TranscriptProcessor()
+    private let pricingService = PricingService()
     private let hud = FloatingPanelController()
     private var focusedTarget: FocusedTarget?
 
@@ -97,6 +101,7 @@ final class AppModel: ObservableObject {
     func stopDictation() async {
         guard phase == .listening else { return }
         phase = .processing
+        let pipelineStarted = ContinuousClock.now
         let audio = recorder.stop()
         guard audio.duration >= 0.15 else {
             phase = .idle
@@ -104,7 +109,7 @@ final class AppModel: ObservableObject {
             hud.hideAfterDelay()
             return
         }
-        await process(audio)
+        await process(audio, pipelineStarted: pipelineStarted)
     }
 
     func cancelDictation() {
@@ -115,7 +120,7 @@ final class AppModel: ObservableObject {
         hud.hideAfterDelay()
     }
 
-    private func process(_ audio: RecordedAudio) async {
+    private func process(_ audio: RecordedAudio, pipelineStarted: ContinuousClock.Instant) async {
         hud.show(.transcribing)
         do {
             guard let provider = ProviderRegistry.sttProvider(for: selectedSTT) else { throw ProviderError.unsupported("Provider is not available") }
@@ -159,6 +164,7 @@ final class AppModel: ObservableObject {
             }
 
             let insertion = await inserter.insert(requestedInsertion, into: focusedTarget)
+            let pipelineLatency = Self.elapsedSeconds(since: pipelineStarted)
             if case .privateClipboard = insertion {
                 data.clipboard.insert(.init(text: finalText, rawText: raw.text, sourceBundleID: focusedTarget?.bundleIdentifier), at: 0)
             }
@@ -174,6 +180,12 @@ final class AppModel: ObservableObject {
                 audioDuration: audio.duration,
                 sttLatency: raw.latency,
                 cleanupLatency: cleanupResult?.latency,
+                pipelineLatency: pipelineLatency,
+                llmUsage: cleanupResult.map { .init(
+                    inputTokens: $0.inputTokens ?? 0,
+                    outputTokens: $0.outputTokens ?? 0,
+                    providerReportedCostUSD: $0.providerReportedCostUSD
+                ) },
                 insertionOutcome: insertion.label
             ), at: 0)
             await persist()
@@ -182,6 +194,11 @@ final class AppModel: ObservableObject {
         } catch {
             showError(error.localizedDescription)
         }
+    }
+
+    private static func elapsedSeconds(since instant: ContinuousClock.Instant) -> TimeInterval {
+        let components = instant.duration(to: .now).components
+        return Double(components.seconds) + Double(components.attoseconds) / 1e18
     }
 
     private func transcribeWithRetry(provider: any SpeechToTextProvider, audio: RecordedAudio, options: TranscriptionOptions, credentials: ProviderCredentials) async throws -> TranscriptionResult {
@@ -481,6 +498,15 @@ final class AppModel: ObservableObject {
         let snapshot = data
         do { try await store.save(snapshot) }
         catch { lastError = "Could not save local data: \(error.localizedDescription)" }
+    }
+
+    func refreshPricing(force: Bool = false) async {
+        pricingRefreshInProgress = true; defer { pricingRefreshInProgress = false }
+        do { pricingSnapshot = try await pricingService.refreshIfNeeded(force: force); pricingError = nil }
+        catch {
+            pricingSnapshot = await pricingService.current()
+            pricingError = "Could not refresh pricing. Showing the last available catalog."
+        }
     }
 
     private func showError(_ message: String) {

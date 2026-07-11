@@ -48,7 +48,14 @@ public struct CloudflareCleanupProvider: CleanupLLMProvider {
         let payload = try JSONDecoder().decode(Envelope.self, from: data)
         let content = payload.result.response ?? payload.result.text ?? ""
         let output = try CleanupResponseDecoder.decode(content, for: cleanup)
-        return CleanupResult(output: output, provider: .cloudflare, model: model, latency: seconds(since: started))
+        return CleanupResult(
+            output: output,
+            provider: .cloudflare,
+            model: model,
+            inputTokens: payload.result.usage?.promptTokens,
+            outputTokens: payload.result.usage?.completionTokens,
+            latency: seconds(since: started)
+        )
     }
 
     private struct RequestBody: Encodable {
@@ -61,6 +68,12 @@ public struct CloudflareCleanupProvider: CleanupLLMProvider {
     }
     private struct Envelope: Decodable {
         let result: Result
-        struct Result: Decodable { let response: String?; let text: String? }
+        struct Result: Decodable {
+            let response: String?; let text: String?; let usage: Usage?
+            struct Usage: Decodable {
+                let promptTokens: Int?; let completionTokens: Int?
+                enum CodingKeys: String, CodingKey { case promptTokens = "prompt_tokens"; case completionTokens = "completion_tokens" }
+            }
+        }
     }
 }

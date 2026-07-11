@@ -40,7 +40,7 @@ struct HomeView: View {
         HStack(spacing: 0) {
             metric(value: "\(wordsThisWeek)", label: "words this week")
             metric(value: averageWPM.map(String.init) ?? "—", label: "average wpm")
-            metric(value: averageLatency.map { String(format: "%.0f ms", $0 * 1_000) } ?? "—", label: "STT latency")
+            metric(value: averageLatency.map { String(format: "%.0f ms", $0 * 1_000) } ?? "—", label: "pipeline latency")
         }
         .padding(.top, 34)
     }
@@ -85,24 +85,24 @@ struct HomeView: View {
     }
 
     private var averageLatency: Double? {
-        guard !model.data.transcripts.isEmpty else { return nil }
-        return model.data.transcripts.reduce(0) { $0 + $1.sttLatency } / Double(model.data.transcripts.count)
+        let latencies = model.data.transcripts.compactMap(\.pipelineLatency)
+        guard !latencies.isEmpty else { return nil }
+        return latencies.reduce(0, +) / Double(latencies.count)
     }
 }
 
 enum TranscriptMetadataFormatter {
     static func pipelineSegments(for record: TranscriptRecord) -> [String] {
         var segments = ["STT: \(sttDisplayName(for: record.sttProvider)), \(milliseconds(record.sttLatency))"]
-        guard let cleanupProvider = record.llmProvider else { return segments }
-
-        let providerName = cleanupDisplayName(for: cleanupProvider)
-        guard let cleanupLatency = record.cleanupLatency else {
-            segments.append("Cleanup: \(providerName)")
-            return segments
+        if let cleanupProvider = record.llmProvider {
+            let providerName = cleanupDisplayName(for: cleanupProvider)
+            if let cleanupLatency = record.cleanupLatency {
+                segments.append("Cleanup: \(providerName), \(milliseconds(cleanupLatency))")
+            } else {
+                segments.append("Cleanup: \(providerName)")
+            }
         }
-
-        segments.append("Cleanup: \(providerName), \(milliseconds(cleanupLatency))")
-        segments.append("Total: \(milliseconds(record.sttLatency + cleanupLatency))")
+        segments.append(record.pipelineLatency.map { "Total: \(milliseconds($0))" } ?? "Total: —")
         return segments
     }
 

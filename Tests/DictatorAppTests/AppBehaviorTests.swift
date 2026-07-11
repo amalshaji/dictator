@@ -48,7 +48,7 @@ final class AppBehaviorTests: XCTestCase {
 
         XCTAssertEqual(
             TranscriptMetadataFormatter.pipelineSegments(for: record),
-            ["STT: Groq, 301 ms"]
+            ["STT: Groq, 301 ms", "Total: —"]
         )
     }
 
@@ -56,12 +56,13 @@ final class AppBehaviorTests: XCTestCase {
         let record = TranscriptRecord(
             rawText: "hello", finalText: "Hello.", sttProvider: .groq, sttModel: "whisper",
             llmProvider: .groq, llmModel: "gpt-oss", audioDuration: 1,
-            sttLatency: 0.301, cleanupLatency: 0.184, insertionOutcome: "inserted"
+            sttLatency: 0.301, cleanupLatency: 0.184, pipelineLatency: 0.612,
+            insertionOutcome: "inserted"
         )
 
         XCTAssertEqual(
             TranscriptMetadataFormatter.pipelineSegments(for: record),
-            ["STT: Groq, 301 ms", "Cleanup: Groq, 184 ms", "Total: 485 ms"]
+            ["STT: Groq, 301 ms", "Cleanup: Groq, 184 ms", "Total: 612 ms"]
         )
     }
 
