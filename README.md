@@ -77,4 +77,4 @@ Configure a protected GitHub environment named `release` with:
 - `SPARKLE_PRIVATE_KEY`: the private Ed25519 key whose public half is committed as `SUPublicEDKey`.
 - `HOMEBREW_TAP_TOKEN`: a fine-grained token with Contents read/write access only to `amalshaji/homebrew-taps`.
 
-Configure GitHub Pages to deploy from the `gh-pages` branch so the stable feed is available at `https://amalshaji.github.io/dictator/appcast.xml`. Keep an encrypted offline backup of the Sparkle private key; without Developer ID signing, losing it prevents trusted key rotation for existing installations.
+Configure GitHub Pages to use **GitHub Actions** as its source. The publishing workflow keeps the signed feed on `gh-pages` for rollback and deploys that exact feed to `https://amalshaji.github.io/dictator/appcast.xml` with GitHub's Pages deployment action. Keep an encrypted offline backup of the Sparkle private key; without Developer ID signing, losing it prevents trusted key rotation for existing installations.

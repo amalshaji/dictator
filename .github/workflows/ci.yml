@@ -34,10 +34,7 @@ jobs:
 
           git show origin/main:project.yml > "$RUNNER_TEMP/base-project.yml"
           base_version=$(scripts/release/version.sh "$RUNNER_TEMP/base-project.yml")
-          if [[ "$version" == "$base_version" ]]; then
-            echo "A release-labelled PR must change MARKETING_VERSION" >&2
-            exit 1
-          fi
+          scripts/release/version-greater-than.sh "$base_version" "$version"
           if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null 2>&1; then
             echo "Tag v$version already exists" >&2
             exit 1
@@ -59,9 +56,13 @@ jobs:
 
       - name: Test release helpers
         run: |
-          test "$(scripts/release/version.sh)" = "0.1.0"
+          fixture="$RUNNER_TEMP/project.yml"
+          printf 'settings:\n  base:\n    MARKETING_VERSION: 1.2.3\n' > "$fixture"
+          test "$(scripts/release/version.sh "$fixture")" = "1.2.3"
           cask=$(scripts/release/render-homebrew-cask.sh 1.2.3 abc123)
           grep -q 'version "1.2.3"' <<<"$cask"
           grep -q 'sha256 "abc123"' <<<"$cask"
           grep -q 'auto_updates true' <<<"$cask"
           grep -q 'com.apple.quarantine' <<<"$cask"
+          scripts/release/download-sparkle-tools.sh "$RUNNER_TEMP/sparkle"
+          Tests/ReleaseScripts/test-release-scripts.sh "$RUNNER_TEMP/sparkle/bin"

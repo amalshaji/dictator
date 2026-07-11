@@ -10,8 +10,7 @@ on:
         required: true
         type: string
 
-permissions:
-  contents: write
+permissions: {}
 
 concurrency:
   group: published-release-${{ github.event.release.tag_name || inputs.tag }}
@@ -22,6 +21,8 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
     runs-on: macos-15
     environment: release
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
@@ -64,11 +65,7 @@ jobs:
           echo "build=$build" >> "$GITHUB_OUTPUT"
 
       - name: Download Sparkle tools
-        run: |
-          curl -fsSL \
-            -o "$RUNNER_TEMP/sparkle.zip" \
-            https://github.com/sparkle-project/Sparkle/releases/download/2.9.4/Sparkle-for-Swift-Package-Manager.zip
-          unzip -q "$RUNNER_TEMP/sparkle.zip" -d "$RUNNER_TEMP/sparkle"
+        run: scripts/release/download-sparkle-tools.sh "$RUNNER_TEMP/sparkle"
 
       - name: Generate and publish signed appcast
         env:
@@ -81,62 +78,69 @@ jobs:
         run: |
           test -n "$SPARKLE_PRIVATE_KEY"
           feed="$RUNNER_TEMP/feed"
-          updates="$RUNNER_TEMP/updates"
-          mkdir -p "$feed" "$updates"
+          mkdir -p "$feed"
 
           git -C "$feed" init
           git -C "$feed" remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           if git -C "$feed" ls-remote --exit-code origin refs/heads/gh-pages >/dev/null 2>&1; then
             git -C "$feed" fetch --depth=1 origin gh-pages
             git -C "$feed" checkout -B gh-pages FETCH_HEAD
-            if [[ -f "$feed/appcast.xml" ]]; then
-              cp "$feed/appcast.xml" "$updates/appcast.xml"
-            fi
           else
             git -C "$feed" checkout --orphan gh-pages
           fi
 
           expected_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/Dictator-${VERSION}-universal.dmg"
-          if [[ -f "$feed/appcast.xml" ]] && grep -q "$expected_url" "$feed/appcast.xml"; then
-            signature=$(scripts/release/validate-appcast.sh "$feed/appcast.xml" "$DMG" "$VERSION" "$BUILD_NUMBER" "$expected_url")
-            printf '%s' "$SPARKLE_PRIVATE_KEY" | "$RUNNER_TEMP/sparkle/bin/sign_update" --verify --ed-key-file - "$feed/appcast.xml"
-            printf '%s' "$SPARKLE_PRIVATE_KEY" | "$RUNNER_TEMP/sparkle/bin/sign_update" --verify --ed-key-file - "$DMG" "$signature"
-            echo "Existing appcast entry is valid"
-            exit 0
-          fi
+          notes="$RUNNER_TEMP/release-notes.md"
+          gh release view "$TAG" --json body --jq .body > "$notes"
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | scripts/release/update-appcast.sh \
+            "$RUNNER_TEMP/sparkle/bin" \
+            "$feed" \
+            "$DMG" \
+            "$VERSION" \
+            "$BUILD_NUMBER" \
+            "$expected_url" \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/" \
+            "https://github.com/${GITHUB_REPOSITORY}" \
+            "$notes"
 
-          cp "$DMG" "$updates/"
-          gh release view "$TAG" --json body --jq .body > "$updates/Dictator-${VERSION}-universal.md"
-          printf '%s' "$SPARKLE_PRIVATE_KEY" | "$RUNNER_TEMP/sparkle/bin/generate_appcast" \
-            --ed-key-file - \
-            --download-url-prefix "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/" \
-            --link "https://github.com/${GITHUB_REPOSITORY}" \
-            --embed-release-notes \
-            --maximum-deltas 0 \
-            --maximum-versions 3 \
-            -o "$updates/appcast.xml" \
-            "$updates"
-
-          signature=$(scripts/release/validate-appcast.sh "$updates/appcast.xml" "$DMG" "$VERSION" "$BUILD_NUMBER" "$expected_url")
-          printf '%s' "$SPARKLE_PRIVATE_KEY" | "$RUNNER_TEMP/sparkle/bin/sign_update" --verify --ed-key-file - "$updates/appcast.xml"
-          printf '%s' "$SPARKLE_PRIVATE_KEY" | "$RUNNER_TEMP/sparkle/bin/sign_update" --verify --ed-key-file - "$DMG" "$signature"
-
-          cp "$updates/appcast.xml" "$feed/appcast.xml"
           touch "$feed/.nojekyll"
           git -C "$feed" add appcast.xml .nojekyll
-          if git -C "$feed" diff --cached --quiet; then
-            echo "Appcast already up to date"
-            exit 0
+          if ! git -C "$feed" diff --cached --quiet; then
+            git -C "$feed" config user.name "github-actions[bot]"
+            git -C "$feed" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git -C "$feed" commit -m "Update Dictator appcast for $TAG"
+            git -C "$feed" push origin HEAD:gh-pages
           fi
-          git -C "$feed" config user.name "github-actions[bot]"
-          git -C "$feed" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C "$feed" commit -m "Update Dictator appcast for $TAG"
-          git -C "$feed" push origin HEAD:gh-pages
+
+          pages="$RUNNER_TEMP/pages"
+          mkdir -p "$pages"
+          cp "$feed/appcast.xml" "$feed/.nojekyll" "$pages/"
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+        with:
+          path: ${{ runner.temp }}/pages
+
+  pages:
+    needs: appcast
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy appcast to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
 
   homebrew:
     if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
     runs-on: macos-15
     environment: release
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
