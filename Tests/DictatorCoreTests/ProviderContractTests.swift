@@ -75,7 +75,10 @@ final class ProviderContractTests: XCTestCase {
             transport: transport
         )
         let result = try await provider.clean(
-            request: .init(transcript: "Um ship Dictator 2.4 at https://example.com.", vocabulary: [.init(value: "Dictator")]),
+            request: .init(
+                input: .transcription("Um ship Dictator 2.4 at https://example.com."),
+                vocabulary: [.init(value: "Dictator")]
+            ),
             model: "test",
             credentials: .init(apiKey: "test")
         )
@@ -100,7 +103,7 @@ final class ProviderContractTests: XCTestCase {
         )
 
         let result = try await provider.clean(
-            request: .init(transcript: "make it lowercase", selectedText: "HELLO WORLD"),
+            request: .init(input: .contextual(spokenText: "make it lowercase", selectedText: "HELLO WORLD")),
             model: "test",
             credentials: .init(apiKey: "test")
         )

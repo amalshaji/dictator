@@ -44,7 +44,7 @@ final class LiveProviderTests: XCTestCase {
         for (kind, credentials) in configurations where !credentials.apiKey.isEmpty {
             guard let provider = CleanupProviderRegistry.provider(for: kind) else { continue }
             let result = try await provider.clean(
-                request: .init(transcript: raw, vocabulary: [.init(value: "Dictator")]),
+                request: .init(input: .transcription(raw), vocabulary: [.init(value: "Dictator")]),
                 model: provider.metadata.defaultModel,
                 credentials: credentials
             )

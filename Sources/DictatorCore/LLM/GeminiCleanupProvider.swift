@@ -42,15 +42,10 @@ public struct GeminiCleanupProvider: CleanupLLMProvider {
         let (data, response) = try await transport.data(for: request)
         try HTTPHelpers.requireSuccess(data: data, response: response)
         let payload = try JSONDecoder().decode(ResponseBody.self, from: data)
-        guard let content = payload.candidates.first?.content.parts.first?.text,
-              let contentData = content.data(using: .utf8),
-              let parsed = try? JSONDecoder().decode(CleanedPayload.self, from: contentData) else {
-            throw ProviderError.invalidResponse
-        }
-        try CleanupSafetyValidator.validate(request: cleanup, intent: parsed.intent, cleaned: parsed.text)
+        guard let content = payload.candidates.first?.content.parts.first?.text else { throw ProviderError.invalidResponse }
+        let output = try CleanupResponseDecoder.decode(content, for: cleanup)
         return CleanupResult(
-            text: parsed.text,
-            intent: parsed.intent,
+            output: output,
             provider: .gemini,
             model: model,
             inputTokens: payload.usageMetadata?.promptTokenCount,
@@ -76,5 +71,4 @@ public struct GeminiCleanupProvider: CleanupLLMProvider {
         struct Part: Decodable { let text: String? }
         struct Usage: Decodable { let promptTokenCount: Int?; let candidatesTokenCount: Int? }
     }
-    private struct CleanedPayload: Decodable { let intent: CleanupIntent; let text: String }
 }

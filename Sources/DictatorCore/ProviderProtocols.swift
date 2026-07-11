@@ -38,7 +38,13 @@ public struct CleanupPrompt: Sendable {
     }
 
     public static func user(request: CleanupRequest) throws -> String {
-        let payload = UserPayload(spokenText: request.transcript, selectedText: request.selectedText)
+        let payload: UserPayload
+        switch request.input {
+        case .transcription(let text):
+            payload = UserPayload(spokenText: text, selectedText: nil)
+        case .contextual(let spokenText, let selectedText):
+            payload = UserPayload(spokenText: spokenText, selectedText: selectedText)
+        }
         let data = try JSONEncoder().encode(payload)
         guard let text = String(data: data, encoding: .utf8) else { throw ProviderError.invalidResponse }
         return text

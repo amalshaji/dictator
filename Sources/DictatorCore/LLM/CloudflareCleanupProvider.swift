@@ -47,11 +47,8 @@ public struct CloudflareCleanupProvider: CleanupLLMProvider {
         try HTTPHelpers.requireSuccess(data: data, response: response)
         let payload = try JSONDecoder().decode(Envelope.self, from: data)
         let content = payload.result.response ?? payload.result.text ?? ""
-        guard let contentData = content.data(using: .utf8), let parsed = try? JSONDecoder().decode(CleanedPayload.self, from: contentData) else {
-            throw ProviderError.invalidResponse
-        }
-        try CleanupSafetyValidator.validate(request: cleanup, intent: parsed.intent, cleaned: parsed.text)
-        return CleanupResult(text: parsed.text, intent: parsed.intent, provider: .cloudflare, model: model, latency: seconds(since: started))
+        let output = try CleanupResponseDecoder.decode(content, for: cleanup)
+        return CleanupResult(output: output, provider: .cloudflare, model: model, latency: seconds(since: started))
     }
 
     private struct RequestBody: Encodable {
@@ -66,5 +63,4 @@ public struct CloudflareCleanupProvider: CleanupLLMProvider {
         let result: Result
         struct Result: Decodable { let response: String?; let text: String? }
     }
-    private struct CleanedPayload: Decodable { let intent: CleanupIntent; let text: String }
 }

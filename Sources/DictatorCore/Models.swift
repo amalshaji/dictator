@@ -137,20 +137,28 @@ public struct ProviderMetadata: Identifiable, Equatable, Sendable {
     public var id: ProviderKind { kind }
 }
 
+public enum CleanupInput: Equatable, Sendable {
+    case transcription(String)
+    case contextual(spokenText: String, selectedText: String)
+
+    public var spokenText: String {
+        switch self {
+        case .transcription(let text), .contextual(let text, _): text
+        }
+    }
+}
+
 public struct CleanupRequest: Equatable, Sendable {
-    public var transcript: String
-    public var selectedText: String?
+    public var input: CleanupInput
     public var vocabulary: [VocabularyEntry]
     public var styleInstruction: String?
 
     public init(
-        transcript: String,
-        selectedText: String? = nil,
+        input: CleanupInput,
         vocabulary: [VocabularyEntry] = [],
         styleInstruction: String? = nil
     ) {
-        self.transcript = transcript
-        self.selectedText = selectedText
+        self.input = input
         self.vocabulary = vocabulary
         self.styleInstruction = styleInstruction
     }
@@ -161,9 +169,26 @@ public enum CleanupIntent: String, Codable, Equatable, Sendable {
     case transformation
 }
 
+public enum CleanupOutput: Equatable, Sendable {
+    case transcription(String)
+    case transformation(String)
+
+    public var text: String {
+        switch self {
+        case .transcription(let text), .transformation(let text): text
+        }
+    }
+
+    public var intent: CleanupIntent {
+        switch self {
+        case .transcription: .transcription
+        case .transformation: .transformation
+        }
+    }
+}
+
 public struct CleanupResult: Equatable, Sendable {
-    public var text: String
-    public var intent: CleanupIntent
+    public var output: CleanupOutput
     public var provider: ProviderKind
     public var model: String
     public var inputTokens: Int?
@@ -171,22 +196,23 @@ public struct CleanupResult: Equatable, Sendable {
     public var latency: TimeInterval
 
     public init(
-        text: String,
-        intent: CleanupIntent = .transcription,
+        output: CleanupOutput,
         provider: ProviderKind,
         model: String,
         inputTokens: Int? = nil,
         outputTokens: Int? = nil,
         latency: TimeInterval
     ) {
-        self.text = text
-        self.intent = intent
+        self.output = output
         self.provider = provider
         self.model = model
         self.inputTokens = inputTokens
         self.outputTokens = outputTokens
         self.latency = latency
     }
+
+    public var text: String { output.text }
+    public var intent: CleanupIntent { output.intent }
 }
 
 public struct TranscriptRecord: Identifiable, Codable, Equatable, Sendable {
