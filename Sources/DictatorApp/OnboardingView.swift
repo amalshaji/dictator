@@ -108,16 +108,19 @@ struct OnboardingView: View {
     private var appleSpeechSetup: some View {
         VStack(alignment: .leading, spacing: 10) {
             if !model.appleSpeechLocales.isEmpty {
-                Picker("Language", selection: Binding(
-                    get: { model.selectedAppleSpeechLocaleIdentifier },
-                    set: { model.selectAppleSpeechLocale($0) }
-                )) {
-                    ForEach(model.appleSpeechLocales) { locale in
-                        Text(Locale.current.localizedString(forIdentifier: locale.identifier) ?? locale.identifier)
-                            .tag(locale.identifier)
-                    }
-                }
-                .pickerStyle(.menu)
+                DictatorMenuField(
+                    label: "Language",
+                    options: model.appleSpeechLocales.map {
+                        .init(
+                            value: $0.identifier,
+                            label: Locale.current.localizedString(forIdentifier: $0.identifier) ?? $0.identifier
+                        )
+                    },
+                    selection: Binding(
+                        get: { model.selectedAppleSpeechLocaleIdentifier },
+                        set: { model.selectAppleSpeechLocale($0) }
+                    )
+                )
             }
             Text(model.appleSpeechStatusText)
                 .font(.dictatorBody(12, weight: .medium))

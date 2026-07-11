@@ -111,6 +111,60 @@ struct DictatorTextFieldStyle: TextFieldStyle {
     }
 }
 
+struct DictatorMenuOption: Identifiable {
+    let value: String
+    let label: String
+
+    var id: String { value }
+}
+
+struct DictatorMenuField: View {
+    let label: String
+    let options: [DictatorMenuOption]
+    @Binding var selection: String
+
+    var body: some View {
+        Menu {
+            ForEach(options) { option in
+                Button {
+                    selection = option.value
+                } label: {
+                    if option.value == selection {
+                        Label(option.label, systemImage: "checkmark")
+                    } else {
+                        Text(option.label)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Text(selectedLabel)
+                    .font(.dictatorBody(13))
+                    .foregroundStyle(DictatorDesign.ink)
+                    .lineLimit(1)
+                Spacer(minLength: 12)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(DictatorDesign.muted)
+            }
+            .padding(.horizontal, 11)
+            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+            .contentShape(Rectangle())
+            .background(DictatorDesign.fog.opacity(0.72), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(DictatorDesign.border))
+        }
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .frame(maxWidth: .infinity)
+        .accessibilityLabel(label)
+        .accessibilityValue(selectedLabel)
+    }
+
+    private var selectedLabel: String {
+        options.first(where: { $0.value == selection })?.label ?? selection
+    }
+}
+
 struct DictatorEditorChrome: ViewModifier {
     func body(content: Content) -> some View {
         content

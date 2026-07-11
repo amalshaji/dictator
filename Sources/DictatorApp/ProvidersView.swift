@@ -114,12 +114,13 @@ private struct AppleSpeechSetupRow: View {
 
                     if !model.appleSpeechLocales.isEmpty {
                         field("Language") {
-                            Picker("Language", selection: localeBinding) {
-                                ForEach(model.appleSpeechLocales) { locale in
-                                    Text(localeDisplayName(locale.identifier)).tag(locale.identifier)
-                                }
-                            }
-                            .labelsHidden().pickerStyle(.menu).controlSize(.large)
+                            DictatorMenuField(
+                                label: "Language",
+                                options: model.appleSpeechLocales.map {
+                                    .init(value: $0.identifier, label: localeDisplayName($0.identifier))
+                                },
+                                selection: localeBinding
+                            )
                         }
                     }
 
@@ -132,7 +133,7 @@ private struct AppleSpeechSetupRow: View {
 
                     if case let .downloading(_, progress) = model.appleSpeechReadiness {
                         ProgressView(value: progress) {
-                            Text("Downloading speech model… (Int(progress * 100))%")
+                            Text("Downloading speech model… \(Int(progress * 100))%")
                                 .font(.dictatorBody(11)).foregroundStyle(.secondary)
                         }
                     }
@@ -264,12 +265,11 @@ private struct ProviderSetupRow: View {
                         if provider.kind == .openAICompatible { field("Base URL") { TextField("https://api.example.com/v1", text: $baseURL).textFieldStyle(DictatorTextFieldStyle()) } }
                         if provider.models.count > 1 {
                             field("Model") {
-                                Picker("Model", selection: $selectedModel) { ForEach(provider.models, id: \.self) { Text($0).tag($0) } }
-                                    .labelsHidden().pickerStyle(.menu).controlSize(.large)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.horizontal, 4).frame(height: 36)
-                                    .background(DictatorDesign.control, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(DictatorDesign.border))
+                                DictatorMenuField(
+                                    label: "Model",
+                                    options: provider.models.map { .init(value: $0, label: $0) },
+                                    selection: $selectedModel
+                                )
                             }
                         } else {
                             field("Model") { TextField("Model", text: $selectedModel).textFieldStyle(DictatorTextFieldStyle()) }
