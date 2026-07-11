@@ -155,7 +155,7 @@ struct TranscriptDetailView: View {
                 Divider()
                 Button("Teach Dictator…") { presentation = .teach }
             } label: {
-                Label("More", systemImage: "ellipsis")
+                Text("More")
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
