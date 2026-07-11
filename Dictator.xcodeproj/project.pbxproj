@@ -173,8 +173,8 @@
 		58AC81E5B5340A692F7DD0F6 /* CloudflareSTTProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudflareSTTProvider.swift; sourceTree = "<group>"; };
 		592F98F88C6DCE1891B2A2C1 /* Dictator.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Dictator.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5A0B6F1005DA2FDA21D5A10C /* OpenAICompatibleCleanupProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAICompatibleCleanupProvider.swift; sourceTree = "<group>"; };
-		5C46CBB06091F70FD7B4C22A /* CleanupResponseDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CleanupResponseDecoder.swift; sourceTree = "<group>"; };
 		5BED3E89EFC05EB99961ED5F /* PricingCatalogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PricingCatalogTests.swift; sourceTree = "<group>"; };
+		5C46CBB06091F70FD7B4C22A /* CleanupResponseDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CleanupResponseDecoder.swift; sourceTree = "<group>"; };
 		5DE02E176452630D4943B27E /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		605347E217D02C25BB513B5F /* UsageAnalyticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageAnalyticsTests.swift; sourceTree = "<group>"; };
 		636B0078750E0AAED1EE7A12 /* PricingStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PricingStore.swift; sourceTree = "<group>"; };

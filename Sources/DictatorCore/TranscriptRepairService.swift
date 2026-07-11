@@ -12,7 +12,7 @@ public struct TranscriptRepairService: Sendable {
         vocabulary: [VocabularyEntry],
         snippets: [SnippetEntry],
         cleanup: TranscriptCleanupConfiguration?
-    ) async -> TranscriptRevision {
+    ) async throws -> TranscriptRevision {
         let started = ContinuousClock.now
         let processed = await processor.process(
             rawText: record.rawText,
@@ -20,11 +20,20 @@ public struct TranscriptRepairService: Sendable {
             snippets: snippets,
             cleanup: cleanup
         )
-        let origin = processed.cleanupResult
-            .map { TranscriptRevisionOrigin.cleanup(.init(result: $0)) }
-            ?? .localProcessing
+        let text: String
+        let origin: TranscriptRevisionOrigin
+        switch processed {
+        case .raw(let processedText), .fallback(let processedText, _):
+            text = processedText
+            origin = .localProcessing
+        case .cleaned(let result):
+            text = result.text
+            origin = .cleanup(.init(result: result))
+        case .failed(let reason):
+            throw ProviderError.invalidConfiguration(reason)
+        }
         return TranscriptRevision(
-            text: processed.finalText,
+            text: text,
             origin: origin,
             repairLatency: elapsedSeconds(since: started)
         )

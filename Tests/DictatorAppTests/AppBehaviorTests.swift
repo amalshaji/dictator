@@ -56,8 +56,8 @@ final class AppBehaviorTests: XCTestCase {
     func testTranscriptMetadataLabelsCleanupAndTotalPipelineLatency() {
         let record = TranscriptRecord(
             rawText: "hello", finalText: "Hello.", sttProvider: .groq, sttModel: "whisper",
-            llmProvider: .groq, llmModel: "gpt-oss", audioDuration: 1,
-            sttLatency: 0.301, cleanupLatency: 0.184, pipelineLatency: 0.612,
+            audioDuration: 1, sttLatency: 0.301, pipelineLatency: 0.612,
+            cleanup: .init(provider: .groq, model: "gpt-oss", latency: 0.184),
             insertionOutcome: "inserted"
         )
 

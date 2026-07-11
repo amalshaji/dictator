@@ -2,7 +2,7 @@ import XCTest
 @testable import DictatorCore
 
 final class TranscriptRepairServiceTests: XCTestCase {
-    func testReprocessingStartsFromRawTextAndLeavesOriginalRecordUnchanged() async {
+    func testReprocessingStartsFromRawTextAndLeavesOriginalRecordUnchanged() async throws {
         let record = TranscriptRecord(
             rawText: "dictater",
             finalText: "Unrelated current result",
@@ -14,7 +14,7 @@ final class TranscriptRepairServiceTests: XCTestCase {
             insertionOutcome: "typed"
         )
 
-        let revision = await TranscriptRepairService().reprocess(
+        let revision = try await TranscriptRepairService().reprocess(
             record: record,
             vocabulary: [.init(value: "Dictator", variants: ["dictater"])],
             snippets: [],
@@ -27,7 +27,7 @@ final class TranscriptRepairServiceTests: XCTestCase {
         XCTAssertEqual(record.pipelineLatency, 0.2)
     }
 
-    func testCleanupRevisionCarriesTypedProviderExecutionAndSeparateRepairLatency() async {
+    func testCleanupRevisionCarriesTypedProviderExecutionAndSeparateRepairLatency() async throws {
         let record = TranscriptRecord(
             rawText: "hello",
             finalText: "hello",
@@ -43,7 +43,7 @@ final class TranscriptRepairServiceTests: XCTestCase {
             credentials: .init(apiKey: "test")
         )
 
-        let revision = await TranscriptRepairService().reprocess(
+        let revision = try await TranscriptRepairService().reprocess(
             record: record,
             vocabulary: [],
             snippets: [],
@@ -66,6 +66,6 @@ private struct RepairCleanupProvider: CleanupLLMProvider {
     func validate(credentials: ProviderCredentials) async throws {}
     func listModels(credentials: ProviderCredentials) async throws -> [String] { metadata.models }
     func clean(request: CleanupRequest, model: String, credentials: ProviderCredentials) async throws -> CleanupResult {
-        CleanupResult(text: "Hello.", provider: .groq, model: model, inputTokens: 8, outputTokens: 2, latency: 0.42)
+        CleanupResult(output: .transcription("Hello."), provider: .groq, model: model, inputTokens: 8, outputTokens: 2, latency: 0.42)
     }
 }

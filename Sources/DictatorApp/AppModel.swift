@@ -315,7 +315,7 @@ final class AppModel: ObservableObject {
         guard let record = data.transcripts.first(where: { $0.id == transcriptID }) else {
             throw ProviderError.invalidConfiguration("Transcript is no longer available.")
         }
-        return await transcriptRepairService.reprocess(
+        return try await transcriptRepairService.reprocess(
             record: record,
             vocabulary: data.vocabulary,
             snippets: data.snippets,

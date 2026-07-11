@@ -88,9 +88,13 @@ final class ProviderContractTests: XCTestCase {
     }
 
     func testCloudflareCleanupParsesUsage() async throws {
-        let response = #"{"result":{"response":"{\"text\":\"Hello Dictator.\"}","usage":{"prompt_tokens":12,"completion_tokens":4}}}"#
+        let response = #"{"result":{"response":"{\"intent\":\"transcription\",\"text\":\"Hello Dictator.\"}","usage":{"prompt_tokens":12,"completion_tokens":4}}}"#
         let provider = CloudflareCleanupProvider(transport: MockTransport { _ in (response.data(using: .utf8)!, 200) })
-        let result = try await provider.clean(request: .init(transcript: "Hello Dictator.", vocabulary: [.init(value: "Dictator")]), model: "test", credentials: .init(apiKey: "test", accountID: "account"))
+        let result = try await provider.clean(
+            request: .init(input: .transcription("Hello Dictator."), vocabulary: [.init(value: "Dictator")]),
+            model: "test",
+            credentials: .init(apiKey: "test", accountID: "account")
+        )
         XCTAssertEqual(result.inputTokens, 12); XCTAssertEqual(result.outputTokens, 4)
     }
 
