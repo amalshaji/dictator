@@ -32,6 +32,7 @@ struct MainView: View {
             Rectangle().fill(DictatorDesign.fog).frame(width: 1)
             content
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .ignoresSafeArea(.container)
         .background(DictatorDesign.paper)
         .background(WindowChromeConfigurator())
@@ -143,21 +144,77 @@ private struct SidebarItemButton: View {
     }
 }
 
+enum WindowChromeStyle {
+    private static let sidebarColor = NSColor(red: 23 / 255, green: 21 / 255, blue: 26 / 255, alpha: 1)
+    private static let contentColor = NSColor(red: 246 / 255, green: 244 / 255, blue: 240 / 255, alpha: 1)
+
+    static func backgroundImage(windowWidth: CGFloat) -> NSImage {
+        let width = max(windowWidth, DictatorDesign.sidebarWidth + 1)
+        return NSImage(size: NSSize(width: width, height: 1), flipped: false) { bounds in
+            contentColor.setFill()
+            bounds.fill()
+            sidebarColor.setFill()
+            NSRect(x: bounds.minX, y: bounds.minY, width: DictatorDesign.sidebarWidth, height: bounds.height).fill()
+            return true
+        }
+    }
+
+    static func backgroundColor(windowWidth: CGFloat) -> NSColor {
+        NSColor(patternImage: backgroundImage(windowWidth: windowWidth))
+    }
+}
+
 private struct WindowChromeConfigurator: NSViewRepresentable {
+    @MainActor
+    final class Coordinator: NSObject {
+        private weak var window: NSWindow?
+
+        func attach(to window: NSWindow) {
+            if self.window !== window {
+                NotificationCenter.default.removeObserver(self)
+                self.window = window
+                NotificationCenter.default.addObserver(
+                    self,
+                    selector: #selector(windowDidResize),
+                    name: NSWindow.didResizeNotification,
+                    object: window
+                )
+            }
+            updateBackground()
+        }
+
+        @objc private func windowDidResize() {
+            updateBackground()
+        }
+
+        private func updateBackground() {
+            guard let window else { return }
+            window.backgroundColor = WindowChromeStyle.backgroundColor(windowWidth: window.frame.width)
+        }
+
+        deinit {
+            NotificationCenter.default.removeObserver(self)
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
     func makeNSView(context: Context) -> NSView {
         let view = NSView(frame: .zero)
-        apply(to: view)
+        apply(to: view, coordinator: context.coordinator)
         return view
     }
 
     func updateNSView(_ view: NSView, context: Context) {
-        apply(to: view)
+        apply(to: view, coordinator: context.coordinator)
     }
 
-    private func apply(to view: NSView) {
+    private func apply(to view: NSView, coordinator: Coordinator) {
         DispatchQueue.main.async {
             guard let window = view.window else { return }
-            window.backgroundColor = NSColor(red: 23 / 255, green: 21 / 255, blue: 26 / 255, alpha: 1)
+            coordinator.attach(to: window)
         }
     }
 }
