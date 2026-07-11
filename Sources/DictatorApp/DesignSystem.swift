@@ -184,7 +184,7 @@ extension View {
 extension Font {
     static func dictatorDisplay(_ size: CGFloat) -> Font { .system(size: size, weight: .semibold, design: .rounded) }
     static func dictatorBody(_ size: CGFloat, weight: Weight = .regular) -> Font { .system(size: size, weight: weight, design: .default) }
-    static func dictatorUtility(_ size: CGFloat) -> Font { .system(size: size, weight: .medium, design: .monospaced) }
+    static func dictatorUtility(_ size: CGFloat) -> Font { .system(size: size, weight: .medium, design: .default) }
 }
 
 extension Date {

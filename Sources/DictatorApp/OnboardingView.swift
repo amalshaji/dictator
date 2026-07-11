@@ -107,29 +107,29 @@ struct OnboardingView: View {
 
     private var appleSpeechSetup: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if !model.appleSpeechLocales.isEmpty {
+            if !model.appleSpeech.state.locales.isEmpty {
                 DictatorMenuField(
                     label: "Language",
-                    options: model.appleSpeechLocales.map {
+                    options: model.appleSpeech.state.locales.map {
                         .init(
                             value: $0.identifier,
                             label: Locale.current.localizedString(forIdentifier: $0.identifier) ?? $0.identifier
                         )
                     },
                     selection: Binding(
-                        get: { model.selectedAppleSpeechLocaleIdentifier },
-                        set: { model.selectAppleSpeechLocale($0) }
+                        get: { model.appleSpeech.state.selectedLocaleIdentifier },
+                        set: { model.appleSpeech.selectLocale($0) }
                     )
                 )
             }
-            Text(model.appleSpeechStatusText)
+            Text(model.appleSpeech.statusText)
                 .font(.dictatorBody(12, weight: .medium))
-                .foregroundStyle(model.appleSpeechReadiness.isReady ? DictatorDesign.focus : .secondary)
-            if case let .downloading(_, progress) = model.appleSpeechReadiness {
+                .foregroundStyle(model.appleSpeech.state.readiness.isReady ? DictatorDesign.focus : .secondary)
+            if case let .downloading(_, progress) = model.appleSpeech.state.readiness {
                 ProgressView(value: progress)
             }
         }
-        .task { await model.refreshAppleSpeechSetup() }
+        .task { await model.appleSpeech.refresh() }
     }
 
     private var appleOrCloudActionTitle: String {

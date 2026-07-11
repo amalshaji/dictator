@@ -72,106 +72,71 @@ private struct AppleSpeechSetupRow: View {
     private var selected: Bool { model.selectedSTT == .appleSpeech }
 
     var body: some View {
-        VStack(spacing: 0) {
-            Button {
-                withAnimation(.easeOut(duration: 0.16)) { expanded.toggle() }
-            } label: {
-                HStack(spacing: 12) {
-                    Circle()
-                        .fill(selected ? DictatorDesign.signalInk : DictatorDesign.fog)
-                        .frame(width: 28, height: 28)
-                        .overlay {
-                            Image(systemName: selected ? "checkmark" : "waveform")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(selected ? .white : DictatorDesign.muted)
-                        }
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Apple On-Device").font(.dictatorBody(14, weight: .semibold))
-                        Text(model.appleSpeechStatusText)
-                            .font(.dictatorBody(10.5, weight: .medium))
-                            .foregroundStyle(statusColor)
+        ProviderAccordionRow(
+            expanded: $expanded,
+            selected: selected,
+            icon: "waveform",
+            title: "Apple On-Device",
+            status: model.appleSpeech.statusText,
+            statusColor: statusColor
+        ) {
+            VStack(alignment: .leading, spacing: 13) {
+                Text("Audio is transcribed entirely on this Mac after the initial language model download.")
+                    .font(.dictatorBody(12)).foregroundStyle(.secondary)
+
+                if !model.appleSpeech.state.locales.isEmpty {
+                    field("Language") {
+                        DictatorMenuField(
+                            label: "Language",
+                            options: model.appleSpeech.state.locales.map {
+                                .init(value: $0.identifier, label: localeDisplayName($0.identifier))
+                            },
+                            selection: localeBinding
+                        )
                     }
-                    Spacer()
-                    if selected {
-                        Text("Active").font(.dictatorUtility(9)).foregroundStyle(DictatorDesign.signalInk)
-                            .padding(.horizontal, 8).frame(height: 22)
-                            .background(DictatorDesign.orchid.opacity(0.45), in: Capsule())
-                    }
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 10, weight: .semibold))
-                        .rotationEffect(.degrees(expanded ? 180 : 0)).foregroundStyle(DictatorDesign.muted)
-                        .frame(width: 28, height: 28)
-                        .background(DictatorDesign.fog.opacity(0.65), in: Circle())
                 }
-                .contentShape(Rectangle()).padding(.horizontal, 16).padding(.vertical, 13)
-            }
-            .buttonStyle(.plain)
 
-            VStack(spacing: 0) {
-                if expanded {
-                    VStack(alignment: .leading, spacing: 13) {
-                        Text("Audio is transcribed entirely on this Mac after the initial language model download.")
-                            .font(.dictatorBody(12)).foregroundStyle(.secondary)
-
-                        if !model.appleSpeechLocales.isEmpty {
-                            field("Language") {
-                                DictatorMenuField(
-                                    label: "Language",
-                                    options: model.appleSpeechLocales.map {
-                                        .init(value: $0.identifier, label: localeDisplayName($0.identifier))
-                                    },
-                                    selection: localeBinding
-                                )
-                            }
-                        }
-
-                        if let locale = model.appleSpeechReadiness.locale {
-                            field("Active engine") {
-                                Text(engineDisplayName(locale.engine))
-                                    .font(.dictatorBody(12, weight: .medium))
-                            }
-                        }
-
-                        if case let .downloading(_, progress) = model.appleSpeechReadiness {
-                            ProgressView(value: progress) {
-                                Text("Downloading speech model… \(Int(progress * 100))%")
-                                    .font(.dictatorBody(11)).foregroundStyle(.secondary)
-                            }
-                        }
-
-                        HStack(spacing: 8) {
-                            Button(actionTitle) { Task { await prepareOrSelect() } }
-                                .dictatorButton()
-                                .disabled(actionDisabled)
-                            if case .failed = model.appleSpeechReadiness {
-                                Button("Retry status") { Task { await model.refreshAppleSpeechSetup() } }
-                                    .dictatorButton(.secondary)
-                            }
-                        }
+                if let locale = model.appleSpeech.state.readiness.locale {
+                    field("Active engine") {
+                        Text(engineDisplayName(locale.engine))
+                            .font(.dictatorBody(12, weight: .medium))
                     }
-                    .padding(16)
-                    .background(DictatorDesign.paper.opacity(0.72))
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+
+                if case let .downloading(_, progress) = model.appleSpeech.state.readiness {
+                    ProgressView(value: progress) {
+                        Text("Downloading speech model… \(Int(progress * 100))%")
+                            .font(.dictatorBody(11)).foregroundStyle(.secondary)
+                    }
+                }
+
+                HStack(spacing: 8) {
+                    Button(actionTitle) { Task { await prepareOrSelect() } }
+                        .dictatorButton()
+                        .disabled(actionDisabled)
+                    if case .failed = model.appleSpeech.state.readiness {
+                        Button("Retry status") { Task { await model.appleSpeech.refresh() } }
+                            .dictatorButton(.secondary)
+                    }
                 }
             }
-            .clipped()
         }
-        .task { await model.refreshAppleSpeechSetup() }
+        .task { await model.appleSpeech.refresh() }
     }
 
     private var localeBinding: Binding<String> {
         Binding(
-            get: { model.selectedAppleSpeechLocaleIdentifier },
-            set: { model.selectAppleSpeechLocale($0) }
+            get: { model.appleSpeech.state.selectedLocaleIdentifier },
+            set: { model.appleSpeech.selectLocale($0) }
         )
     }
 
     private var statusColor: Color {
-        model.appleSpeechReadiness.isReady ? DictatorDesign.focus : DictatorDesign.muted
+        model.appleSpeech.state.readiness.isReady ? DictatorDesign.focus : DictatorDesign.muted
     }
 
     private var actionTitle: String {
-        switch model.appleSpeechReadiness {
+        switch model.appleSpeech.state.readiness {
         case .ready: selected ? "Apple On-Device is active" : "Use Apple On-Device"
         case .downloadRequired: "Download speech model"
         case .failed: "Retry download"
@@ -182,7 +147,7 @@ private struct AppleSpeechSetupRow: View {
     }
 
     private var actionDisabled: Bool {
-        switch model.appleSpeechReadiness {
+        switch model.appleSpeech.state.readiness {
         case .checking, .downloading, .unavailable: true
         case .ready: selected
         case .downloadRequired, .failed: false
@@ -190,8 +155,8 @@ private struct AppleSpeechSetupRow: View {
     }
 
     private func prepareOrSelect() async {
-        if !model.appleSpeechReadiness.isReady { await model.prepareAppleSpeech() }
-        if model.appleSpeechReadiness.isReady {
+        if !model.appleSpeech.state.readiness.isReady { await model.appleSpeech.prepare() }
+        if model.appleSpeech.state.readiness.isReady {
             do { try model.selectSTT(.appleSpeech) }
             catch { model.lastError = error.localizedDescription }
         }
@@ -236,61 +201,36 @@ private struct ProviderSetupRow: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            Button {
-                withAnimation(.easeOut(duration: 0.16)) { expanded.toggle() }
-            } label: {
-                HStack(spacing: 12) {
-                    Circle().fill(selected ? DictatorDesign.signalInk : DictatorDesign.fog).frame(width: 28, height: 28)
-                        .overlay(Image(systemName: selected ? "checkmark" : "key.horizontal").font(.system(size: 10, weight: .bold)).foregroundStyle(selected ? .white : DictatorDesign.muted))
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(provider.displayName).font(.dictatorBody(14, weight: .semibold))
-                        Text(status).font(.dictatorBody(10.5, weight: .medium)).foregroundStyle(statusColor)
+        ProviderAccordionRow(
+            expanded: $expanded,
+            selected: selected,
+            icon: "key.horizontal",
+            title: provider.displayName,
+            status: status,
+            statusColor: statusColor
+        ) {
+            VStack(alignment: .leading, spacing: 13) {
+                field("API key") { SecureField("Paste your API key", text: $apiKey).textFieldStyle(DictatorTextFieldStyle()) }
+                if provider.requiresAccountID { field("Account ID") { TextField("Enter account ID", text: $accountID).textFieldStyle(DictatorTextFieldStyle()) } }
+                if provider.kind == .openAICompatible { field("Base URL") { TextField("https://api.example.com/v1", text: $baseURL).textFieldStyle(DictatorTextFieldStyle()) } }
+                if provider.models.count > 1 {
+                    field("Model") {
+                        DictatorMenuField(
+                            label: "Model",
+                            options: provider.models.map { .init(value: $0, label: $0) },
+                            selection: $selectedModel
+                        )
                     }
-                    Spacer()
-                    if selected {
-                        Text("Active").font(.dictatorUtility(9)).foregroundStyle(DictatorDesign.signalInk)
-                            .padding(.horizontal, 8).frame(height: 22)
-                            .background(DictatorDesign.orchid.opacity(0.45), in: Capsule())
-                    }
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 10, weight: .semibold))
-                        .rotationEffect(.degrees(expanded ? 180 : 0)).foregroundStyle(DictatorDesign.muted)
-                        .frame(width: 28, height: 28)
-                        .background(DictatorDesign.fog.opacity(0.65), in: Circle())
+                } else {
+                    field("Model") { TextField("Model", text: $selectedModel).textFieldStyle(DictatorTextFieldStyle()) }
                 }
-                .contentShape(Rectangle()).padding(.horizontal, 16).padding(.vertical, 13)
-            }
-            .buttonStyle(.plain)
-
-            VStack(spacing: 0) {
-                if expanded {
-                    VStack(alignment: .leading, spacing: 13) {
-                        field("API key") { SecureField("Paste your API key", text: $apiKey).textFieldStyle(DictatorTextFieldStyle()) }
-                        if provider.requiresAccountID { field("Account ID") { TextField("Enter account ID", text: $accountID).textFieldStyle(DictatorTextFieldStyle()) } }
-                        if provider.kind == .openAICompatible { field("Base URL") { TextField("https://api.example.com/v1", text: $baseURL).textFieldStyle(DictatorTextFieldStyle()) } }
-                        if provider.models.count > 1 {
-                            field("Model") {
-                                DictatorMenuField(
-                                    label: "Model",
-                                    options: provider.models.map { .init(value: $0, label: $0) },
-                                    selection: $selectedModel
-                                )
-                            }
-                        } else {
-                            field("Model") { TextField("Model", text: $selectedModel).textFieldStyle(DictatorTextFieldStyle()) }
-                        }
-                        HStack(spacing: 8) {
-                            Button("Use this provider") { saveAndSelect() }.dictatorButton()
-                            Button(testing ? "Testing…" : "Test connection") { Task { await testConnection() } }.disabled(testing || apiKey.isEmpty).dictatorButton(.secondary)
-                        }
-                    }
-                    .padding(16)
-                    .background(DictatorDesign.paper.opacity(0.72))
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                HStack(spacing: 8) {
+                    Button("Use this provider") { saveAndSelect() }.dictatorButton()
+                    Button(testing ? "Testing…" : "Test connection") { Task { await testConnection() } }
+                        .disabled(testing || apiKey.isEmpty)
+                        .dictatorButton(.secondary)
                 }
             }
-            .clipped()
         }
         .onAppear {
             selectedModel = model.configuredModel(for: purpose, provider: provider.kind) ?? provider.defaultModel
@@ -365,6 +305,62 @@ private struct ProviderSetupRow: View {
             else { throw ProviderError.invalidConfiguration("Enter a valid HTTP or HTTPS base URL.") }
         }
         return ProviderCredentials(apiKey: key, accountID: normalizedAccountID, baseURL: url)
+    }
+}
+
+private struct ProviderAccordionRow<Content: View>: View {
+    @Binding var expanded: Bool
+    let selected: Bool
+    let icon: String
+    let title: String
+    let status: String
+    let statusColor: Color
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Button {
+                withAnimation(.easeOut(duration: 0.16)) { expanded.toggle() }
+            } label: {
+                HStack(spacing: 12) {
+                    Circle()
+                        .fill(selected ? DictatorDesign.signalInk : DictatorDesign.fog)
+                        .frame(width: 28, height: 28)
+                        .overlay {
+                            Image(systemName: selected ? "checkmark" : icon)
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(selected ? .white : DictatorDesign.muted)
+                        }
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(title).font(.dictatorBody(14, weight: .semibold))
+                        Text(status).font(.dictatorBody(10.5, weight: .medium)).foregroundStyle(statusColor)
+                    }
+                    Spacer()
+                    if selected {
+                        Text("Active").font(.dictatorUtility(9)).foregroundStyle(DictatorDesign.signalInk)
+                            .padding(.horizontal, 8).frame(height: 22)
+                            .background(DictatorDesign.orchid.opacity(0.45), in: Capsule())
+                    }
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 10, weight: .semibold))
+                        .rotationEffect(.degrees(expanded ? 180 : 0)).foregroundStyle(DictatorDesign.muted)
+                        .frame(width: 28, height: 28)
+                        .background(DictatorDesign.fog.opacity(0.65), in: Circle())
+                }
+                .contentShape(Rectangle()).padding(.horizontal, 16).padding(.vertical, 13)
+            }
+            .buttonStyle(.plain)
+
+            VStack(spacing: 0) {
+                if expanded {
+                    content
+                        .padding(16)
+                        .background(DictatorDesign.paper.opacity(0.72))
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+            }
+            .clipped()
+        }
     }
 }
 

@@ -50,7 +50,7 @@ struct HomeView: View {
 
     private func metric(value: String, label: String) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(value).font(.dictatorDisplay(22)).monospacedDigit()
+            Text(value).font(.dictatorDisplay(22))
             Text(label).font(.dictatorBody(11, weight: .medium)).foregroundStyle(DictatorDesign.ink.opacity(0.48))
         }
         .frame(maxWidth: .infinity, alignment: .leading)

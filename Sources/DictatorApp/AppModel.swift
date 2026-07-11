@@ -16,9 +16,6 @@ final class AppModel: ObservableObject {
     @Published private(set) var selectedSTT: ProviderKind = .groq
     @Published var selectedLLM: ProviderKind = .groq { didSet { defaults.set(selectedLLM.rawValue, forKey: "selectedLLM") } }
     @Published var cleanupEnabled = false { didSet { defaults.set(cleanupEnabled, forKey: "cleanupEnabled") } }
-    @Published private(set) var appleSpeechLocales: [AppleSpeechLocale] = []
-    @Published private(set) var appleSpeechReadiness: AppleSpeechReadiness = .checking
-    @Published private(set) var selectedAppleSpeechLocaleIdentifier = Locale.current.identifier
     @Published var lastError: String?
     @Published var requestedDestination: String?
     @Published var shortcutsAvailable = false
@@ -33,11 +30,12 @@ final class AppModel: ObservableObject {
         didSet { defaults.set(selectedStyleID?.uuidString, forKey: "selectedStyleID") }
     }
     let pricing = PricingStore()
+    let appleSpeech: AppleSpeechCoordinator
 
     private let defaults = UserDefaults.standard
     private let store = LocalStore(fileURL: LocalStore.applicationSupportURL())
     private let keychain: any CredentialStoring
-    private let appleSpeechProvider: (any LocalSpeechTranscribing)?
+    private var appleSpeechObservation: AnyCancellable?
     private let recorder = AudioRecorder()
     private let hotkey = HotkeyMonitor()
     private let inserter = AccessibilityInserter()
@@ -51,8 +49,13 @@ final class AppModel: ObservableObject {
     }
 
     init(keychain: any CredentialStoring, appleSpeechProvider: (any LocalSpeechTranscribing)?) {
+        let defaults = UserDefaults.standard
         self.keychain = keychain
-        self.appleSpeechProvider = appleSpeechProvider
+        appleSpeech = AppleSpeechCoordinator(
+            provider: appleSpeechProvider,
+            selectedLocaleIdentifier: defaults.string(forKey: "appleSpeechLocale") ?? Locale.current.identifier,
+            persistSelection: { defaults.set($0, forKey: "appleSpeechLocale") }
+        )
         selectedSTT = STTProviderSelection.resolve(
             savedRawValue: defaults.string(forKey: "selectedSTT"),
             appleSpeechAvailable: appleSpeechProvider != nil,
@@ -61,13 +64,15 @@ final class AppModel: ObservableObject {
         )
         selectedLLM = ProviderKind(rawValue: defaults.string(forKey: "selectedLLM") ?? "") ?? .groq
         cleanupEnabled = defaults.bool(forKey: "cleanupEnabled")
-        selectedAppleSpeechLocaleIdentifier = defaults.string(forKey: "appleSpeechLocale") ?? Locale.current.identifier
         selectedStyleID = defaults.string(forKey: "selectedStyleID").flatMap(UUID.init(uuidString:))
         dictateShortcut = loadShortcut(forKey: "shortcut.dictate", fallback: .dictate)
         pasteLatestShortcut = loadShortcut(forKey: "shortcut.pasteLatest", fallback: .pasteLatest)
         openClipboardShortcut = loadShortcut(forKey: "shortcut.openClipboard", fallback: .openClipboard)
         defaults.set(selectedSTT.rawValue, forKey: "selectedSTT")
         if selectedSTT != .appleSpeech { defaults.set(selectedSTT.rawValue, forKey: "lastCloudSTT") }
+        appleSpeechObservation = appleSpeech.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
         configureHotkeys()
         recorder.onLevel = { [weak self] level in
             Task { @MainActor in self?.hud.model.push(level: level) }
@@ -89,7 +94,7 @@ final class AppModel: ObservableObject {
             await Task.yield()
             hud.show(.idle)
             await load()
-            if selectedSTT == .appleSpeech { await refreshAppleSpeechSetup() }
+            if selectedSTT == .appleSpeech { await appleSpeech.refresh() }
         }
         if !runningTests { Task { @MainActor [weak self] in
             // TCC permission changes do not restart the process. Retry until the
@@ -104,13 +109,6 @@ final class AppModel: ObservableObject {
     private static func defaultAppleSpeechProvider() -> (any LocalSpeechTranscribing)? {
         if #available(macOS 26.0, *) { return AppleSpeechTranscriber() }
         return nil
-    }
-
-    static func shouldRefreshAppleSpeechAfterSelection(
-        _ provider: ProviderKind,
-        readiness: AppleSpeechReadiness
-    ) -> Bool {
-        provider == .appleSpeech && !readiness.isReady
     }
 
     func startDictation(targetProcessIdentifier: pid_t? = nil) async {
@@ -154,17 +152,7 @@ final class AppModel: ObservableObject {
         do {
             let raw: TranscriptionResult
             if selectedSTT == .appleSpeech {
-                guard let appleSpeechProvider else {
-                    throw ProviderError.unsupported("Apple On-Device transcription requires macOS 26 or later.")
-                }
-                guard appleSpeechReadiness.isReady else {
-                    throw ProviderError.invalidConfiguration("Download the selected Apple speech model before dictating.")
-                }
-                raw = try await appleSpeechProvider.transcribe(
-                    audio: audio,
-                    localeIdentifier: selectedAppleSpeechLocaleIdentifier,
-                    vocabulary: data.vocabulary
-                )
+                raw = try await appleSpeech.transcribe(audio: audio, vocabulary: data.vocabulary)
             } else {
                 guard let provider = ProviderRegistry.sttProvider(for: selectedSTT) else {
                     throw ProviderError.unsupported("Provider is not available")
@@ -292,8 +280,8 @@ final class AppModel: ObservableObject {
         if let lastCloud { defaults.set(lastCloud.rawValue, forKey: "lastCloudSTT") }
         selectedSTT = provider
         defaults.set(provider.rawValue, forKey: "selectedSTT")
-        if Self.shouldRefreshAppleSpeechAfterSelection(provider, readiness: appleSpeechReadiness) {
-            Task { await refreshAppleSpeechSetup() }
+        if provider == .appleSpeech, !appleSpeech.state.readiness.isReady {
+            Task { await appleSpeech.refresh() }
         }
     }
 
@@ -463,9 +451,9 @@ final class AppModel: ObservableObject {
 
     func configureOnboardingProvider(kind: ProviderKind, apiKey: String, accountID: String?) async throws {
         if kind == .appleSpeech {
-            await prepareAppleSpeech()
-            guard appleSpeechReadiness.isReady else {
-                throw ProviderError.invalidConfiguration(appleSpeechStatusText)
+            await appleSpeech.prepare()
+            guard appleSpeech.state.readiness.isReady else {
+                throw ProviderError.invalidConfiguration(appleSpeech.statusText)
             }
             try selectSTT(.appleSpeech)
             return
@@ -488,90 +476,14 @@ final class AppModel: ObservableObject {
 
     var selectedSTTIsConfigured: Bool {
         selectedSTT == .appleSpeech
-            ? appleSpeechReadiness.isReady
+            ? appleSpeech.state.readiness.isReady
             : credentials(purpose: .speechToText, provider: selectedSTT)?.apiKey.isEmpty == false
     }
 
-    var appleSpeechAvailable: Bool { appleSpeechProvider != nil }
+    var appleSpeechAvailable: Bool { appleSpeech.isAvailable }
 
     var sttMetadata: [ProviderMetadata] {
         ProviderRegistry.sttMetadata(includeAppleSpeech: appleSpeechAvailable)
-    }
-
-    var appleSpeechStatusText: String {
-        switch appleSpeechReadiness {
-        case .checking: "Checking model availability…"
-        case .downloadRequired(let locale): "Download \(displayName(for: locale.identifier)) to use Apple On-Device."
-        case .downloading(_, let progress): "Downloading model… \(Int(progress * 100))%"
-        case .ready(let locale): "Ready · \(displayName(for: locale.identifier)) · \(engineName(locale.engine))"
-        case .unavailable(let reason), .failed(let reason): reason
-        }
-    }
-
-    func selectAppleSpeechLocale(_ identifier: String) {
-        guard appleSpeechLocales.contains(where: { $0.identifier == identifier }) else { return }
-        selectedAppleSpeechLocaleIdentifier = identifier
-        defaults.set(identifier, forKey: "appleSpeechLocale")
-        appleSpeechReadiness = .checking
-        Task { await refreshAppleSpeechSetup() }
-    }
-
-    func refreshAppleSpeechSetup() async {
-        guard let appleSpeechProvider else {
-            appleSpeechLocales = []
-            appleSpeechReadiness = .unavailable("Apple On-Device transcription requires macOS 26 or later.")
-            return
-        }
-        appleSpeechReadiness = .checking
-        let locales = await appleSpeechProvider.availableLocales()
-        appleSpeechLocales = locales
-        guard !locales.isEmpty else {
-            appleSpeechReadiness = .unavailable("No Apple speech languages are available on this Mac.")
-            return
-        }
-        if !locales.contains(where: { $0.identifier == selectedAppleSpeechLocaleIdentifier }) {
-            let requestedLanguage = Locale(identifier: selectedAppleSpeechLocaleIdentifier).language.languageCode
-            let replacement = locales.first {
-                Locale(identifier: $0.identifier).language.languageCode == requestedLanguage
-            } ?? locales[0]
-            selectedAppleSpeechLocaleIdentifier = replacement.identifier
-            defaults.set(replacement.identifier, forKey: "appleSpeechLocale")
-        }
-        appleSpeechReadiness = await appleSpeechProvider.readiness(for: selectedAppleSpeechLocaleIdentifier)
-    }
-
-    func prepareAppleSpeech() async {
-        guard let appleSpeechProvider else {
-            appleSpeechReadiness = .unavailable("Apple On-Device transcription requires macOS 26 or later.")
-            return
-        }
-        if appleSpeechLocales.isEmpty { await refreshAppleSpeechSetup() }
-        guard let locale = appleSpeechReadiness.locale
-                ?? appleSpeechLocales.first(where: { $0.identifier == selectedAppleSpeechLocaleIdentifier })
-        else { return }
-        appleSpeechReadiness = .downloading(locale, progress: 0)
-        do {
-            appleSpeechReadiness = try await appleSpeechProvider.installAssets(
-                for: selectedAppleSpeechLocaleIdentifier
-            ) { [weak self] progress in
-                Task { @MainActor in
-                    self?.appleSpeechReadiness = .downloading(locale, progress: min(max(progress, 0), 1))
-                }
-            }
-        } catch {
-            appleSpeechReadiness = .failed("Model download failed: \(error.localizedDescription)")
-        }
-    }
-
-    private func displayName(for localeIdentifier: String) -> String {
-        Locale.current.localizedString(forIdentifier: localeIdentifier) ?? localeIdentifier
-    }
-
-    private func engineName(_ engine: AppleTranscriptionEngine) -> String {
-        switch engine {
-        case .speechTranscriber: "SpeechTranscriber"
-        case .dictationTranscriber: "Dictation fallback"
-        }
     }
 
     func configuredModel(for purpose: ProviderPurpose, provider: ProviderKind) -> String? {
