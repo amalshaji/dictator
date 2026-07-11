@@ -33,6 +33,22 @@ public enum CleanupSafetyValidator {
         }
     }
 
+    public static func validate(request: CleanupRequest, output: CleanupOutput) throws {
+        switch output {
+        case .transcription(let text):
+            try validate(raw: request.input.spokenText, cleaned: text, vocabulary: request.vocabulary)
+        case .transformation(let text):
+            guard case .contextual(_, let selectedText) = request.input, !selectedText.isEmpty else {
+                throw ProviderError.cleanupRejected("transformation requires selected text")
+            }
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { throw ProviderError.cleanupRejected("empty output") }
+            guard trimmed.count <= max(selectedText.count * 8, selectedText.count + 4_000) else {
+                throw ProviderError.cleanupRejected("unexpected length change")
+            }
+        }
+    }
+
     private static func matches(_ pattern: String, in text: String) -> [String] {
         guard let expression = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return [] }
         let range = NSRange(text.startIndex..., in: text)

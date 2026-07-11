@@ -35,21 +35,17 @@ public struct GeminiCleanupProvider: CleanupLLMProvider {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let body = RequestBody(
             systemInstruction: .init(parts: [.init(text: CleanupPrompt.system(vocabulary: cleanup.vocabulary, styleInstruction: cleanup.styleInstruction))]),
-            contents: [.init(role: "user", parts: [.init(text: cleanup.transcript)])],
+            contents: [.init(role: "user", parts: [.init(text: try CleanupPrompt.user(request: cleanup))])],
             generationConfig: .init(temperature: 0, responseMimeType: "application/json")
         )
         request.httpBody = try JSONEncoder().encode(body)
         let (data, response) = try await transport.data(for: request)
         try HTTPHelpers.requireSuccess(data: data, response: response)
         let payload = try JSONDecoder().decode(ResponseBody.self, from: data)
-        guard let content = payload.candidates.first?.content.parts.first?.text,
-              let contentData = content.data(using: .utf8),
-              let parsed = try? JSONDecoder().decode(CleanedPayload.self, from: contentData) else {
-            throw ProviderError.invalidResponse
-        }
-        try CleanupSafetyValidator.validate(raw: cleanup.transcript, cleaned: parsed.text, vocabulary: cleanup.vocabulary)
+        guard let content = payload.candidates.first?.content.parts.first?.text else { throw ProviderError.invalidResponse }
+        let output = try CleanupResponseDecoder.decode(content, for: cleanup)
         return CleanupResult(
-            text: parsed.text,
+            output: output,
             provider: .gemini,
             model: model,
             inputTokens: payload.usageMetadata?.promptTokenCount,
@@ -75,5 +71,4 @@ public struct GeminiCleanupProvider: CleanupLLMProvider {
         struct Part: Decodable { let text: String? }
         struct Usage: Decodable { let promptTokenCount: Int?; let candidatesTokenCount: Int? }
     }
-    private struct CleanedPayload: Decodable { let text: String }
 }

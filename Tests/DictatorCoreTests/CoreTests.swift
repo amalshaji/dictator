@@ -51,11 +51,20 @@ final class CoreTests: XCTestCase {
         )
     }
 
-    func testCleanupPromptFormatsExplicitTodoItemsAsCheckboxes() {
+    func testCleanupPromptRoutesSelectionEditsWithoutInventingCheckboxes() throws {
         let prompt = CleanupPrompt.system(vocabulary: [])
 
-        XCTAssertTrue(prompt.contains("to-do or action items"))
-        XCTAssertTrue(prompt.contains("- [ ]"))
+        XCTAssertTrue(prompt.contains("transcription"))
+        XCTAssertTrue(prompt.contains("transformation"))
+        XCTAssertFalse(prompt.contains("- [ ]"))
+
+        let user = try CleanupPrompt.user(
+            request: CleanupRequest(
+                input: .contextual(spokenText: "make it lowercase", selectedText: "HELLO WORLD")
+            )
+        )
+        XCTAssertTrue(user.contains("make it lowercase"))
+        XCTAssertTrue(user.contains("HELLO WORLD"))
     }
 
     func testTranscriptProcessorReturnsCleanedTextAndMetadata() async {
@@ -73,9 +82,115 @@ final class CoreTests: XCTestCase {
             cleanup: cleanup
         )
 
-        XCTAssertEqual(result.finalText, "First sentence. Second sentence.")
-        XCTAssertEqual(result.cleanupResult?.provider, .groq)
-        XCTAssertEqual(result.cleanupResult?.model, "formatting-model")
+        guard case .cleaned(let cleanupResult) = result else {
+            return XCTFail("Expected cleaned transcript")
+        }
+        XCTAssertEqual(cleanupResult.output, .transcription("First sentence. Second sentence."))
+        XCTAssertEqual(cleanupResult.provider, .groq)
+        XCTAssertEqual(cleanupResult.model, "formatting-model")
+    }
+
+    func testTranscriptProcessorPassesSelectedTextForTransformation() async {
+        let cleanup = TranscriptCleanupConfiguration(
+            provider: SelectionTransformingCleanupProvider(),
+            model: "transforming-model",
+            credentials: ProviderCredentials(apiKey: "shared-key")
+        )
+
+        let result = await TranscriptProcessor().process(
+            rawText: "make it lowercase",
+            selectedText: "HELLO WORLD",
+            vocabulary: [],
+            snippets: [],
+            cleanup: cleanup
+        )
+
+        guard case .cleaned(let cleanupResult) = result else {
+            return XCTFail("Expected transformed selection")
+        }
+        XCTAssertEqual(cleanupResult.output, .transformation("hello world"))
+    }
+
+    func testCleanupFailureDoesNotReplaceSelectionWithSpokenCommand() async {
+        let cleanup = TranscriptCleanupConfiguration(
+            provider: FailingCleanupProvider(),
+            model: "failing-model",
+            credentials: ProviderCredentials(apiKey: "shared-key")
+        )
+
+        let result = await TranscriptProcessor().process(
+            rawText: "make it lowercase",
+            selectedText: "HELLO WORLD",
+            vocabulary: [],
+            snippets: [],
+            cleanup: cleanup
+        )
+
+        guard case .failed(let reason) = result else {
+            return XCTFail("Selection cleanup failure must stop processing")
+        }
+        XCTAssertEqual(reason, "The provider returned an invalid response.")
+    }
+
+    func testCleanupFailureWithoutSelectionFallsBackToTranscript() async {
+        let cleanup = TranscriptCleanupConfiguration(
+            provider: FailingCleanupProvider(),
+            model: "failing-model",
+            credentials: ProviderCredentials(apiKey: "shared-key")
+        )
+
+        let result = await TranscriptProcessor().process(
+            rawText: "ordinary dictation",
+            vocabulary: [],
+            snippets: [],
+            cleanup: cleanup
+        )
+
+        guard case .fallback(let text, let reason) = result else {
+            return XCTFail("Ordinary dictation should retain its raw fallback")
+        }
+        XCTAssertEqual(text, "ordinary dictation")
+        XCTAssertEqual(reason, "The provider returned an invalid response.")
+    }
+
+    func testOversizedSelectionIsNotSentOrReplaced() async {
+        let selectedText = String(repeating: "A", count: 20_001)
+        let cleanup = TranscriptCleanupConfiguration(
+            provider: SelectionTransformingCleanupProvider(),
+            model: "transforming-model",
+            credentials: ProviderCredentials(apiKey: "shared-key")
+        )
+
+        let result = await TranscriptProcessor().process(
+            rawText: "make it lowercase",
+            selectedText: selectedText,
+            vocabulary: [],
+            snippets: [],
+            cleanup: cleanup
+        )
+
+        guard case .failed(let reason) = result else {
+            return XCTFail("Oversized selection must stop processing")
+        }
+        XCTAssertEqual(reason, "Cleanup output was rejected: selected text is too long")
+    }
+
+    func testCleanupResponseDecoderRejectsTransformationWithoutSelection() {
+        let response = #"{"intent":"transformation","text":"hello"}"#
+        let request = CleanupRequest(input: .transcription("make it lowercase"))
+
+        XCTAssertThrowsError(try CleanupResponseDecoder.decode(response, for: request)) { error in
+            XCTAssertEqual(error as? ProviderError, .cleanupRejected("transformation requires selected text"))
+        }
+    }
+
+    func testCleanupResponseDecoderRejectsTransformationWithEmptySelection() {
+        let response = #"{"intent":"transformation","text":"hello"}"#
+        let request = CleanupRequest(input: .contextual(spokenText: "make it lowercase", selectedText: ""))
+
+        XCTAssertThrowsError(try CleanupResponseDecoder.decode(response, for: request)) { error in
+            XCTAssertEqual(error as? ProviderError, .cleanupRejected("transformation requires selected text"))
+        }
     }
 
     func testPricingCatalogUsesAudioDuration() {
@@ -102,10 +217,50 @@ private struct FormattingCleanupProvider: CleanupLLMProvider {
     func listModels(credentials: ProviderCredentials) async throws -> [String] { metadata.models }
     func clean(request: CleanupRequest, model: String, credentials: ProviderCredentials) async throws -> CleanupResult {
         CleanupResult(
-            text: "First sentence. Second sentence.",
+            output: .transcription("First sentence. Second sentence."),
             provider: metadata.kind,
             model: model,
             latency: 0
         )
+    }
+}
+
+private struct SelectionTransformingCleanupProvider: CleanupLLMProvider {
+    let metadata = ProviderMetadata(
+        kind: .groq,
+        displayName: "Transforming",
+        defaultModel: "transforming-model",
+        models: ["transforming-model"],
+        requiresAccountID: false
+    )
+
+    func validate(credentials: ProviderCredentials) async throws {}
+    func listModels(credentials: ProviderCredentials) async throws -> [String] { metadata.models }
+    func clean(request: CleanupRequest, model: String, credentials: ProviderCredentials) async throws -> CleanupResult {
+        guard case .contextual(_, let selectedText) = request.input else {
+            throw ProviderError.invalidResponse
+        }
+        return CleanupResult(
+            output: .transformation(selectedText.lowercased()),
+            provider: metadata.kind,
+            model: model,
+            latency: 0
+        )
+    }
+}
+
+private struct FailingCleanupProvider: CleanupLLMProvider {
+    let metadata = ProviderMetadata(
+        kind: .groq,
+        displayName: "Failing",
+        defaultModel: "failing-model",
+        models: ["failing-model"],
+        requiresAccountID: false
+    )
+
+    func validate(credentials: ProviderCredentials) async throws {}
+    func listModels(credentials: ProviderCredentials) async throws -> [String] { metadata.models }
+    func clean(request: CleanupRequest, model: String, credentials: ProviderCredentials) async throws -> CleanupResult {
+        throw ProviderError.invalidResponse
     }
 }

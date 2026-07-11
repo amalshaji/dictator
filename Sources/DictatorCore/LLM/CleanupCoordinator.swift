@@ -1,19 +1,22 @@
 import Foundation
 
 public struct CleanupCoordinator: Sendable {
+    private static let maximumSelectedTextLength = 20_000
+
     public init() {}
 
     public func cleanOrFallback(
-        rawText: String,
+        request: CleanupRequest,
         provider: any CleanupLLMProvider,
         model: String,
         credentials: ProviderCredentials,
-        vocabulary: [VocabularyEntry],
-        styleInstruction: String? = nil,
         timeout: Duration = .milliseconds(1_500)
     ) async -> CleanupOutcome {
-        let request = CleanupRequest(transcript: rawText, vocabulary: vocabulary, styleInstruction: styleInstruction)
         do {
+            if case .contextual(_, let selectedText) = request.input,
+               selectedText.count > Self.maximumSelectedTextLength {
+                throw ProviderError.cleanupRejected("selected text is too long")
+            }
             let result = try await withThrowingTaskGroup(of: CleanupResult.self) { group in
                 group.addTask { try await provider.clean(request: request, model: model, credentials: credentials) }
                 group.addTask {
@@ -26,19 +29,18 @@ public struct CleanupCoordinator: Sendable {
             }
             return .cleaned(result)
         } catch {
-            return .fallback(rawText, reason: error.localizedDescription)
+            switch request.input {
+            case .transcription(let text):
+                return .transcriptionFallback(text, reason: error.localizedDescription)
+            case .contextual:
+                return .failed(error.localizedDescription)
+            }
         }
     }
 }
 
 public enum CleanupOutcome: Equatable, Sendable {
     case cleaned(CleanupResult)
-    case fallback(String, reason: String)
-
-    public var text: String {
-        switch self {
-        case .cleaned(let result): result.text
-        case .fallback(let text, _): text
-        }
-    }
+    case transcriptionFallback(String, reason: String)
+    case failed(String)
 }

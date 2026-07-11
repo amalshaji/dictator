@@ -16,6 +16,7 @@
 		11904835DEE27E148593D70A /* ClipboardPaster.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5177081DDA6B8B9C8E75267B /* ClipboardPaster.swift */; };
 		11C04441902F55058565D8CF /* CleanupSafetyValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12C18ACB4C15683A2DF27C1C /* CleanupSafetyValidator.swift */; };
 		14A8ACD6FD0FF382CFF21B42 /* ShortcutRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4E262FFC8B5360C0A61133D /* ShortcutRecorder.swift */; };
+		15381F28F1C088F5DFCC6FCC /* CleanupResponseDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C46CBB06091F70FD7B4C22A /* CleanupResponseDecoder.swift */; };
 		22CCC7ED379C5BC47CAEAAD1 /* LocalStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53D99BAFC30A6F72735CB4B4 /* LocalStoreTests.swift */; };
 		23DE06A8B70571FC9A96B0B5 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BC0D96F05B5DF82F1C7A28C /* HomeView.swift */; };
 		2DF027FBF31328D3A8349411 /* SnippetExpander.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1C677B956D3D95165F5F43E /* SnippetExpander.swift */; };
@@ -151,6 +152,7 @@
 		58AC81E5B5340A692F7DD0F6 /* CloudflareSTTProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudflareSTTProvider.swift; sourceTree = "<group>"; };
 		592F98F88C6DCE1891B2A2C1 /* Dictator.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Dictator.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5A0B6F1005DA2FDA21D5A10C /* OpenAICompatibleCleanupProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAICompatibleCleanupProvider.swift; sourceTree = "<group>"; };
+		5C46CBB06091F70FD7B4C22A /* CleanupResponseDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CleanupResponseDecoder.swift; sourceTree = "<group>"; };
 		5DE02E176452630D4943B27E /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		671944A6D1D358C5C90A5991 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		68951BFD4E2C57E9E33F4D4F /* AssemblyAISTTProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssemblyAISTTProvider.swift; sourceTree = "<group>"; };
@@ -266,6 +268,7 @@
 			children = (
 				F92A436C3DD8B4A45316A8E9 /* CleanupCoordinator.swift */,
 				FF55FFFC2BA9C2A8530283A7 /* CleanupProviderRegistry.swift */,
+				5C46CBB06091F70FD7B4C22A /* CleanupResponseDecoder.swift */,
 				76DA46DD749F44062847C2AD /* CloudflareCleanupProvider.swift */,
 				3143D0AF2913301C0A5F241C /* GeminiCleanupProvider.swift */,
 				5A0B6F1005DA2FDA21D5A10C /* OpenAICompatibleCleanupProvider.swift */,
@@ -590,6 +593,7 @@
 				9468E6BBB680C5FAA06F9B4D /* AssemblyAISTTProvider.swift in Sources */,
 				AF1515E87707FCA1626F3F8D /* CleanupCoordinator.swift in Sources */,
 				4EDCCE579CB196319CE5FFEE /* CleanupProviderRegistry.swift in Sources */,
+				15381F28F1C088F5DFCC6FCC /* CleanupResponseDecoder.swift in Sources */,
 				11C04441902F55058565D8CF /* CleanupSafetyValidator.swift in Sources */,
 				70A771361D42BE70AB310E1A /* CloudflareCleanupProvider.swift in Sources */,
 				437FF36B1B979C029F81AE39 /* CloudflareSTTProvider.swift in Sources */,

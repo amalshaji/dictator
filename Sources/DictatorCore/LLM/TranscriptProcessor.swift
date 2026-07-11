@@ -19,19 +19,11 @@ public struct TranscriptCleanupConfiguration: Sendable {
     }
 }
 
-public struct ProcessedTranscript: Sendable {
-    public let finalText: String
-    public let cleanupOutcome: CleanupOutcome?
-
-    public var cleanupResult: CleanupResult? {
-        guard case .cleaned(let result) = cleanupOutcome else { return nil }
-        return result
-    }
-
-    public var cleanupFallbackReason: String? {
-        guard case .fallback(_, let reason) = cleanupOutcome else { return nil }
-        return reason
-    }
+public enum ProcessedTranscript: Equatable, Sendable {
+    case raw(String)
+    case cleaned(CleanupResult)
+    case fallback(String, reason: String)
+    case failed(String)
 }
 
 public struct TranscriptProcessor: Sendable {
@@ -39,6 +31,7 @@ public struct TranscriptProcessor: Sendable {
 
     public func process(
         rawText: String,
+        selectedText: String? = nil,
         vocabulary: [VocabularyEntry],
         snippets: [SnippetEntry],
         cleanup: TranscriptCleanupConfiguration?
@@ -46,17 +39,27 @@ public struct TranscriptProcessor: Sendable {
         let normalized = VocabularyNormalizer.normalize(rawText, vocabulary: vocabulary)
         let expanded = SnippetExpander.expand(normalized, snippets: snippets)
         guard let cleanup else {
-            return ProcessedTranscript(finalText: expanded, cleanupOutcome: nil)
+            return .raw(expanded)
         }
 
-        let outcome = await CleanupCoordinator().cleanOrFallback(
-            rawText: expanded,
-            provider: cleanup.provider,
-            model: cleanup.model,
-            credentials: cleanup.credentials,
+        let input: CleanupInput = selectedText.flatMap { $0.isEmpty ? nil : $0 }.map {
+            .contextual(spokenText: expanded, selectedText: $0)
+        } ?? .transcription(expanded)
+        let request = CleanupRequest(
+            input: input,
             vocabulary: vocabulary,
             styleInstruction: cleanup.styleInstruction
         )
-        return ProcessedTranscript(finalText: outcome.text, cleanupOutcome: outcome)
+        let outcome = await CleanupCoordinator().cleanOrFallback(
+            request: request,
+            provider: cleanup.provider,
+            model: cleanup.model,
+            credentials: cleanup.credentials,
+        )
+        switch outcome {
+        case .cleaned(let result): return .cleaned(result)
+        case .transcriptionFallback(let text, let reason): return .fallback(text, reason: reason)
+        case .failed(let reason): return .failed(reason)
+        }
     }
 }

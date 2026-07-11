@@ -74,7 +74,7 @@ final class AppBehaviorTests: XCTestCase {
     }
 
     func testMissingFocusedTargetNeverTouchesAnotherApp() async {
-        let result = await AccessibilityInserter().insert("private text", into: nil)
+        let result = await AccessibilityInserter().insert(.dictation("private text"), into: nil)
         XCTAssertEqual(result, .privateClipboard("no editable field was focused"))
     }
 
@@ -83,14 +83,21 @@ final class AppBehaviorTests: XCTestCase {
 
         let target = AccessibilityTargetResolver.resolve(
             application: fixture.application,
-            candidates: [.init(processIdentifier: fixture.targetPID, editableElement: fixture.fieldElement, isSecure: false)]
+            candidates: [
+                .editable(
+                    processIdentifier: fixture.targetPID,
+                    element: fixture.fieldElement,
+                    selection: fixture.originalSelection
+                )
+            ]
         )
 
-        guard case .field(let application, let element) = target else {
+        guard case .field(let application, let element, let selection) = target else {
             return XCTFail("Expected an exact field target")
         }
         XCTAssertEqual(application.processIdentifier, fixture.targetPID)
         XCTAssertTrue(CFEqual(element, fixture.fieldElement))
+        XCTAssertEqual(selection, fixture.originalSelection)
     }
 
     func testResolverUsesApplicationFallbackWithoutAllowlist() {
@@ -108,10 +115,10 @@ final class AppBehaviorTests: XCTestCase {
         let fixture = InsertionFixture()
         let target = AccessibilityTargetResolver.resolve(
             application: fixture.application,
-            candidates: [.init(processIdentifier: fixture.targetPID, editableElement: fixture.fieldElement, isSecure: true)]
+            candidates: [.secure(processIdentifier: fixture.targetPID)]
         )
 
-        let result = await fixture.inserter.insert("secret", into: target)
+        let result = await fixture.inserter.insert(.dictation("secret"), into: target)
 
         XCTAssertEqual(result, .privateClipboard("secure fields are never modified"))
         XCTAssertTrue(fixture.events.events.isEmpty)
@@ -122,7 +129,7 @@ final class AppBehaviorTests: XCTestCase {
 
         let target = AccessibilityTargetResolver.resolve(
             application: fixture.application,
-            candidates: [.init(processIdentifier: 777, editableElement: fixture.fieldElement, isSecure: true)]
+            candidates: [.secure(processIdentifier: 777)]
         )
 
         guard case .application = target else {
@@ -133,7 +140,7 @@ final class AppBehaviorTests: XCTestCase {
     func testApplicationFallbackPastesWhenOriginalAppRemainsFrontmost() async {
         let fixture = InsertionFixture(bundleIdentifier: "com.openai.codex")
 
-        let result = await fixture.inserter.insert("hello ChatGPT", into: .application(fixture.application))
+        let result = await fixture.inserter.insert(.dictation("hello ChatGPT"), into: .application(fixture.application))
 
         XCTAssertEqual(result, .pasteCommandPosted(.activeApplication))
         XCTAssertEqual(fixture.events.events, Self.expectedPasteEvents)
@@ -144,7 +151,7 @@ final class AppBehaviorTests: XCTestCase {
         let fixture = InsertionFixture()
         fixture.applicationState.frontmostPID = 777
 
-        let result = await fixture.inserter.insert("do not paste", into: .application(fixture.application))
+        let result = await fixture.inserter.insert(.dictation("do not paste"), into: .application(fixture.application))
 
         XCTAssertEqual(result, .privateClipboard("focus moved to another application"))
         XCTAssertTrue(fixture.events.events.isEmpty)
@@ -154,7 +161,7 @@ final class AppBehaviorTests: XCTestCase {
         let fixture = InsertionFixture()
         fixture.applicationState.runningPIDs.remove(fixture.targetPID)
 
-        let result = await fixture.inserter.insert("do not paste", into: .application(fixture.application))
+        let result = await fixture.inserter.insert(.dictation("do not paste"), into: .application(fixture.application))
 
         XCTAssertEqual(result, .privateClipboard("the target application is no longer running"))
         XCTAssertTrue(fixture.events.events.isEmpty)
@@ -166,8 +173,8 @@ final class AppBehaviorTests: XCTestCase {
         fixture.applicationState.focusSucceeds = false
 
         let result = await fixture.inserter.insert(
-            "exact",
-            into: .field(application: fixture.application, element: fixture.fieldElement)
+            .dictation("exact"),
+            into: .field(application: fixture.application, element: fixture.fieldElement, selection: nil)
         )
 
         XCTAssertEqual(result, .pasteCommandPosted(.capturedField))
@@ -180,7 +187,7 @@ final class AppBehaviorTests: XCTestCase {
         let fixture = InsertionFixture()
         fixture.events.failureIndex = 1
 
-        let result = await fixture.inserter.insert("failed", into: .application(fixture.application))
+        let result = await fixture.inserter.insert(.dictation("failed"), into: .application(fixture.application))
 
         XCTAssertEqual(result, .privateClipboard("the paste shortcut could not be posted"))
         XCTAssertTrue(fixture.clipboard.didRestore)
@@ -190,7 +197,7 @@ final class AppBehaviorTests: XCTestCase {
         let fixture = InsertionFixture()
         fixture.clipboard.prepareSucceeds = false
 
-        let result = await fixture.inserter.insert("failed", into: .application(fixture.application))
+        let result = await fixture.inserter.insert(.dictation("failed"), into: .application(fixture.application))
 
         XCTAssertEqual(result, .privateClipboard("the paste shortcut could not be posted"))
         XCTAssertTrue(fixture.clipboard.didRestore)
@@ -201,10 +208,47 @@ final class AppBehaviorTests: XCTestCase {
         let fixture = InsertionFixture()
         fixture.clipboard.ownsPreparedContents = false
 
-        let result = await fixture.inserter.insert("paste", into: .application(fixture.application))
+        let result = await fixture.inserter.insert(.dictation("paste"), into: .application(fixture.application))
 
         XCTAssertEqual(result, .pasteCommandPosted(.activeApplication))
         XCTAssertFalse(fixture.clipboard.didRestore)
+    }
+
+    func testTransformationPastesWhenCapturedSelectionStillMatches() async {
+        let fixture = InsertionFixture()
+
+        let result = await fixture.inserter.insert(
+            .transformation("selected text", expectedSelection: fixture.originalSelection),
+            into: .field(
+                application: fixture.application,
+                element: fixture.fieldElement,
+                selection: fixture.originalSelection
+            )
+        )
+
+        XCTAssertEqual(result, .pasteCommandPosted(.capturedField))
+        XCTAssertEqual(fixture.events.events, Self.expectedPasteEvents)
+    }
+
+    func testTransformationDoesNotPasteAfterSelectionChanges() async {
+        let fixture = InsertionFixture()
+        fixture.applicationState.currentSelection = TextSelectionSnapshot(
+            text: "DIFFERENT TEXT",
+            location: 20,
+            length: 14
+        )
+
+        let result = await fixture.inserter.insert(
+            .transformation("selected text", expectedSelection: fixture.originalSelection),
+            into: .field(
+                application: fixture.application,
+                element: fixture.fieldElement,
+                selection: fixture.originalSelection
+            )
+        )
+
+        XCTAssertEqual(result, .privateClipboard("the selected text changed before transformation"))
+        XCTAssertTrue(fixture.events.events.isEmpty)
     }
 
     func testUpdaterForwardsAvailabilityAndManualChecks() throws {
@@ -277,6 +321,7 @@ private final class InsertionFixture {
     let applicationState = TestApplicationState()
     let clipboard = TestClipboard()
     let events = TestEventRecorder()
+    let originalSelection = TextSelectionSnapshot(text: "SELECTED TEXT", location: 0, length: 13)
     let application: ApplicationTarget
     let inserter: AccessibilityInserter
 
@@ -288,6 +333,7 @@ private final class InsertionFixture {
         )
         applicationState.frontmostPID = targetPID
         applicationState.runningPIDs = [targetPID, 777]
+        applicationState.currentSelection = originalSelection
 
         let state = applicationState
         let eventRecorder = events
@@ -302,6 +348,7 @@ private final class InsertionFixture {
                 state.focusAttempts += 1
                 return state.focusSucceeds
             },
+            selection: { _ in state.currentSelection },
             delay: { _ in }
         )
         let paster = ClipboardPaster(
@@ -321,6 +368,7 @@ private final class TestApplicationState {
     var activationSucceeds = true
     var focusSucceeds = true
     var focusAttempts = 0
+    var currentSelection: TextSelectionSnapshot?
 }
 
 @MainActor

@@ -37,7 +37,7 @@ public struct CloudflareCleanupProvider: CleanupLLMProvider {
         let body = RequestBody(
             messages: [
                 .init(role: "system", content: CleanupPrompt.system(vocabulary: cleanup.vocabulary, styleInstruction: cleanup.styleInstruction)),
-                .init(role: "user", content: cleanup.transcript)
+                .init(role: "user", content: try CleanupPrompt.user(request: cleanup))
             ],
             responseFormat: .init(type: "json_object"),
             temperature: 0
@@ -47,11 +47,8 @@ public struct CloudflareCleanupProvider: CleanupLLMProvider {
         try HTTPHelpers.requireSuccess(data: data, response: response)
         let payload = try JSONDecoder().decode(Envelope.self, from: data)
         let content = payload.result.response ?? payload.result.text ?? ""
-        guard let contentData = content.data(using: .utf8), let parsed = try? JSONDecoder().decode(CleanedPayload.self, from: contentData) else {
-            throw ProviderError.invalidResponse
-        }
-        try CleanupSafetyValidator.validate(raw: cleanup.transcript, cleaned: parsed.text, vocabulary: cleanup.vocabulary)
-        return CleanupResult(text: parsed.text, provider: .cloudflare, model: model, latency: seconds(since: started))
+        let output = try CleanupResponseDecoder.decode(content, for: cleanup)
+        return CleanupResult(output: output, provider: .cloudflare, model: model, latency: seconds(since: started))
     }
 
     private struct RequestBody: Encodable {
@@ -66,5 +63,4 @@ public struct CloudflareCleanupProvider: CleanupLLMProvider {
         let result: Result
         struct Result: Decodable { let response: String?; let text: String? }
     }
-    private struct CleanedPayload: Decodable { let text: String }
 }

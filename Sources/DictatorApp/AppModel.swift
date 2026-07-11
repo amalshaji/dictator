@@ -126,27 +126,54 @@ final class AppModel: ObservableObject {
             if cleanup != nil { hud.show(.cleaning) }
             let processed = await transcriptProcessor.process(
                 rawText: raw.text,
+                selectedText: focusedTarget?.selection?.text,
                 vocabulary: data.vocabulary,
                 snippets: data.snippets,
                 cleanup: cleanup
             )
 
-            let insertion = await inserter.insert(processed.finalText, into: focusedTarget)
-            if case .privateClipboard = insertion {
-                data.clipboard.insert(.init(text: processed.finalText, rawText: raw.text, sourceBundleID: focusedTarget?.bundleIdentifier), at: 0)
+            let finalText: String
+            let cleanupResult: CleanupResult?
+            let cleanupFallbackReason: String?
+            switch processed {
+            case .raw(let text):
+                (finalText, cleanupResult, cleanupFallbackReason) = (text, nil, nil)
+            case .cleaned(let result):
+                (finalText, cleanupResult, cleanupFallbackReason) = (result.text, result, nil)
+            case .fallback(let text, let reason):
+                (finalText, cleanupResult, cleanupFallbackReason) = (text, nil, reason)
+            case .failed(let reason):
+                showError("Cleanup failed—selection unchanged: \(reason)")
+                return
             }
-            showCompletion(insertion: insertion, cleanupFallbackReason: processed.cleanupFallbackReason)
+
+            let requestedInsertion: TextInsertion
+            if cleanupResult?.intent == .transformation {
+                guard let selection = focusedTarget?.selection else {
+                    showError("The selected text is no longer available")
+                    return
+                }
+                requestedInsertion = .transformation(finalText, expectedSelection: selection)
+            } else {
+                requestedInsertion = .dictation(finalText)
+            }
+
+            let insertion = await inserter.insert(requestedInsertion, into: focusedTarget)
+            if case .privateClipboard = insertion {
+                data.clipboard.insert(.init(text: finalText, rawText: raw.text, sourceBundleID: focusedTarget?.bundleIdentifier), at: 0)
+            }
+            showCompletion(insertion: insertion, cleanupFallbackReason: cleanupFallbackReason)
             data.transcripts.insert(.init(
                 rawText: raw.text,
-                finalText: processed.finalText,
+                finalText: finalText,
                 sttProvider: selectedSTT,
                 sttModel: model,
-                llmProvider: processed.cleanupResult?.provider,
-                llmModel: processed.cleanupResult?.model,
+                llmProvider: cleanupResult?.provider,
+                llmModel: cleanupResult?.model,
                 sourceBundleID: focusedTarget?.bundleIdentifier,
                 audioDuration: audio.duration,
                 sttLatency: raw.latency,
-                cleanupLatency: processed.cleanupResult?.latency,
+                cleanupLatency: cleanupResult?.latency,
                 insertionOutcome: insertion.label
             ), at: 0)
             await persist()
