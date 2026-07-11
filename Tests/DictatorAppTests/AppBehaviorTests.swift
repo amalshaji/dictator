@@ -1,3 +1,4 @@
+import ApplicationServices
 import CoreGraphics
 import XCTest
 @testable import Dictator
@@ -15,5 +16,227 @@ final class AppBehaviorTests: XCTestCase {
     func testMissingFocusedTargetNeverTouchesAnotherApp() async {
         let result = await AccessibilityInserter().insert("private text", into: nil)
         XCTAssertEqual(result, .privateClipboard("no editable field was focused"))
+    }
+
+    func testResolverPrefersExactEditableTarget() {
+        let fixture = InsertionFixture()
+
+        let target = AccessibilityTargetResolver.resolve(
+            application: fixture.application,
+            candidates: [.init(processIdentifier: fixture.targetPID, editableElement: fixture.fieldElement, isSecure: false)]
+        )
+
+        guard case .field(let application, let element) = target else {
+            return XCTFail("Expected an exact field target")
+        }
+        XCTAssertEqual(application.processIdentifier, fixture.targetPID)
+        XCTAssertTrue(CFEqual(element, fixture.fieldElement))
+    }
+
+    func testResolverUsesApplicationFallbackWithoutAllowlist() {
+        let fixture = InsertionFixture(bundleIdentifier: "com.example.custom-editor")
+
+        let target = AccessibilityTargetResolver.resolve(application: fixture.application, candidates: [])
+
+        guard case .application(let application) = target else {
+            return XCTFail("Expected an application fallback")
+        }
+        XCTAssertEqual(application.bundleIdentifier, "com.example.custom-editor")
+    }
+
+    func testResolverBlocksKnownSecureField() async {
+        let fixture = InsertionFixture()
+        let target = AccessibilityTargetResolver.resolve(
+            application: fixture.application,
+            candidates: [.init(processIdentifier: fixture.targetPID, editableElement: fixture.fieldElement, isSecure: true)]
+        )
+
+        let result = await fixture.inserter.insert("secret", into: target)
+
+        XCTAssertEqual(result, .privateClipboard("secure fields are never modified"))
+        XCTAssertTrue(fixture.events.events.isEmpty)
+    }
+
+    func testResolverIgnoresFocusedCandidateFromAnotherProcess() {
+        let fixture = InsertionFixture()
+
+        let target = AccessibilityTargetResolver.resolve(
+            application: fixture.application,
+            candidates: [.init(processIdentifier: 777, editableElement: fixture.fieldElement, isSecure: true)]
+        )
+
+        guard case .application = target else {
+            return XCTFail("A candidate from another process must not become the target")
+        }
+    }
+
+    func testApplicationFallbackPastesWhenOriginalAppRemainsFrontmost() async {
+        let fixture = InsertionFixture(bundleIdentifier: "com.openai.codex")
+
+        let result = await fixture.inserter.insert("hello ChatGPT", into: .application(fixture.application))
+
+        XCTAssertEqual(result, .pasteCommandPosted(.activeApplication))
+        XCTAssertEqual(fixture.events.events, Self.expectedPasteEvents)
+        XCTAssertTrue(fixture.clipboard.didRestore)
+    }
+
+    func testApplicationFallbackDoesNotPasteAfterAppSwitch() async {
+        let fixture = InsertionFixture()
+        fixture.applicationState.frontmostPID = 777
+
+        let result = await fixture.inserter.insert("do not paste", into: .application(fixture.application))
+
+        XCTAssertEqual(result, .privateClipboard("focus moved to another application"))
+        XCTAssertTrue(fixture.events.events.isEmpty)
+    }
+
+    func testDeadTargetFallsBackToPrivateClipboard() async {
+        let fixture = InsertionFixture()
+        fixture.applicationState.runningPIDs.remove(fixture.targetPID)
+
+        let result = await fixture.inserter.insert("do not paste", into: .application(fixture.application))
+
+        XCTAssertEqual(result, .privateClipboard("the target application is no longer running"))
+        XCTAssertTrue(fixture.events.events.isEmpty)
+    }
+
+    func testExactTargetReactivatesAndPastesEvenWhenAXRefocusIsRejected() async {
+        let fixture = InsertionFixture()
+        fixture.applicationState.frontmostPID = 777
+        fixture.applicationState.focusSucceeds = false
+
+        let result = await fixture.inserter.insert(
+            "exact",
+            into: .field(application: fixture.application, element: fixture.fieldElement)
+        )
+
+        XCTAssertEqual(result, .pasteCommandPosted(.capturedField))
+        XCTAssertEqual(fixture.applicationState.activatedPIDs, [fixture.targetPID])
+        XCTAssertEqual(fixture.applicationState.focusAttempts, 1)
+        XCTAssertEqual(fixture.events.events, Self.expectedPasteEvents)
+    }
+
+    func testPasteEventFailureRestoresOwnedClipboard() async {
+        let fixture = InsertionFixture()
+        fixture.events.failureIndex = 2
+
+        let result = await fixture.inserter.insert("failed", into: .application(fixture.application))
+
+        XCTAssertEqual(result, .privateClipboard("the paste shortcut could not be posted"))
+        XCTAssertTrue(fixture.clipboard.didRestore)
+    }
+
+    func testClipboardPreparationFailureRestoresSnapshot() async {
+        let fixture = InsertionFixture()
+        fixture.clipboard.prepareSucceeds = false
+
+        let result = await fixture.inserter.insert("failed", into: .application(fixture.application))
+
+        XCTAssertEqual(result, .privateClipboard("the paste shortcut could not be posted"))
+        XCTAssertTrue(fixture.clipboard.didRestore)
+        XCTAssertTrue(fixture.events.events.isEmpty)
+    }
+
+    func testExternallyChangedClipboardIsNotOverwritten() async {
+        let fixture = InsertionFixture()
+        fixture.clipboard.ownsPreparedContents = false
+
+        let result = await fixture.inserter.insert("paste", into: .application(fixture.application))
+
+        XCTAssertEqual(result, .pasteCommandPosted(.activeApplication))
+        XCTAssertFalse(fixture.clipboard.didRestore)
+    }
+
+    private static let expectedPasteEvents = [
+        PostedKeyEvent(keyCode: 0x37, keyDown: true, flags: .maskCommand),
+        PostedKeyEvent(keyCode: 0x09, keyDown: true, flags: .maskCommand),
+        PostedKeyEvent(keyCode: 0x09, keyDown: false, flags: .maskCommand),
+        PostedKeyEvent(keyCode: 0x37, keyDown: false, flags: []),
+    ]
+}
+
+@MainActor
+private final class InsertionFixture {
+    let targetPID: pid_t = 4242
+    let applicationElement = AXUIElementCreateApplication(4242)
+    let fieldElement = AXUIElementCreateApplication(4242)
+    let applicationState = TestApplicationState()
+    let clipboard = TestClipboard()
+    let events = TestEventRecorder()
+    let application: ApplicationTarget
+    let inserter: AccessibilityInserter
+
+    init(bundleIdentifier: String = "com.example.editor") {
+        application = ApplicationTarget(
+            element: applicationElement,
+            bundleIdentifier: bundleIdentifier,
+            processIdentifier: targetPID
+        )
+        applicationState.frontmostPID = targetPID
+        applicationState.runningPIDs = [targetPID, 777]
+
+        let state = applicationState
+        let eventRecorder = events
+        let environment = InsertionEnvironment(
+            frontmostProcessIdentifier: { state.frontmostPID },
+            isRunning: { state.runningPIDs.contains($0) },
+            activate: {
+                state.activatedPIDs.append($0)
+                return state.activationSucceeds
+            },
+            focus: { _ in
+                state.focusAttempts += 1
+                return state.focusSucceeds
+            },
+            delay: { _ in }
+        )
+        let paster = ClipboardPaster(
+            clipboard: clipboard,
+            postEvent: { eventRecorder.post($0) },
+            delay: { _ in }
+        )
+        inserter = AccessibilityInserter(environment: environment, paster: paster)
+    }
+}
+
+@MainActor
+private final class TestApplicationState {
+    var frontmostPID: pid_t?
+    var runningPIDs: Set<pid_t> = []
+    var activatedPIDs: [pid_t] = []
+    var activationSucceeds = true
+    var focusSucceeds = true
+    var focusAttempts = 0
+}
+
+@MainActor
+private final class TestClipboard: ClipboardAccess {
+    var ownsPreparedContents = true
+    var prepareSucceeds = true
+    var didRestore = false
+    private var preparedText: String?
+    private var preparedSessionID: String?
+
+    func snapshot() -> PasteboardSnapshot { PasteboardSnapshot(items: []) }
+    func prepare(text: String, sessionID: String) -> Bool {
+        preparedText = text
+        preparedSessionID = sessionID
+        return prepareSucceeds
+    }
+    func owns(text: String, sessionID: String) -> Bool {
+        ownsPreparedContents && text == preparedText && sessionID == preparedSessionID
+    }
+    func restore(_ snapshot: PasteboardSnapshot) { didRestore = true }
+}
+
+@MainActor
+private final class TestEventRecorder {
+    var events: [PostedKeyEvent] = []
+    var failureIndex: Int?
+
+    func post(_ event: PostedKeyEvent) -> Bool {
+        let index = events.count
+        events.append(event)
+        return index != failureIndex
     }
 }
