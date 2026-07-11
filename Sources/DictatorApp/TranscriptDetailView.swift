@@ -33,30 +33,31 @@ struct TranscriptDetailView: View {
         Group {
             if let record {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
-                        HStack {
-                            Text("Transcript details").font(.dictatorDisplay(26))
-                            Spacer()
-                            Button("Done") { dismiss() }.dictatorButton(.ghost)
-                        }
+                    VStack(alignment: .leading, spacing: 16) {
+                        header(record)
+                        Divider()
                         actionBar(record)
                         if let processingError {
-                            Text(processingError).font(.dictatorBody(11, weight: .medium)).foregroundStyle(.red)
+                            Label(processingError, systemImage: "exclamationmark.triangle.fill")
+                                .font(.dictatorBody(11, weight: .medium))
+                                .foregroundStyle(.red)
+                                .padding(10)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color.red.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
                         }
-                        textSection("Current text", record.currentText)
-                        textSection("Original processed text", record.finalText)
-                        textSection("Raw transcription", record.rawText)
+                        currentTextSection(record)
                         latencySection(record)
-                        metadataSection(record)
                         revisionsSection(record)
+                        sourceTextSection(record)
+                        technicalDetailsSection(record)
                     }
-                    .padding(28)
+                    .padding(24)
                 }
             } else {
                 Text("Transcript is no longer available.").padding(30)
             }
         }
-        .frame(width: 680, height: 720)
+        .frame(width: 620, height: 560)
         .sheet(item: sheetPresentation) { sheetContent($0) }
         .confirmationDialog(
             "Reprocess raw transcript?",
@@ -71,6 +72,21 @@ struct TranscriptDetailView: View {
             } else {
                 Text("This reapplies current vocabulary and snippets locally.")
             }
+        }
+    }
+
+    private func header(_ record: TranscriptRecord) -> some View {
+        HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Transcript details").font(.dictatorDisplay(23))
+                Text(record.createdAt.dictatorTimestamp)
+                    .font(.dictatorUtility(10))
+                    .foregroundStyle(DictatorDesign.muted)
+            }
+            Spacer()
+            Button("Done") { dismiss() }
+                .keyboardShortcut(.cancelAction)
+                .dictatorButton(.ghost)
         }
     }
 
@@ -110,57 +126,129 @@ struct TranscriptDetailView: View {
     }
 
     private func actionBar(_ record: TranscriptRecord) -> some View {
-        HStack {
-            Button("Copy raw") { model.copyTranscriptText(record.rawText) }.dictatorButton(.secondary)
-            Button("Copy current") { model.copyTranscriptText(record.currentText) }.dictatorButton(.secondary)
-            Button("Paste current") { Task { await model.pasteTranscriptText(record.currentText) } }.dictatorButton(.secondary)
-            Button("Edit") { presentation = .edit(record.currentText) }.dictatorButton(.secondary)
-            Button("Reprocess") { presentation = .confirmReprocess }.disabled(working).dictatorButton()
-            Button("Teach Dictator") { presentation = .teach }.dictatorButton(.ghost)
+        HStack(spacing: 8) {
+            Button { model.copyTranscriptText(record.currentText) } label: {
+                Label("Copy", systemImage: "doc.on.doc")
+            }
+            .dictatorButton(.secondary)
+
+            Button { Task { await model.pasteTranscriptText(record.currentText) } } label: {
+                Label("Paste", systemImage: "doc.on.clipboard")
+            }
+            .dictatorButton(.secondary)
+
+            Button { presentation = .edit(record.currentText) } label: {
+                Label("Edit", systemImage: "pencil")
+            }
+            .dictatorButton(.secondary)
+
+            Spacer(minLength: 4)
+
+            Button { presentation = .confirmReprocess } label: {
+                Label(working ? "Processing…" : "Reprocess", systemImage: "arrow.triangle.2.circlepath")
+            }
+            .disabled(working)
+            .dictatorButton()
+
+            Menu {
+                Button("Copy raw transcription") { model.copyTranscriptText(record.rawText) }
+                Divider()
+                Button("Teach Dictator…") { presentation = .teach }
+            } label: {
+                Label("More", systemImage: "ellipsis")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .accessibilityHint("Shows raw-copy and vocabulary teaching actions")
         }
     }
 
-    private func textSection(_ title: String, _ text: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title.uppercased()).font(.dictatorUtility(9)).foregroundStyle(.secondary)
-            Text(text).font(.dictatorBody(13)).textSelection(.enabled)
+    private func currentTextSection(_ record: TranscriptRecord) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("CURRENT TEXT").font(.dictatorUtility(9)).foregroundStyle(DictatorDesign.muted)
+                Spacer()
+                if record.preferredRevisionID != nil {
+                    Text("REVISION").font(.dictatorUtility(8)).foregroundStyle(DictatorDesign.focus)
+                }
+            }
+            Text(record.currentText)
+                .font(.dictatorBody(14))
+                .lineSpacing(3)
+                .textSelection(.enabled)
         }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DictatorDesign.paper.opacity(0.72), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(DictatorDesign.border.opacity(0.8)))
     }
 
     private func latencySection(_ record: TranscriptRecord) -> some View {
         let total = record.pipelineLatency
         let overhead = total.map { max(0, $0 - record.sttLatency - (record.cleanup?.latency ?? 0)) }
-        return VStack(alignment: .leading, spacing: 7) {
-            Text("LATENCY").font(.dictatorUtility(9)).foregroundStyle(.secondary)
-            HStack {
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("LATENCY").font(.dictatorUtility(9)).foregroundStyle(DictatorDesign.muted)
+            HStack(spacing: 0) {
                 value("Total pipeline", total.map(latency) ?? "—")
                 value("STT request", latency(record.sttLatency))
                 value("LLM cleanup", record.cleanup.map { latency($0.latency) } ?? "—")
                 value("Other overhead", overhead.map(latency) ?? "—")
             }
         }
+        .padding(.horizontal, 2)
     }
 
-    private func metadataSection(_ record: TranscriptRecord) -> some View {
+    private func sourceTextSection(_ record: TranscriptRecord) -> some View {
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 12) {
+                if record.currentText != record.finalText {
+                    compactTextSection("Original processed text", record.finalText)
+                    Divider()
+                }
+                compactTextSection("Raw transcription", record.rawText)
+            }
+            .padding(.top, 10)
+        } label: {
+            Label("Source text", systemImage: "text.alignleft")
+                .font(.dictatorBody(12, weight: .semibold))
+        }
+        .tint(DictatorDesign.muted)
+    }
+
+    private func technicalDetailsSection(_ record: TranscriptRecord) -> some View {
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 5) {
+                Text("STT: \(record.sttProvider.rawValue) · \(record.sttModel)")
+                if let cleanup = record.cleanup {
+                    Text("Cleanup: \(cleanup.provider.rawValue) · \(cleanup.model)")
+                }
+                Text("Insertion: \(record.insertionOutcome)" + (record.sourceBundleID.map { " · \($0)" } ?? ""))
+                if let cleanup = record.cleanup, let usage = cleanup.usage {
+                    Text("Tokens: \(tokenText(usage))")
+                    Text("LLM cost: \(costText(execution: cleanup))")
+                }
+            }
+            .font(.dictatorBody(11))
+            .foregroundStyle(DictatorDesign.ink.opacity(0.72))
+            .padding(.top, 10)
+        } label: {
+            Label("Technical details", systemImage: "info.circle")
+                .font(.dictatorBody(12, weight: .semibold))
+        }
+        .tint(DictatorDesign.muted)
+    }
+
+    private func compactTextSection(_ title: String, _ text: String) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text("PROVENANCE").font(.dictatorUtility(9)).foregroundStyle(.secondary)
-            Text("STT: \(record.sttProvider.rawValue) · \(record.sttModel)").font(.dictatorBody(11))
-            if let cleanup = record.cleanup {
-                Text("Cleanup: \(cleanup.provider.rawValue) · \(cleanup.model)").font(.dictatorBody(11))
-            }
-            Text("Insertion: \(record.insertionOutcome)" + (record.sourceBundleID.map { " · \($0)" } ?? ""))
-                .font(.dictatorBody(11))
-            if let cleanup = record.cleanup, let usage = cleanup.usage {
-                Text("Tokens: \(tokenText(usage))").font(.dictatorBody(11))
-                Text("LLM cost: \(costText(execution: cleanup))").font(.dictatorBody(11))
-            }
+            Text(title.uppercased()).font(.dictatorUtility(8)).foregroundStyle(DictatorDesign.muted)
+            Text(text).font(.dictatorBody(12)).lineSpacing(2).textSelection(.enabled)
         }
     }
 
     @ViewBuilder
     private func revisionsSection(_ record: TranscriptRecord) -> some View {
         if !record.revisions.isEmpty {
-            Text("Revisions").font(.dictatorDisplay(18))
+            Text("Revisions").font(.dictatorDisplay(16))
             ForEach(record.revisions.reversed()) { revision in
                 VStack(alignment: .leading, spacing: 5) {
                     Text(revision.text).textSelection(.enabled)
@@ -234,7 +322,7 @@ struct TranscriptDetailView: View {
 
     private func value(_ label: String, _ text: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(text).font(.dictatorDisplay(15))
+            Text(text).font(.dictatorDisplay(14)).monospacedDigit()
             Text(label).font(.dictatorBody(9)).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
