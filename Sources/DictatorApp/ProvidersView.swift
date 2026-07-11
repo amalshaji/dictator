@@ -108,32 +108,35 @@ private struct ProviderSetupRow: View {
             }
             .buttonStyle(.plain)
 
-            if expanded {
-                VStack(alignment: .leading, spacing: 13) {
-                    field("API key") { SecureField("Paste your API key", text: $apiKey).textFieldStyle(DictatorTextFieldStyle()) }
-                    if provider.requiresAccountID { field("Account ID") { TextField("Enter account ID", text: $accountID).textFieldStyle(DictatorTextFieldStyle()) } }
-                    if provider.kind == .openAICompatible { field("Base URL") { TextField("https://api.example.com/v1", text: $baseURL).textFieldStyle(DictatorTextFieldStyle()) } }
-                    if provider.models.count > 1 {
-                        field("Model") {
-                            Picker("Model", selection: $selectedModel) { ForEach(provider.models, id: \.self) { Text($0).tag($0) } }
-                                .labelsHidden().pickerStyle(.menu).controlSize(.large)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 4).frame(height: 36)
-                                .background(DictatorDesign.control, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(DictatorDesign.border))
+            VStack(spacing: 0) {
+                if expanded {
+                    VStack(alignment: .leading, spacing: 13) {
+                        field("API key") { SecureField("Paste your API key", text: $apiKey).textFieldStyle(DictatorTextFieldStyle()) }
+                        if provider.requiresAccountID { field("Account ID") { TextField("Enter account ID", text: $accountID).textFieldStyle(DictatorTextFieldStyle()) } }
+                        if provider.kind == .openAICompatible { field("Base URL") { TextField("https://api.example.com/v1", text: $baseURL).textFieldStyle(DictatorTextFieldStyle()) } }
+                        if provider.models.count > 1 {
+                            field("Model") {
+                                Picker("Model", selection: $selectedModel) { ForEach(provider.models, id: \.self) { Text($0).tag($0) } }
+                                    .labelsHidden().pickerStyle(.menu).controlSize(.large)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.horizontal, 4).frame(height: 36)
+                                    .background(DictatorDesign.control, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(DictatorDesign.border))
+                            }
+                        } else {
+                            field("Model") { TextField("Model", text: $selectedModel).textFieldStyle(DictatorTextFieldStyle()) }
                         }
-                    } else {
-                        field("Model") { TextField("Model", text: $selectedModel).textFieldStyle(DictatorTextFieldStyle()) }
+                        HStack(spacing: 8) {
+                            Button("Use this provider") { saveAndSelect() }.dictatorButton()
+                            Button(testing ? "Testing…" : "Test connection") { Task { await testConnection() } }.disabled(testing || apiKey.isEmpty).dictatorButton(.secondary)
+                        }
                     }
-                    HStack(spacing: 8) {
-                        Button("Use this provider") { saveAndSelect() }.dictatorButton()
-                        Button(testing ? "Testing…" : "Test connection") { Task { await testConnection() } }.disabled(testing || apiKey.isEmpty).dictatorButton(.secondary)
-                    }
+                    .padding(16)
+                    .background(DictatorDesign.paper.opacity(0.72))
+                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
-                .padding(16)
-                .background(DictatorDesign.paper.opacity(0.72))
-                .transition(.opacity.combined(with: .move(edge: .top)))
             }
+            .clipped()
         }
         .onAppear {
             selectedModel = model.configuredModel(for: purpose, provider: provider.kind) ?? provider.defaultModel
