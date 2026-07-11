@@ -214,11 +214,21 @@ final class AppModel: ObservableObject {
         objectWillChange.send()
     }
 
-    func addVocabulary(_ value: String) {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        data.vocabulary.insert(.init(value: trimmed), at: 0)
-        schedulePersistence()
+    @discardableResult
+    func saveVocabulary(_ entry: VocabularyEntry) -> Bool {
+        do {
+            let entry = try PersonalizationValidator.validateVocabulary(entry, among: data.vocabulary)
+            if let index = data.vocabulary.firstIndex(where: { $0.id == entry.id }) { data.vocabulary[index] = entry }
+            else { data.vocabulary.insert(entry, at: 0) }
+            lastError = nil; schedulePersistence(); return true
+        } catch { lastError = error.localizedDescription; return false }
+    }
+
+    func addVocabulary(_ value: String) { _ = saveVocabulary(.init(value: value)) }
+
+    func setVocabularyEnabled(_ id: UUID, _ enabled: Bool) {
+        guard let index = data.vocabulary.firstIndex(where: { $0.id == id }) else { return }
+        data.vocabulary[index].isEnabled = enabled; schedulePersistence()
     }
 
     func deleteVocabulary(_ id: UUID) {
@@ -226,14 +236,22 @@ final class AppModel: ObservableObject {
         schedulePersistence()
     }
 
-    func addStyle(name: String, instruction: String) {
-        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let instruction = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, !instruction.isEmpty else { return }
-        let style = WritingStyle(name: name, instruction: instruction)
-        data.styles.insert(style, at: 0)
-        selectedStyleID = style.id
-        schedulePersistence()
+    @discardableResult
+    func saveStyle(_ style: WritingStyle) -> Bool {
+        do {
+            let style = try PersonalizationValidator.validateStyle(style, among: data.styles)
+            if let index = data.styles.firstIndex(where: { $0.id == style.id }) { data.styles[index] = style }
+            else { data.styles.insert(style, at: 0); selectedStyleID = style.id }
+            if !style.isEnabled, selectedStyleID == style.id { selectedStyleID = nil }
+            lastError = nil; schedulePersistence(); return true
+        } catch { lastError = error.localizedDescription; return false }
+    }
+
+    func addStyle(name: String, instruction: String) { _ = saveStyle(.init(name: name, instruction: instruction)) }
+
+    func setStyleEnabled(_ id: UUID, _ enabled: Bool) {
+        guard let style = data.styles.first(where: { $0.id == id }) else { return }
+        var updated = style; updated.isEnabled = enabled; _ = saveStyle(updated)
     }
 
     func deleteStyle(_ id: UUID) {
@@ -242,12 +260,21 @@ final class AppModel: ObservableObject {
         schedulePersistence()
     }
 
-    func addSnippet(trigger: String, expansion: String) {
-        let trigger = trigger.trimmingCharacters(in: .whitespacesAndNewlines)
-        let expansion = expansion.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trigger.isEmpty, !expansion.isEmpty else { return }
-        data.snippets.insert(.init(trigger: trigger, expansion: expansion), at: 0)
-        schedulePersistence()
+    @discardableResult
+    func saveSnippet(_ snippet: SnippetEntry) -> Bool {
+        do {
+            let snippet = try PersonalizationValidator.validateSnippet(snippet, among: data.snippets)
+            if let index = data.snippets.firstIndex(where: { $0.id == snippet.id }) { data.snippets[index] = snippet }
+            else { data.snippets.insert(snippet, at: 0) }
+            lastError = nil; schedulePersistence(); return true
+        } catch { lastError = error.localizedDescription; return false }
+    }
+
+    func addSnippet(trigger: String, expansion: String) { _ = saveSnippet(.init(trigger: trigger, expansion: expansion)) }
+
+    func setSnippetEnabled(_ id: UUID, _ enabled: Bool) {
+        guard let snippet = data.snippets.first(where: { $0.id == id }) else { return }
+        var updated = snippet; updated.isEnabled = enabled; _ = saveSnippet(updated)
     }
 
     func deleteSnippet(_ id: UUID) {

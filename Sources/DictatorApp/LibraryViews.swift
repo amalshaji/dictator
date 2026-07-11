@@ -5,6 +5,7 @@ import SwiftUI
 struct VocabularyView: View {
     @ObservedObject var model: AppModel
     @State private var newTerm = ""
+    @State private var editing: VocabularyEntry?
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
@@ -18,8 +19,14 @@ struct VocabularyView: View {
                 VStack(spacing: 0) {
                     ForEach(model.data.vocabulary) { entry in
                         HStack {
-                            Text(entry.value).font(.dictatorBody(14, weight: .medium))
+                            Toggle("", isOn: Binding(get: { entry.isEnabled }, set: { model.setVocabularyEnabled(entry.id, $0) }))
+                                .labelsHidden().toggleStyle(.switch)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(entry.value).font(.dictatorBody(14, weight: .medium))
+                                if !entry.variants.isEmpty { Text(entry.variants.joined(separator: ", ")).font(.dictatorBody(11)).foregroundStyle(.secondary) }
+                            }.opacity(entry.isEnabled ? 1 : 0.5)
                             Spacer()
+                            Button("Edit") { editing = entry }.dictatorButton(.ghost)
                             Button(role: .destructive) { model.deleteVocabulary(entry.id) } label: { Image(systemName: "trash") }.dictatorButton(.destructive)
                         }.padding(.vertical, 13)
                         Divider()
@@ -29,8 +36,35 @@ struct VocabularyView: View {
             }
             .frame(maxWidth: DictatorDesign.contentWidth, alignment: .leading).padding(42)
         }
+        .sheet(item: $editing) { entry in VocabularyEditor(model: model, entry: entry) }
     }
     private func add() { model.addVocabulary(newTerm); newTerm = "" }
+}
+
+private struct VocabularyEditor: View {
+    @ObservedObject var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var entry: VocabularyEntry
+    @State private var variants: String
+
+    init(model: AppModel, entry: VocabularyEntry) {
+        self.model = model
+        _entry = State(initialValue: entry)
+        _variants = State(initialValue: entry.variants.joined(separator: "\n"))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Edit vocabulary").font(.dictatorDisplay(22))
+            TextField("Canonical term", text: $entry.value).textFieldStyle(DictatorTextFieldStyle())
+            Text("Spoken variants — one per line").font(.dictatorBody(11, weight: .semibold))
+            TextEditor(text: $variants).frame(minHeight: 120).dictatorEditor()
+            HStack { Spacer(); Button("Cancel") { dismiss() }.dictatorButton(.ghost); Button("Save") {
+                entry.variants = variants.components(separatedBy: .newlines)
+                if model.saveVocabulary(entry) { dismiss() }
+            }.dictatorButton() }
+        }.padding(24).frame(width: 460)
+    }
 }
 
 struct ClipboardView: View {

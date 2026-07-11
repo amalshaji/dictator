@@ -8,6 +8,8 @@ struct StylesSnippetsView: View {
     @State private var instruction = ""
     @State private var trigger = ""
     @State private var expansion = ""
+    @State private var editingStyle: WritingStyle?
+    @State private var editingSnippet: SnippetEntry?
 
     var body: some View {
         ScrollView {
@@ -58,6 +60,8 @@ struct StylesSnippetsView: View {
                     Button { model.selectedStyleID = style.id } label: {
                         ruleRow(title: style.name, detail: style.instruction, selected: model.selectedStyleID == style.id)
                     }.buttonStyle(.plain)
+                    Toggle("", isOn: Binding(get: { style.isEnabled }, set: { model.setStyleEnabled(style.id, $0) })).labelsHidden().toggleStyle(.switch)
+                    Button("Edit") { editingStyle = style }.dictatorButton(.ghost)
                     Button(role: .destructive) { model.deleteStyle(style.id) } label: { Image(systemName: "trash") }.dictatorButton(.destructive)
                 }
             }
@@ -91,6 +95,8 @@ struct StylesSnippetsView: View {
                         if index > 0 { Divider().padding(.leading, 52) }
                         HStack(alignment: .top) {
                             ruleRow(title: "“\(snippet.trigger)”", detail: snippet.expansion, selected: false)
+                            Toggle("", isOn: Binding(get: { snippet.isEnabled }, set: { model.setSnippetEnabled(snippet.id, $0) })).labelsHidden().toggleStyle(.switch)
+                            Button("Edit") { editingSnippet = snippet }.dictatorButton(.ghost)
                             Button(role: .destructive) { model.deleteSnippet(snippet.id) } label: { Image(systemName: "trash") }.dictatorButton(.destructive)
                         }
                     }
@@ -98,6 +104,8 @@ struct StylesSnippetsView: View {
                 .ruleListChrome()
             }
         }
+        .sheet(item: $editingStyle) { item in RuleEditor(model: model, style: item) }
+        .sheet(item: $editingSnippet) { item in RuleEditor(model: model, snippet: item) }
     }
 
     private func ruleRow(title: String, detail: String, selected: Bool) -> some View {
@@ -149,6 +157,38 @@ struct StylesSnippetsView: View {
         .padding(14)
         .background(DictatorDesign.control, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(DictatorDesign.border))
+    }
+}
+
+private struct RuleEditor: View {
+    @ObservedObject var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var style: WritingStyle?
+    @State private var snippet: SnippetEntry?
+    @State private var primary: String
+    @State private var secondary: String
+
+    init(model: AppModel, style: WritingStyle) {
+        self.model = model; _style = State(initialValue: style); _snippet = State(initialValue: nil)
+        _primary = State(initialValue: style.name); _secondary = State(initialValue: style.instruction)
+    }
+    init(model: AppModel, snippet: SnippetEntry) {
+        self.model = model; _style = State(initialValue: nil); _snippet = State(initialValue: snippet)
+        _primary = State(initialValue: snippet.trigger); _secondary = State(initialValue: snippet.expansion)
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(style == nil ? "Edit snippet" : "Edit style").font(.dictatorDisplay(22))
+            TextField(style == nil ? "Trigger" : "Name", text: $primary).textFieldStyle(DictatorTextFieldStyle())
+            TextEditor(text: $secondary).frame(minHeight: 120).dictatorEditor()
+            HStack { Spacer(); Button("Cancel") { dismiss() }.dictatorButton(.ghost); Button("Save") {
+                let saved: Bool
+                if var style { style.name = primary; style.instruction = secondary; saved = model.saveStyle(style) }
+                else if var snippet { snippet.trigger = primary; snippet.expansion = secondary; saved = model.saveSnippet(snippet) }
+                else { saved = false }
+                if saved { dismiss() }
+            }.dictatorButton() }
+        }.padding(24).frame(width: 460)
     }
 }
 
