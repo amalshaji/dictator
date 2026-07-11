@@ -32,9 +32,9 @@ struct MainView: View {
             Rectangle().fill(DictatorDesign.fog).frame(width: 1)
             content
         }
+        .ignoresSafeArea(.container)
         .background(DictatorDesign.paper)
         .background(WindowChromeConfigurator())
-        .ignoresSafeArea(.container)
         .preferredColorScheme(.light)
         .overlay {
             if !model.onboardingComplete {
