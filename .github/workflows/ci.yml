@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  merge_group:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Install XcodeGen
+        run: |
+          brew install xcodegen
+          xcodegen --version
+
+      - name: Validate release version
+        env:
+          RELEASE_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          version=$(scripts/release/version.sh)
+          if [[ ",${RELEASE_LABELS}," != *",release,"* ]]; then
+            exit 0
+          fi
+
+          git show origin/main:project.yml > "$RUNNER_TEMP/base-project.yml"
+          base_version=$(scripts/release/version.sh "$RUNNER_TEMP/base-project.yml")
+          if [[ "$version" == "$base_version" ]]; then
+            echo "A release-labelled PR must change MARKETING_VERSION" >&2
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null 2>&1; then
+            echo "Tag v$version already exists" >&2
+            exit 1
+          fi
+
+      - name: Generate project
+        run: |
+          xcodegen generate
+          git diff --exit-code -- Dictator.xcodeproj/project.pbxproj
+
+      - name: Build and test
+        run: |
+          xcodebuild \
+            -project Dictator.xcodeproj \
+            -scheme Dictator \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            test
+
+      - name: Test release helpers
+        run: |
+          test "$(scripts/release/version.sh)" = "0.1.0"
+          cask=$(scripts/release/render-homebrew-cask.sh 1.2.3 abc123)
+          grep -q 'version "1.2.3"' <<<"$cask"
+          grep -q 'sha256 "abc123"' <<<"$cask"
+          grep -q 'auto_updates true' <<<"$cask"
+          grep -q 'com.apple.quarantine' <<<"$cask"

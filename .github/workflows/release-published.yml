@@ -1,0 +1,199 @@
+name: Publish update channels
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published stable release tag to repair
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: published-release-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  appcast:
+    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
+    runs-on: macos-15
+    environment: release
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Resolve published release
+        id: meta
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          DISPATCH_TAG: ${{ inputs.tag }}
+        run: |
+          tag=${EVENT_TAG:-$DISPATCH_TAG}
+          release=$(gh release view "$tag" --json isDraft,isPrerelease,tagName)
+          [[ $(jq -r .isDraft <<<"$release") == false ]]
+          [[ $(jq -r .isPrerelease <<<"$release") == false ]]
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Download and verify release assets
+        id: asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/update-assets"
+          gh release download "$TAG" \
+            --pattern "Dictator-${VERSION}-universal.dmg" \
+            --pattern SHA256SUMS.txt \
+            --dir "$RUNNER_TEMP/update-assets"
+          (cd "$RUNNER_TEMP/update-assets" && shasum -a 256 -c SHA256SUMS.txt)
+
+          dmg="$RUNNER_TEMP/update-assets/Dictator-${VERSION}-universal.dmg"
+          mountpoint=$(mktemp -d)
+          hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mountpoint"
+          build=$(plutil -extract CFBundleVersion raw "$mountpoint/Dictator.app/Contents/Info.plist")
+          short=$(plutil -extract CFBundleShortVersionString raw "$mountpoint/Dictator.app/Contents/Info.plist")
+          hdiutil detach "$mountpoint"
+          [[ "$short" == "$VERSION" ]]
+          echo "dmg=$dmg" >> "$GITHUB_OUTPUT"
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+
+      - name: Download Sparkle tools
+        run: |
+          curl -fsSL \
+            -o "$RUNNER_TEMP/sparkle.zip" \
+            https://github.com/sparkle-project/Sparkle/releases/download/2.9.4/Sparkle-for-Swift-Package-Manager.zip
+          unzip -q "$RUNNER_TEMP/sparkle.zip" -d "$RUNNER_TEMP/sparkle"
+
+      - name: Generate and publish signed appcast
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          BUILD_NUMBER: ${{ steps.asset.outputs.build }}
+          DMG: ${{ steps.asset.outputs.dmg }}
+        run: |
+          test -n "$SPARKLE_PRIVATE_KEY"
+          feed="$RUNNER_TEMP/feed"
+          updates="$RUNNER_TEMP/updates"
+          mkdir -p "$feed" "$updates"
+
+          git -C "$feed" init
+          git -C "$feed" remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git -C "$feed" ls-remote --exit-code origin refs/heads/gh-pages >/dev/null 2>&1; then
+            git -C "$feed" fetch --depth=1 origin gh-pages
+            git -C "$feed" checkout -B gh-pages FETCH_HEAD
+            if [[ -f "$feed/appcast.xml" ]]; then
+              cp "$feed/appcast.xml" "$updates/appcast.xml"
+            fi
+          else
+            git -C "$feed" checkout --orphan gh-pages
+          fi
+
+          expected_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/Dictator-${VERSION}-universal.dmg"
+          if [[ -f "$feed/appcast.xml" ]] && grep -q "$expected_url" "$feed/appcast.xml"; then
+            signature=$(scripts/release/validate-appcast.sh "$feed/appcast.xml" "$DMG" "$VERSION" "$BUILD_NUMBER" "$expected_url")
+            printf '%s' "$SPARKLE_PRIVATE_KEY" | "$RUNNER_TEMP/sparkle/bin/sign_update" --verify --ed-key-file - "$feed/appcast.xml"
+            printf '%s' "$SPARKLE_PRIVATE_KEY" | "$RUNNER_TEMP/sparkle/bin/sign_update" --verify --ed-key-file - "$DMG" "$signature"
+            echo "Existing appcast entry is valid"
+            exit 0
+          fi
+
+          cp "$DMG" "$updates/"
+          gh release view "$TAG" --json body --jq .body > "$updates/Dictator-${VERSION}-universal.md"
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | "$RUNNER_TEMP/sparkle/bin/generate_appcast" \
+            --ed-key-file - \
+            --download-url-prefix "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/" \
+            --link "https://github.com/${GITHUB_REPOSITORY}" \
+            --embed-release-notes \
+            --maximum-deltas 0 \
+            --maximum-versions 3 \
+            -o "$updates/appcast.xml" \
+            "$updates"
+
+          signature=$(scripts/release/validate-appcast.sh "$updates/appcast.xml" "$DMG" "$VERSION" "$BUILD_NUMBER" "$expected_url")
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | "$RUNNER_TEMP/sparkle/bin/sign_update" --verify --ed-key-file - "$updates/appcast.xml"
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | "$RUNNER_TEMP/sparkle/bin/sign_update" --verify --ed-key-file - "$DMG" "$signature"
+
+          cp "$updates/appcast.xml" "$feed/appcast.xml"
+          touch "$feed/.nojekyll"
+          git -C "$feed" add appcast.xml .nojekyll
+          if git -C "$feed" diff --cached --quiet; then
+            echo "Appcast already up to date"
+            exit 0
+          fi
+          git -C "$feed" config user.name "github-actions[bot]"
+          git -C "$feed" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$feed" commit -m "Update Dictator appcast for $TAG"
+          git -C "$feed" push origin HEAD:gh-pages
+
+  homebrew:
+    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
+    runs-on: macos-15
+    environment: release
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Resolve published release
+        id: meta
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          DISPATCH_TAG: ${{ inputs.tag }}
+        run: |
+          tag=${EVENT_TAG:-$DISPATCH_TAG}
+          release=$(gh release view "$tag" --json isDraft,isPrerelease,tagName)
+          [[ $(jq -r .isDraft <<<"$release") == false ]]
+          [[ $(jq -r .isPrerelease <<<"$release") == false ]]
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Bootstrap or bump cask
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          test -n "$TAP_TOKEN"
+          mkdir -p "$RUNNER_TEMP/release-assets"
+          gh release download "$TAG" --pattern SHA256SUMS.txt --dir "$RUNNER_TEMP/release-assets"
+          sha256=$(awk '{print $1}' "$RUNNER_TEMP/release-assets/SHA256SUMS.txt")
+
+          brew tap amalshaji/taps
+          tap_dir=$(brew --repository amalshaji/taps)
+          git -C "$tap_dir" config user.name "github-actions[bot]"
+          git -C "$tap_dir" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if [[ -f "$tap_dir/Casks/dictator.rb" ]]; then
+            brew bump-cask-pr \
+              --version="$VERSION" \
+              --write-only \
+              --commit \
+              --no-audit \
+              amalshaji/taps/dictator
+          else
+            mkdir -p "$tap_dir/Casks"
+            scripts/release/render-homebrew-cask.sh "$VERSION" "$sha256" > "$tap_dir/Casks/dictator.rb"
+            git -C "$tap_dir" add Casks/dictator.rb
+            git -C "$tap_dir" commit -m "Add Dictator $VERSION cask"
+          fi
+
+          brew style amalshaji/taps/dictator
+          brew install --cask --force amalshaji/taps/dictator
+          test -d /Applications/Dictator.app
+          if /usr/bin/xattr -p com.apple.quarantine /Applications/Dictator.app >/dev/null 2>&1; then
+            echo "Dictator.app is still quarantined" >&2
+            exit 1
+          fi
+          brew uninstall --cask dictator
+
+          git -C "$tap_dir" remote set-url origin "https://x-access-token:${TAP_TOKEN}@github.com/amalshaji/homebrew-taps.git"
+          git -C "$tap_dir" push origin HEAD:main
