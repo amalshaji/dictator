@@ -13,6 +13,7 @@
 		069118DC15115B987A15FF10 /* OpenAICompatibleCleanupProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A0B6F1005DA2FDA21D5A10C /* OpenAICompatibleCleanupProvider.swift */; };
 		1045D7C095B88C52DCFCBDFE /* GroqSTTProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E2BC492E2E2611C70891D90 /* GroqSTTProvider.swift */; };
 		1134B9A344A7F34735F9D1BC /* LocalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE6035F53F24EF8037CDD9AF /* LocalStore.swift */; };
+		11904835DEE27E148593D70A /* ClipboardPaster.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5177081DDA6B8B9C8E75267B /* ClipboardPaster.swift */; };
 		11C04441902F55058565D8CF /* CleanupSafetyValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12C18ACB4C15683A2DF27C1C /* CleanupSafetyValidator.swift */; };
 		14A8ACD6FD0FF382CFF21B42 /* ShortcutRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4E262FFC8B5360C0A61133D /* ShortcutRecorder.swift */; };
 		22CCC7ED379C5BC47CAEAAD1 /* LocalStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53D99BAFC30A6F72735CB4B4 /* LocalStoreTests.swift */; };
@@ -39,7 +40,6 @@
 		A0B378E8E84364D17E3EB2FF /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F0C8D622A74DCFF2D223C32 /* AudioRecorder.swift */; };
 		A7A189ABC847BBA226C81D56 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1516983F9B4D83DC8588AE4 /* Assets.xcassets */; };
 		AF1515E87707FCA1626F3F8D /* CleanupCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F92A436C3DD8B4A45316A8E9 /* CleanupCoordinator.swift */; };
-		B19D4A6E91A94E94B2A12301 /* ClipboardPaster.swift in Sources */ = {isa = PBXBuildFile; fileRef = B19D4A6E91A94E94B2A12302 /* ClipboardPaster.swift */; };
 		B2DFFD6CD43DBA9B18A37301 /* HotkeyMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22EAD6EF30C05E4F398325C0 /* HotkeyMonitor.swift */; };
 		B47D4061DBC516990EDA7920 /* ProviderContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3864A89C5AE07FEA5AC22F91 /* ProviderContractTests.swift */; };
 		BC76D9FA70E73735DEEE669F /* ProvidersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BC2946D97FB74D99732080D /* ProvidersView.swift */; };
@@ -144,6 +144,7 @@
 		3864A89C5AE07FEA5AC22F91 /* ProviderContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderContractTests.swift; sourceTree = "<group>"; };
 		3C842084D491B697791F6ED1 /* FloatingHUD.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingHUD.swift; sourceTree = "<group>"; };
 		4D3BCE5B8674726D3FB4D6F3 /* DictatorCore.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = DictatorCore.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		5177081DDA6B8B9C8E75267B /* ClipboardPaster.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardPaster.swift; sourceTree = "<group>"; };
 		53D99BAFC30A6F72735CB4B4 /* LocalStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalStoreTests.swift; sourceTree = "<group>"; };
 		58AC81E5B5340A692F7DD0F6 /* CloudflareSTTProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudflareSTTProvider.swift; sourceTree = "<group>"; };
 		592F98F88C6DCE1891B2A2C1 /* Dictator.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Dictator.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -161,7 +162,6 @@
 		A1516983F9B4D83DC8588AE4 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A2177B09D0A361293F057AEB /* DictatorIntegrationTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DictatorIntegrationTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B4E649F883F224BD1E3D28A4 /* GladiaSTTProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GladiaSTTProvider.swift; sourceTree = "<group>"; };
-		B19D4A6E91A94E94B2A12302 /* ClipboardPaster.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardPaster.swift; sourceTree = "<group>"; };
 		B65298E989CE976B8AC87D24 /* ProviderRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderRegistry.swift; sourceTree = "<group>"; };
 		BA2E710185E50EE29D648637 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		BE740544FE4EDA920D782C59 /* StylesSnippetsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StylesSnippetsView.swift; sourceTree = "<group>"; };
@@ -336,11 +336,11 @@
 			isa = PBXGroup;
 			children = (
 				C9CAFBE630B82E2DB2683D43 /* AccessibilityInserter.swift */,
-				B19D4A6E91A94E94B2A12302 /* ClipboardPaster.swift */,
 				BA2E710185E50EE29D648637 /* AppModel.swift */,
 				2A75D9708D8EC111D1EBA22B /* AppUpdater.swift */,
 				A1516983F9B4D83DC8588AE4 /* Assets.xcassets */,
 				0F0C8D622A74DCFF2D223C32 /* AudioRecorder.swift */,
+				5177081DDA6B8B9C8E75267B /* ClipboardPaster.swift */,
 				D897F9B1FF3DAEE510FBFC5F /* DesignSystem.swift */,
 				7F24BA3CFD7AA9EF3829E8EE /* Dictator.entitlements */,
 				F0B42911F4E7426DDEF2CFA1 /* DictatorApp.swift */,
@@ -562,10 +562,10 @@
 			buildActionMask = 2147483647;
 			files = (
 				F82BEA1ADB238D21499D4FA6 /* AccessibilityInserter.swift in Sources */,
-				B19D4A6E91A94E94B2A12301 /* ClipboardPaster.swift in Sources */,
 				BF995194E3386FE8DE6C5E32 /* AppModel.swift in Sources */,
 				F51BD26F2CE1DBEAB9022553 /* AppUpdater.swift in Sources */,
 				A0B378E8E84364D17E3EB2FF /* AudioRecorder.swift in Sources */,
+				11904835DEE27E148593D70A /* ClipboardPaster.swift in Sources */,
 				E5CDA8989C2503893C03952B /* DesignSystem.swift in Sources */,
 				9E9E6120943F6218F2D4D304 /* DictatorApp.swift in Sources */,
 				4BAFA96E63EFB004950D3B96 /* FloatingHUD.swift in Sources */,
