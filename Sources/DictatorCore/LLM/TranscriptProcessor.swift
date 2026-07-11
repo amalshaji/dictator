@@ -39,6 +39,7 @@ public struct TranscriptProcessor: Sendable {
 
     public func process(
         rawText: String,
+        selectedText: String? = nil,
         vocabulary: [VocabularyEntry],
         snippets: [SnippetEntry],
         cleanup: TranscriptCleanupConfiguration?
@@ -55,6 +56,7 @@ public struct TranscriptProcessor: Sendable {
             model: cleanup.model,
             credentials: cleanup.credentials,
             vocabulary: vocabulary,
+            selectedText: selectedText,
             styleInstruction: cleanup.styleInstruction
         )
         return ProcessedTranscript(finalText: outcome.text, cleanupOutcome: outcome)

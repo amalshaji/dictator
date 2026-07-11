@@ -35,7 +35,7 @@ public struct GeminiCleanupProvider: CleanupLLMProvider {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let body = RequestBody(
             systemInstruction: .init(parts: [.init(text: CleanupPrompt.system(vocabulary: cleanup.vocabulary, styleInstruction: cleanup.styleInstruction))]),
-            contents: [.init(role: "user", parts: [.init(text: cleanup.transcript)])],
+            contents: [.init(role: "user", parts: [.init(text: try CleanupPrompt.user(request: cleanup))])],
             generationConfig: .init(temperature: 0, responseMimeType: "application/json")
         )
         request.httpBody = try JSONEncoder().encode(body)
@@ -47,9 +47,10 @@ public struct GeminiCleanupProvider: CleanupLLMProvider {
               let parsed = try? JSONDecoder().decode(CleanedPayload.self, from: contentData) else {
             throw ProviderError.invalidResponse
         }
-        try CleanupSafetyValidator.validate(raw: cleanup.transcript, cleaned: parsed.text, vocabulary: cleanup.vocabulary)
+        try CleanupSafetyValidator.validate(request: cleanup, intent: parsed.intent, cleaned: parsed.text)
         return CleanupResult(
             text: parsed.text,
+            intent: parsed.intent,
             provider: .gemini,
             model: model,
             inputTokens: payload.usageMetadata?.promptTokenCount,
@@ -75,5 +76,5 @@ public struct GeminiCleanupProvider: CleanupLLMProvider {
         struct Part: Decodable { let text: String? }
         struct Usage: Decodable { let promptTokenCount: Int?; let candidatesTokenCount: Int? }
     }
-    private struct CleanedPayload: Decodable { let text: String }
+    private struct CleanedPayload: Decodable { let intent: CleanupIntent; let text: String }
 }

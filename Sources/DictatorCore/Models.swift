@@ -139,26 +139,48 @@ public struct ProviderMetadata: Identifiable, Equatable, Sendable {
 
 public struct CleanupRequest: Equatable, Sendable {
     public var transcript: String
+    public var selectedText: String?
     public var vocabulary: [VocabularyEntry]
     public var styleInstruction: String?
 
-    public init(transcript: String, vocabulary: [VocabularyEntry] = [], styleInstruction: String? = nil) {
+    public init(
+        transcript: String,
+        selectedText: String? = nil,
+        vocabulary: [VocabularyEntry] = [],
+        styleInstruction: String? = nil
+    ) {
         self.transcript = transcript
+        self.selectedText = selectedText
         self.vocabulary = vocabulary
         self.styleInstruction = styleInstruction
     }
 }
 
+public enum CleanupIntent: String, Codable, Equatable, Sendable {
+    case transcription
+    case transformation
+}
+
 public struct CleanupResult: Equatable, Sendable {
     public var text: String
+    public var intent: CleanupIntent
     public var provider: ProviderKind
     public var model: String
     public var inputTokens: Int?
     public var outputTokens: Int?
     public var latency: TimeInterval
 
-    public init(text: String, provider: ProviderKind, model: String, inputTokens: Int? = nil, outputTokens: Int? = nil, latency: TimeInterval) {
+    public init(
+        text: String,
+        intent: CleanupIntent = .transcription,
+        provider: ProviderKind,
+        model: String,
+        inputTokens: Int? = nil,
+        outputTokens: Int? = nil,
+        latency: TimeInterval
+    ) {
         self.text = text
+        self.intent = intent
         self.provider = provider
         self.model = model
         self.inputTokens = inputTokens

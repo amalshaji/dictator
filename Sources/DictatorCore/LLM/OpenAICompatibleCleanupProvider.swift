@@ -50,7 +50,7 @@ public struct OpenAICompatibleCleanupProvider: CleanupLLMProvider {
             model: model,
             messages: [
                 .init(role: "system", content: CleanupPrompt.system(vocabulary: cleanup.vocabulary, styleInstruction: cleanup.styleInstruction)),
-                .init(role: "user", content: cleanup.transcript)
+                .init(role: "user", content: try CleanupPrompt.user(request: cleanup))
             ],
             temperature: 0,
             responseFormat: .init(type: "json_object")
@@ -64,9 +64,10 @@ public struct OpenAICompatibleCleanupProvider: CleanupLLMProvider {
               let cleaned = try? JSONDecoder().decode(CleanedPayload.self, from: contentData) else {
             throw ProviderError.invalidResponse
         }
-        try CleanupSafetyValidator.validate(raw: cleanup.transcript, cleaned: cleaned.text, vocabulary: cleanup.vocabulary)
+        try CleanupSafetyValidator.validate(request: cleanup, intent: cleaned.intent, cleaned: cleaned.text)
         return CleanupResult(
             text: cleaned.text.trimmingCharacters(in: .whitespacesAndNewlines),
+            intent: cleaned.intent,
             provider: metadata.kind,
             model: model,
             inputTokens: payload.usage?.promptTokens,
@@ -107,7 +108,7 @@ public struct OpenAICompatibleCleanupProvider: CleanupLLMProvider {
             enum CodingKeys: String, CodingKey { case promptTokens = "prompt_tokens"; case completionTokens = "completion_tokens" }
         }
     }
-    private struct CleanedPayload: Decodable { let text: String }
+    private struct CleanedPayload: Decodable { let intent: CleanupIntent; let text: String }
 }
 
 public extension OpenAICompatibleCleanupProvider {

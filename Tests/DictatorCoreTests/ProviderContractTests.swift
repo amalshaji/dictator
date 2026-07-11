@@ -65,7 +65,7 @@ final class ProviderContractTests: XCTestCase {
     }
 
     func testOpenAICompatibleCleanupParsesJSONAndUsage() async throws {
-        let response = #"{"choices":[{"message":{"content":"{\"text\":\"Ship Dictator 2.4 at https://example.com.\"}"}}],"usage":{"prompt_tokens":20,"completion_tokens":9}}"#
+        let response = #"{"choices":[{"message":{"content":"{\"intent\":\"transcription\",\"text\":\"Ship Dictator 2.4 at https://example.com.\"}"}}],"usage":{"prompt_tokens":20,"completion_tokens":9}}"#
         let transport = MockTransport { _ in (response.data(using: .utf8)!, 200) }
         let provider = OpenAICompatibleCleanupProvider(
             kind: .groq,
@@ -81,6 +81,32 @@ final class ProviderContractTests: XCTestCase {
         )
         XCTAssertEqual(result.text, "Ship Dictator 2.4 at https://example.com.")
         XCTAssertEqual(result.inputTokens, 20)
+    }
+
+    func testOpenAICompatibleCleanupRoutesSelectedTextTransformation() async throws {
+        let response = #"{"choices":[{"message":{"content":"{\"intent\":\"transformation\",\"text\":\"hello world\"}"}}]}"#
+        let transport = MockTransport { request in
+            let body = try XCTUnwrap(request.httpBody.flatMap { String(data: $0, encoding: .utf8) })
+            XCTAssertTrue(body.contains("make it lowercase"))
+            XCTAssertTrue(body.contains("HELLO WORLD"))
+            return (response.data(using: .utf8)!, 200)
+        }
+        let provider = OpenAICompatibleCleanupProvider(
+            kind: .groq,
+            displayName: "Groq",
+            defaultModel: "test",
+            defaultBaseURL: URL(string: "https://example.com/v1")!,
+            transport: transport
+        )
+
+        let result = try await provider.clean(
+            request: .init(transcript: "make it lowercase", selectedText: "HELLO WORLD"),
+            model: "test",
+            credentials: .init(apiKey: "test")
+        )
+
+        XCTAssertEqual(result.intent, .transformation)
+        XCTAssertEqual(result.text, "hello world")
     }
 
     func testCustomOpenAIProviderRequiresAnAbsoluteBaseURL() async {

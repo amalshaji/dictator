@@ -126,6 +126,7 @@ final class AppModel: ObservableObject {
             if cleanup != nil { hud.show(.cleaning) }
             let processed = await transcriptProcessor.process(
                 rawText: raw.text,
+                selectedText: focusedTarget?.selectedText,
                 vocabulary: data.vocabulary,
                 snippets: data.snippets,
                 cleanup: cleanup

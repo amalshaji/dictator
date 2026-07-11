@@ -39,14 +39,22 @@ final class AppBehaviorTests: XCTestCase {
 
         let target = AccessibilityTargetResolver.resolve(
             application: fixture.application,
-            candidates: [.init(processIdentifier: fixture.targetPID, editableElement: fixture.fieldElement, isSecure: false)]
+            candidates: [
+                .init(
+                    processIdentifier: fixture.targetPID,
+                    editableElement: fixture.fieldElement,
+                    selectedText: "SELECTED TEXT",
+                    isSecure: false
+                )
+            ]
         )
 
-        guard case .field(let application, let element) = target else {
+        guard case .field(let application, let element, let selectedText) = target else {
             return XCTFail("Expected an exact field target")
         }
         XCTAssertEqual(application.processIdentifier, fixture.targetPID)
         XCTAssertTrue(CFEqual(element, fixture.fieldElement))
+        XCTAssertEqual(selectedText, "SELECTED TEXT")
     }
 
     func testResolverUsesApplicationFallbackWithoutAllowlist() {
@@ -64,7 +72,7 @@ final class AppBehaviorTests: XCTestCase {
         let fixture = InsertionFixture()
         let target = AccessibilityTargetResolver.resolve(
             application: fixture.application,
-            candidates: [.init(processIdentifier: fixture.targetPID, editableElement: fixture.fieldElement, isSecure: true)]
+            candidates: [.init(processIdentifier: fixture.targetPID, editableElement: fixture.fieldElement, selectedText: nil, isSecure: true)]
         )
 
         let result = await fixture.inserter.insert("secret", into: target)
@@ -78,7 +86,7 @@ final class AppBehaviorTests: XCTestCase {
 
         let target = AccessibilityTargetResolver.resolve(
             application: fixture.application,
-            candidates: [.init(processIdentifier: 777, editableElement: fixture.fieldElement, isSecure: true)]
+            candidates: [.init(processIdentifier: 777, editableElement: fixture.fieldElement, selectedText: nil, isSecure: true)]
         )
 
         guard case .application = target else {
@@ -123,7 +131,7 @@ final class AppBehaviorTests: XCTestCase {
 
         let result = await fixture.inserter.insert(
             "exact",
-            into: .field(application: fixture.application, element: fixture.fieldElement)
+            into: .field(application: fixture.application, element: fixture.fieldElement, selectedText: nil)
         )
 
         XCTAssertEqual(result, .pasteCommandPosted(.capturedField))

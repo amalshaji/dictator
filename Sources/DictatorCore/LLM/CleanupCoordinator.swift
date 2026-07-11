@@ -1,6 +1,8 @@
 import Foundation
 
 public struct CleanupCoordinator: Sendable {
+    private static let maximumSelectedTextLength = 20_000
+
     public init() {}
 
     public func cleanOrFallback(
@@ -9,11 +11,20 @@ public struct CleanupCoordinator: Sendable {
         model: String,
         credentials: ProviderCredentials,
         vocabulary: [VocabularyEntry],
+        selectedText: String? = nil,
         styleInstruction: String? = nil,
         timeout: Duration = .milliseconds(1_500)
     ) async -> CleanupOutcome {
-        let request = CleanupRequest(transcript: rawText, vocabulary: vocabulary, styleInstruction: styleInstruction)
+        let request = CleanupRequest(
+            transcript: rawText,
+            selectedText: selectedText,
+            vocabulary: vocabulary,
+            styleInstruction: styleInstruction
+        )
         do {
+            guard request.selectedText?.count ?? 0 <= Self.maximumSelectedTextLength else {
+                throw ProviderError.cleanupRejected("selected text is too long")
+            }
             let result = try await withThrowingTaskGroup(of: CleanupResult.self) { group in
                 group.addTask { try await provider.clean(request: request, model: model, credentials: credentials) }
                 group.addTask {
@@ -26,7 +37,7 @@ public struct CleanupCoordinator: Sendable {
             }
             return .cleaned(result)
         } catch {
-            return .fallback(rawText, reason: error.localizedDescription)
+            return .fallback(selectedText ?? rawText, reason: error.localizedDescription)
         }
     }
 }

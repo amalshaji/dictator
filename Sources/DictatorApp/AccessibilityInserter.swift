@@ -9,18 +9,23 @@ struct ApplicationTarget {
 }
 
 enum FocusedTarget {
-    case field(application: ApplicationTarget, element: AXUIElement)
+    case field(application: ApplicationTarget, element: AXUIElement, selectedText: String?)
     case application(ApplicationTarget)
     case blocked(application: ApplicationTarget, reason: String)
 
     var application: ApplicationTarget {
         switch self {
-        case .field(let application, _), .application(let application), .blocked(let application, _):
+        case .field(let application, _, _), .application(let application), .blocked(let application, _):
             application
         }
     }
 
     var bundleIdentifier: String? { application.bundleIdentifier }
+
+    var selectedText: String? {
+        guard case .field(_, _, let selectedText) = self else { return nil }
+        return selectedText
+    }
 }
 
 enum PasteDestination: Equatable {
@@ -44,6 +49,7 @@ enum InsertionResult: Equatable {
 struct TargetCandidate {
     let processIdentifier: pid_t
     let editableElement: AXUIElement?
+    let selectedText: String?
     let isSecure: Bool
 }
 
@@ -98,8 +104,9 @@ struct AccessibilityTargetResolver {
         if applicationCandidates.contains(where: \.isSecure) {
             return .blocked(application: application, reason: "secure fields are never modified")
         }
-        if let element = applicationCandidates.lazy.compactMap(\.editableElement).first {
-            return .field(application: application, element: element)
+        if let candidate = applicationCandidates.first(where: { $0.editableElement != nil }),
+           let element = candidate.editableElement {
+            return .field(application: application, element: element, selectedText: candidate.selectedText)
         }
         return .application(application)
     }
@@ -107,11 +114,22 @@ struct AccessibilityTargetResolver {
     private func candidate(from element: AXUIElement) -> TargetCandidate? {
         var candidatePID: pid_t = 0
         guard AXUIElementGetPid(element, &candidatePID) == .success else { return nil }
+        let editableElement = firstAncestor(from: element, matching: isEditable)
         return TargetCandidate(
             processIdentifier: candidatePID,
-            editableElement: firstAncestor(from: element, matching: isEditable),
+            editableElement: editableElement,
+            selectedText: editableElement.flatMap(selectedText(in:)),
             isSecure: firstAncestor(from: element, matching: isSecure) != nil
         )
+    }
+
+    private func selectedText(in element: AXUIElement) -> String? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString, &value) == .success,
+              let text = value as? String,
+              !text.isEmpty
+        else { return nil }
+        return text
     }
 
     private func focusedElement(in root: AXUIElement) -> AXUIElement? {
@@ -215,7 +233,7 @@ final class AccessibilityInserter {
         guard let target else { return .privateClipboard("no editable field was focused") }
 
         switch target {
-        case .field(let application, let element):
+        case .field(let application, let element, _):
             guard environment.isRunning(application.processIdentifier) else {
                 return .privateClipboard("the target application is no longer running")
             }
