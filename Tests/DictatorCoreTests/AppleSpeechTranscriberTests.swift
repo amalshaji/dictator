@@ -38,6 +38,16 @@ final class AppleSpeechTranscriberTests: XCTestCase {
         XCTAssertEqual(result.model, AppleTranscriptionEngine.dictationTranscriber.rawValue)
     }
 
+    func testReadinessUsesInstalledFallbackBeforeRequiringPreferredAssetDownload() async {
+        let runtime = FakeAppleSpeechRuntime(
+            statuses: [.speechTranscriber: .supported, .dictationTranscriber: .installed]
+        )
+
+        let readiness = await AppleSpeechTranscriber(runtime: runtime).readiness(for: "en_US")
+
+        XCTAssertEqual(readiness, .ready(.init(identifier: "en_US", engine: .dictationTranscriber)))
+    }
+
     func testReadinessReportsUnsupportedOnlyAfterTryingBothEngines() async {
         let runtime = FakeAppleSpeechRuntime(
             statuses: [.speechTranscriber: .unsupported, .dictationTranscriber: .unsupported]

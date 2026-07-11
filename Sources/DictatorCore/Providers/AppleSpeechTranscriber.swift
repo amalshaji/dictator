@@ -73,13 +73,15 @@ public actor AppleSpeechTranscriber: LocalSpeechTranscribing {
         guard !candidates.isEmpty else {
             return .unavailable("Apple speech transcription does not support this language on this Mac.")
         }
+        var downloadable: AppleSpeechLocale?
         for candidate in candidates {
             switch await runtime.assetStatus(for: candidate) {
             case .installed: return .ready(candidate)
-            case .supported, .downloading: return .downloadRequired(candidate)
+            case .supported, .downloading: downloadable = downloadable ?? candidate
             case .unsupported: continue
             }
         }
+        if let downloadable { return .downloadRequired(downloadable) }
         return .unavailable("The selected Apple speech model is unavailable on this Mac.")
     }
 
@@ -91,12 +93,18 @@ public actor AppleSpeechTranscriber: LocalSpeechTranscribing {
         guard !candidates.isEmpty else {
             return .unavailable("Apple speech transcription does not support this language on this Mac.")
         }
-        var lastError: Error?
+        var statuses: [(AppleSpeechLocale, AppleSpeechAssetStatus)] = []
         for candidate in candidates {
-            switch await runtime.assetStatus(for: candidate) {
-            case .installed:
+            let status = await runtime.assetStatus(for: candidate)
+            if status == .installed {
                 progress(1)
                 return .ready(candidate)
+            }
+            statuses.append((candidate, status))
+        }
+        var lastError: Error?
+        for (candidate, status) in statuses {
+            switch status {
             case .unsupported:
                 continue
             case .supported, .downloading:
@@ -110,6 +118,8 @@ public actor AppleSpeechTranscriber: LocalSpeechTranscribing {
                 } catch {
                     lastError = error
                 }
+            case .installed:
+                break
             }
         }
         if let lastError { throw lastError }
