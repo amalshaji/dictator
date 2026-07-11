@@ -15,69 +15,105 @@ public protocol LocalSpeechTranscribing: Sendable {
     ) async throws -> TranscriptionResult
 }
 
+@available(macOS 26.0, *)
+enum AppleSpeechAssetStatus: Equatable, Sendable {
+    case installed
+    case supported
+    case downloading
+    case unsupported
+}
+
+@available(macOS 26.0, *)
+struct AppleSpeechSegment: Equatable, Sendable {
+    let text: String
+    let isFinal: Bool
+}
+
+@available(macOS 26.0, *)
+protocol AppleSpeechRuntime: Sendable {
+    func supportedLocaleIdentifiers(for engine: AppleTranscriptionEngine) async -> [String]
+    func equivalentLocaleIdentifier(to identifier: String, for engine: AppleTranscriptionEngine) async -> String?
+    func assetStatus(for locale: AppleSpeechLocale) async -> AppleSpeechAssetStatus
+    func installAssets(for locale: AppleSpeechLocale, progress: @escaping @Sendable (Double) -> Void) async throws
+    func transcribe(
+        audio: RecordedAudio,
+        locale: AppleSpeechLocale,
+        vocabulary: [VocabularyEntry]
+    ) async throws -> [AppleSpeechSegment]
+}
+
 #if canImport(Speech)
 import Speech
 
 @available(macOS 26.0, *)
 public actor AppleSpeechTranscriber: LocalSpeechTranscribing {
-    public init() {}
+    private let runtime: any AppleSpeechRuntime
+
+    public init() {
+        runtime = SystemAppleSpeechRuntime()
+    }
+
+    init(runtime: any AppleSpeechRuntime) {
+        self.runtime = runtime
+    }
 
     public func availableLocales() async -> [AppleSpeechLocale] {
         var locales: [String: AppleSpeechLocale] = [:]
-        for locale in await DictationTranscriber.supportedLocales {
-            locales[locale.identifier] = .init(identifier: locale.identifier, engine: .dictationTranscriber)
+        for identifier in await runtime.supportedLocaleIdentifiers(for: .dictationTranscriber) {
+            locales[identifier] = .init(identifier: identifier, engine: .dictationTranscriber)
         }
-        if SpeechTranscriber.isAvailable {
-            for locale in await SpeechTranscriber.supportedLocales {
-                locales[locale.identifier] = .init(identifier: locale.identifier, engine: .speechTranscriber)
-            }
+        for identifier in await runtime.supportedLocaleIdentifiers(for: .speechTranscriber) {
+            locales[identifier] = .init(identifier: identifier, engine: .speechTranscriber)
         }
         return locales.values.sorted { $0.identifier.localizedStandardCompare($1.identifier) == .orderedAscending }
     }
 
     public func readiness(for localeIdentifier: String) async -> AppleSpeechReadiness {
-        guard let resolution = await resolve(localeIdentifier) else {
+        let candidates = await candidates(for: localeIdentifier)
+        guard !candidates.isEmpty else {
             return .unavailable("Apple speech transcription does not support this language on this Mac.")
         }
-        switch await AssetInventory.status(forModules: [resolution.module]) {
-        case .installed:
-            return .ready(resolution.locale)
-        case .supported, .downloading:
-            return .downloadRequired(resolution.locale)
-        case .unsupported:
-            return .unavailable("The selected Apple speech model is unavailable on this Mac.")
-        @unknown default:
-            return .unavailable("The Apple speech model reported an unknown availability state.")
+        for candidate in candidates {
+            switch await runtime.assetStatus(for: candidate) {
+            case .installed: return .ready(candidate)
+            case .supported, .downloading: return .downloadRequired(candidate)
+            case .unsupported: continue
+            }
         }
+        return .unavailable("The selected Apple speech model is unavailable on this Mac.")
     }
 
     public func installAssets(
         for localeIdentifier: String,
         progress: @escaping @Sendable (Double) -> Void
     ) async throws -> AppleSpeechReadiness {
-        guard let resolution = await resolve(localeIdentifier) else {
+        let candidates = await candidates(for: localeIdentifier)
+        guard !candidates.isEmpty else {
             return .unavailable("Apple speech transcription does not support this language on this Mac.")
         }
-        if case .installed = await AssetInventory.status(forModules: [resolution.module]) {
-            progress(1)
-            return .ready(resolution.locale)
-        }
-        guard let request = try await AssetInventory.assetInstallationRequest(supporting: [resolution.module]) else {
-            return await readiness(for: localeIdentifier)
-        }
-
-        progress(0)
-        let monitor = Task {
-            while !Task.isCancelled, request.progress.fractionCompleted < 1 {
-                progress(request.progress.fractionCompleted)
-                try? await Task.sleep(for: .milliseconds(100))
+        var lastError: Error?
+        for candidate in candidates {
+            switch await runtime.assetStatus(for: candidate) {
+            case .installed:
+                progress(1)
+                return .ready(candidate)
+            case .unsupported:
+                continue
+            case .supported, .downloading:
+                do {
+                    try await runtime.installAssets(for: candidate, progress: progress)
+                    if case .installed = await runtime.assetStatus(for: candidate) {
+                        return .ready(candidate)
+                    }
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    lastError = error
+                }
             }
         }
-        defer { monitor.cancel() }
-        try await request.downloadAndInstall()
-        progress(1)
-
-        return await readiness(for: resolution.locale.identifier)
+        if let lastError { throw lastError }
+        return .unavailable("The selected Apple speech model is unavailable on this Mac.")
     }
 
     public func transcribe(
@@ -85,105 +121,44 @@ public actor AppleSpeechTranscriber: LocalSpeechTranscribing {
         localeIdentifier: String,
         vocabulary: [VocabularyEntry]
     ) async throws -> TranscriptionResult {
-        guard let resolution = await resolve(localeIdentifier) else {
+        let candidates = await candidates(for: localeIdentifier)
+        guard !candidates.isEmpty else {
             throw ProviderError.unsupported("Apple speech transcription does not support this language on this Mac.")
         }
-        guard case .installed = await AssetInventory.status(forModules: [resolution.module]) else {
-            throw ProviderError.invalidConfiguration("Download the selected Apple speech model before dictating.")
-        }
-
         let started = ContinuousClock.now
-        let sourceBuffer = try Self.pcmBuffer(from: audio.wavData)
-        let result: String
-        switch resolution.locale.engine {
-        case .speechTranscriber:
-            let transcriber = SpeechTranscriber(locale: resolution.foundationLocale, preset: .transcription)
-            result = try await analyze(sourceBuffer, with: transcriber, context: .init())
-        case .dictationTranscriber:
-            let transcriber = DictationTranscriber(locale: resolution.foundationLocale, preset: .shortDictation)
-            let context = AnalysisContext()
-            context.contextualStrings[.general] = Array(
-                vocabulary.filter(\.isEnabled).map(\.value).filter { !$0.isEmpty }.prefix(100)
-            )
-            result = try await analyze(sourceBuffer, with: transcriber, context: context)
-        }
-
-        let text = result.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { throw ProviderError.emptyTranscript }
-        return TranscriptionResult(
-            text: text,
-            language: resolution.locale.identifier,
-            provider: .appleSpeech,
-            model: resolution.locale.engine.rawValue,
-            latency: seconds(since: started)
-        )
-    }
-
-    private struct Resolution {
-        let locale: AppleSpeechLocale
-        let foundationLocale: Locale
-        let module: any SpeechModule
-    }
-
-    private func resolve(_ identifier: String) async -> Resolution? {
-        let requested = Locale(identifier: identifier)
-        if SpeechTranscriber.isAvailable,
-           let locale = await SpeechTranscriber.supportedLocale(equivalentTo: requested) {
-            let transcriber = SpeechTranscriber(locale: locale, preset: .transcription)
-            return Resolution(
-                locale: .init(identifier: locale.identifier, engine: .speechTranscriber),
-                foundationLocale: locale,
-                module: transcriber
-            )
-        }
-        if let locale = await DictationTranscriber.supportedLocale(equivalentTo: requested) {
-            let transcriber = DictationTranscriber(locale: locale, preset: .shortDictation)
-            return Resolution(
-                locale: .init(identifier: locale.identifier, engine: .dictationTranscriber),
-                foundationLocale: locale,
-                module: transcriber
-            )
-        }
-        return nil
-    }
-
-    private func analyze<T: SpeechModule>(
-        _ sourceBuffer: AVAudioPCMBuffer,
-        with transcriber: T,
-        context: AnalysisContext
-    ) async throws -> String where T.Result: SpeechTextResult {
-        guard let targetFormat = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]) else {
-            throw ProviderError.unsupported("No compatible Apple speech audio format is available.")
-        }
-        let buffer = try Self.convert(sourceBuffer, to: targetFormat)
-        let analyzer = SpeechAnalyzer(modules: [transcriber])
-        try await analyzer.setContext(context)
-        try await analyzer.prepareToAnalyze(in: targetFormat)
-
-        let resultTask = Task<String, Error> {
-            var text = ""
-            for try await result in transcriber.results {
-                guard result.isFinal else { continue }
-                text.append(String(result.transcribedText.characters))
+        var lastError: Error?
+        for candidate in candidates {
+            guard await runtime.assetStatus(for: candidate) == .installed else { continue }
+            do {
+                let segments = try await runtime.transcribe(audio: audio, locale: candidate, vocabulary: vocabulary)
+                let text = segments.filter(\.isFinal).map(\.text).joined()
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { throw ProviderError.emptyTranscript }
+                return TranscriptionResult(
+                    text: text,
+                    language: candidate.identifier,
+                    provider: .appleSpeech,
+                    model: candidate.engine.rawValue,
+                    latency: seconds(since: started)
+                )
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                lastError = error
             }
-            return text
         }
-        let input = AsyncStream<AnalyzerInput> { continuation in
-            continuation.yield(AnalyzerInput(buffer: buffer))
-            continuation.finish()
-        }
-        do {
-            if let lastSample = try await analyzer.analyzeSequence(input) {
-                try await analyzer.finalizeAndFinish(through: lastSample)
-            } else {
-                await analyzer.cancelAndFinishNow()
+        if let lastError { throw lastError }
+        throw ProviderError.invalidConfiguration("Download the selected Apple speech model before dictating.")
+    }
+
+    private func candidates(for identifier: String) async -> [AppleSpeechLocale] {
+        var candidates: [AppleSpeechLocale] = []
+        for engine in [AppleTranscriptionEngine.speechTranscriber, .dictationTranscriber] {
+            if let resolved = await runtime.equivalentLocaleIdentifier(to: identifier, for: engine) {
+                candidates.append(.init(identifier: resolved, engine: engine))
             }
-            return try await resultTask.value
-        } catch {
-            resultTask.cancel()
-            await analyzer.cancelAndFinishNow()
-            throw error
         }
+        return candidates
     }
 
     static func pcmBuffer(from wav: Data) throws -> AVAudioPCMBuffer {
@@ -255,6 +230,137 @@ public actor AppleSpeechTranscriber: LocalSpeechTranscribing {
             throw conversionError ?? ProviderError.invalidConfiguration("Audio conversion failed.")
         }
         return output
+    }
+}
+
+@available(macOS 26.0, *)
+private struct SystemAppleSpeechRuntime: AppleSpeechRuntime {
+    func supportedLocaleIdentifiers(for engine: AppleTranscriptionEngine) async -> [String] {
+        switch engine {
+        case .speechTranscriber:
+            guard SpeechTranscriber.isAvailable else { return [] }
+            return await SpeechTranscriber.supportedLocales.map(\.identifier)
+        case .dictationTranscriber:
+            return await DictationTranscriber.supportedLocales.map(\.identifier)
+        }
+    }
+
+    func equivalentLocaleIdentifier(to identifier: String, for engine: AppleTranscriptionEngine) async -> String? {
+        let requested = Locale(identifier: identifier)
+        switch engine {
+        case .speechTranscriber:
+            guard SpeechTranscriber.isAvailable else { return nil }
+            return await SpeechTranscriber.supportedLocale(equivalentTo: requested)?.identifier
+        case .dictationTranscriber:
+            return await DictationTranscriber.supportedLocale(equivalentTo: requested)?.identifier
+        }
+    }
+
+    func assetStatus(for locale: AppleSpeechLocale) async -> AppleSpeechAssetStatus {
+        switch await AssetInventory.status(forModules: [module(for: locale)]) {
+        case .installed: .installed
+        case .supported: .supported
+        case .downloading: .downloading
+        case .unsupported: .unsupported
+        @unknown default: .unsupported
+        }
+    }
+
+    func installAssets(
+        for locale: AppleSpeechLocale,
+        progress: @escaping @Sendable (Double) -> Void
+    ) async throws {
+        let speechModule = module(for: locale)
+        guard let request = try await AssetInventory.assetInstallationRequest(supporting: [speechModule]) else {
+            return
+        }
+        let monitor = Task {
+            while !Task.isCancelled, request.progress.fractionCompleted < 1 {
+                progress(request.progress.fractionCompleted)
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+        }
+        defer { monitor.cancel() }
+        try await request.downloadAndInstall()
+        progress(1)
+    }
+
+    func transcribe(
+        audio: RecordedAudio,
+        locale: AppleSpeechLocale,
+        vocabulary: [VocabularyEntry]
+    ) async throws -> [AppleSpeechSegment] {
+        let sourceBuffer = try AppleSpeechTranscriber.pcmBuffer(from: audio.wavData)
+        let foundationLocale = Locale(identifier: locale.identifier)
+        switch locale.engine {
+        case .speechTranscriber:
+            return try await analyze(
+                sourceBuffer,
+                with: SpeechTranscriber(locale: foundationLocale, preset: .transcription),
+                context: .init()
+            )
+        case .dictationTranscriber:
+            let context = AnalysisContext()
+            context.contextualStrings[.general] = Array(
+                vocabulary.filter(\.isEnabled).map(\.value).filter { !$0.isEmpty }.prefix(100)
+            )
+            return try await analyze(
+                sourceBuffer,
+                with: DictationTranscriber(locale: foundationLocale, preset: .shortDictation),
+                context: context
+            )
+        }
+    }
+
+    private func module(for locale: AppleSpeechLocale) -> any SpeechModule {
+        let foundationLocale = Locale(identifier: locale.identifier)
+        return switch locale.engine {
+        case .speechTranscriber:
+            SpeechTranscriber(locale: foundationLocale, preset: .transcription)
+        case .dictationTranscriber:
+            DictationTranscriber(locale: foundationLocale, preset: .shortDictation)
+        }
+    }
+
+    private func analyze<T: SpeechModule>(
+        _ sourceBuffer: AVAudioPCMBuffer,
+        with transcriber: T,
+        context: AnalysisContext
+    ) async throws -> [AppleSpeechSegment] where T.Result: SpeechTextResult {
+        guard let targetFormat = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]) else {
+            throw ProviderError.unsupported("No compatible Apple speech audio format is available.")
+        }
+        let buffer = try AppleSpeechTranscriber.convert(sourceBuffer, to: targetFormat)
+        let analyzer = SpeechAnalyzer(modules: [transcriber])
+        try await analyzer.setContext(context)
+        try await analyzer.prepareToAnalyze(in: targetFormat)
+
+        let resultTask = Task<[AppleSpeechSegment], Error> {
+            var segments: [AppleSpeechSegment] = []
+            for try await result in transcriber.results {
+                segments.append(.init(
+                    text: String(result.transcribedText.characters),
+                    isFinal: result.isFinal
+                ))
+            }
+            return segments
+        }
+        let input = AsyncStream<AnalyzerInput> { continuation in
+            continuation.yield(AnalyzerInput(buffer: buffer))
+            continuation.finish()
+        }
+        do {
+            if let lastSample = try await analyzer.analyzeSequence(input) {
+                try await analyzer.finalizeAndFinish(through: lastSample)
+            } else {
+                await analyzer.cancelAndFinishNow()
+            }
+            return try await resultTask.value
+        } catch {
+            resultTask.cancel()
+            await analyzer.cancelAndFinishNow()
+            throw error
+        }
     }
 }
 

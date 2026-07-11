@@ -54,6 +54,7 @@
 		A0B378E8E84364D17E3EB2FF /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F0C8D622A74DCFF2D223C32 /* AudioRecorder.swift */; };
 		A7A189ABC847BBA226C81D56 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1516983F9B4D83DC8588AE4 /* Assets.xcassets */; };
 		A7AD416B3D7EE38CB4C47BCB /* UsageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B6F89CBF5FC56F9FBF8693E /* UsageView.swift */; };
+		AD589EEB15D448ACB88A24D7 /* AppleSpeechTranscriberTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B826F6BCA6BCF634C78F4F2 /* AppleSpeechTranscriberTests.swift */; };
 		AF1515E87707FCA1626F3F8D /* CleanupCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F92A436C3DD8B4A45316A8E9 /* CleanupCoordinator.swift */; };
 		B28B23BCBAB6A091C1A16F9A /* TranscriptDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6956E19C9CBCFD328D1570B6 /* TranscriptDetailView.swift */; };
 		B2DFFD6CD43DBA9B18A37301 /* HotkeyMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22EAD6EF30C05E4F398325C0 /* HotkeyMonitor.swift */; };
@@ -158,6 +159,7 @@
 		12C18ACB4C15683A2DF27C1C /* CleanupSafetyValidator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CleanupSafetyValidator.swift; sourceTree = "<group>"; };
 		132C58396B4BFD90B17D7B18 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		16ACC75ACA325096D12417D3 /* TranscriptUsageModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptUsageModelsTests.swift; sourceTree = "<group>"; };
+		1B826F6BCA6BCF634C78F4F2 /* AppleSpeechTranscriberTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSpeechTranscriberTests.swift; sourceTree = "<group>"; };
 		211061CD507A52C43FC6C6AA /* PricingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PricingService.swift; sourceTree = "<group>"; };
 		22EAD6EF30C05E4F398325C0 /* HotkeyMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyMonitor.swift; sourceTree = "<group>"; };
 		2475B551D38FD38C989AA8E5 /* TranscriptRepairService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptRepairService.swift; sourceTree = "<group>"; };
@@ -259,6 +261,7 @@
 		3A286AE05A74310301432646 /* DictatorCoreTests */ = {
 			isa = PBXGroup;
 			children = (
+				1B826F6BCA6BCF634C78F4F2 /* AppleSpeechTranscriberTests.swift */,
 				00FE43DE1A13FEA653407E7C /* CleanupProcessingTests.swift */,
 				776C266EA9DD718C0DD487F8 /* CoreTests.swift */,
 				53D99BAFC30A6F72735CB4B4 /* LocalStoreTests.swift */,
@@ -605,6 +608,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AD589EEB15D448ACB88A24D7 /* AppleSpeechTranscriberTests.swift in Sources */,
 				2DC038A7A15131623D332F58 /* CleanupProcessingTests.swift in Sources */,
 				01AEDCCF2DA6EA8F2228111A /* CoreTests.swift in Sources */,
 				22CCC7ED379C5BC47CAEAAD1 /* LocalStoreTests.swift in Sources */,
