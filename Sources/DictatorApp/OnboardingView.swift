@@ -1,9 +1,20 @@
 import DictatorCore
 import SwiftUI
 
+enum OnboardingStep: Int, CaseIterable {
+    case welcome
+    case permissions
+    case provider
+    case offlineMode
+    case ready
+
+    var next: Self? { Self(rawValue: rawValue + 1) }
+    var previous: Self? { Self(rawValue: rawValue - 1) }
+}
+
 struct OnboardingView: View {
     @ObservedObject var model: AppModel
-    @State private var step = 0
+    @State private var step: OnboardingStep = .welcome
     @State private var provider: ProviderKind = .groq
     @State private var apiKey = ""
     @State private var accountID = ""
@@ -20,10 +31,11 @@ struct OnboardingView: View {
                 progress
                 Group {
                     switch step {
-                    case 0: welcome
-                    case 1: permissions
-                    case 2: providerSetup
-                    default: ready
+                    case .welcome: welcome
+                    case .permissions: permissions
+                    case .provider: providerSetup
+                    case .offlineMode: offlineModeSetup
+                    case .ready: ready
                     }
                 }
                 .frame(maxWidth: 620, maxHeight: .infinity)
@@ -31,10 +43,10 @@ struct OnboardingView: View {
             }
             .padding(38)
         }
-        .onReceive(timer) { _ in if step == 1 { model.refreshPermissionState() } }
+        .onReceive(timer) { _ in if step == .permissions { model.refreshPermissionState() } }
         .onAppear { provider = model.selectedSTT }
         .onChange(of: step) { _, value in
-            guard value == 3 else { return }
+            guard value == .ready else { return }
             Task { @MainActor in
                 try? await Task.sleep(for: .milliseconds(250))
                 scratchFocused = true
@@ -44,9 +56,9 @@ struct OnboardingView: View {
 
     private var progress: some View {
         HStack(spacing: 7) {
-            ForEach(0..<4, id: \.self) { index in
-                Capsule().fill(index <= step ? DictatorDesign.signalInk : DictatorDesign.fog)
-                    .frame(width: index == step ? 34 : 12, height: 5)
+            ForEach(OnboardingStep.allCases, id: \.rawValue) { item in
+                Capsule().fill(item.rawValue <= step.rawValue ? DictatorDesign.signalInk : DictatorDesign.fog)
+                    .frame(width: item == step ? 34 : 12, height: 5)
             }
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -91,7 +103,7 @@ struct OnboardingView: View {
                 }
             }
             if provider == .appleSpeech {
-                appleSpeechSetup
+                AppleSpeechModelSetupView(model: model)
             } else {
                 SecureField("API key", text: $apiKey).textFieldStyle(DictatorTextFieldStyle())
                 if provider == .cloudflare { TextField("Cloudflare account ID", text: $accountID).textFieldStyle(DictatorTextFieldStyle()) }
@@ -105,31 +117,29 @@ struct OnboardingView: View {
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var appleSpeechSetup: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if !model.appleSpeech.state.locales.isEmpty {
-                DictatorMenuField(
-                    label: "Language",
-                    options: model.appleSpeech.state.locales.map {
-                        .init(
-                            value: $0.identifier,
-                            label: Locale.current.localizedString(forIdentifier: $0.identifier) ?? $0.identifier
-                        )
-                    },
-                    selection: Binding(
-                        get: { model.appleSpeech.state.selectedLocaleIdentifier },
-                        set: { model.appleSpeech.selectLocale($0) }
-                    )
-                )
+    private var offlineModeSetup: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Keep dictating offline").font(.dictatorDisplay(30))
+            Text("Dictator can fall back to Apple On-Device Speech when your cloud provider can’t connect. The language model is downloaded and managed by macOS.")
+                .font(.dictatorBody(14)).foregroundStyle(.secondary).lineSpacing(3)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Audio stays on this Mac", systemImage: "lock.shield")
+                Label("Vocabulary and snippets still apply", systemImage: "text.badge.checkmark")
+                Label("Cloud cleanup and writing styles pause offline", systemImage: "wand.and.stars.inverse")
             }
-            Text(model.appleSpeech.statusText)
-                .font(.dictatorBody(12, weight: .medium))
-                .foregroundStyle(model.appleSpeech.state.readiness.isReady ? DictatorDesign.focus : .secondary)
-            if case let .downloading(_, progress) = model.appleSpeech.state.readiness {
-                ProgressView(value: progress)
-            }
+            .font(.dictatorBody(12, weight: .medium))
+            .foregroundStyle(DictatorDesign.ink.opacity(0.72))
+
+            AppleSpeechModelSetupView(model: model)
+            OfflineFallbackControl(
+                model: model,
+                selectedAsPrimary: model.selectedSTT == .appleSpeech,
+                description: nil,
+                prominent: true
+            )
         }
-        .task { await model.appleSpeech.refresh() }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var appleOrCloudActionTitle: String {
@@ -235,13 +245,30 @@ struct OnboardingView: View {
 
     private var controls: some View {
         HStack {
-            if step > 0 { Button("Back") { step -= 1 }.dictatorButton(.ghost) }
+            if let previous = step.previous {
+                Button("Back") { step = previous }.dictatorButton(.ghost)
+            }
             Spacer()
-            Button(step == 3 ? (scratchText.isEmpty ? "Skip and finish" : "Finish onboarding") : "Continue") {
-                if step == 3 { model.finishOnboarding() } else { step += 1 }
+            Button(controlTitle) {
+                switch step {
+                case .ready:
+                    model.finishOnboarding()
+                case .offlineMode where !model.offlineFallbackEnabled:
+                    skipOfflineSetup()
+                default:
+                    if let next = step.next { step = next }
+                }
             }
             .dictatorButton()
-            .disabled((step == 1 && !permissionsReady) || (step == 2 && !model.selectedSTTIsConfigured))
+            .disabled((step == .permissions && !permissionsReady) || (step == .provider && !model.selectedSTTIsConfigured))
+        }
+    }
+
+    private var controlTitle: String {
+        switch step {
+        case .ready: scratchText.isEmpty ? "Skip and finish" : "Finish onboarding"
+        case .offlineMode: model.offlineFallbackEnabled ? "Continue" : "Skip for now"
+        default: "Continue"
         }
     }
 
@@ -267,6 +294,11 @@ struct OnboardingView: View {
             try await model.configureOnboardingProvider(kind: provider, apiKey: apiKey, accountID: accountID)
             providerStatus = provider == .appleSpeech ? "Apple On-Device is ready" : "Connection verified"
         } catch { providerStatus = error.localizedDescription }
+    }
+
+    private func skipOfflineSetup() {
+        model.disableOfflineFallback()
+        if let next = step.next { step = next }
     }
 }
 

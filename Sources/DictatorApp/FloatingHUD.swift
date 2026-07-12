@@ -6,10 +6,24 @@ enum HUDPhase: Equatable {
     case idle
     case listening
     case transcribing
+    case offline
     case cleaning
     case success(String)
     case clipboard
     case error(String)
+
+    var label: String {
+        switch self {
+        case .idle: ""
+        case .listening: "Listening"
+        case .transcribing: "Transcribing"
+        case .offline: "Offline mode"
+        case .cleaning: "Cleaning up"
+        case .success(let value): value
+        case .clipboard: "Saved to Dictator clipboard"
+        case .error(let value): value
+        }
+    }
 }
 
 @MainActor
@@ -71,8 +85,10 @@ final class FloatingPanelController {
         let size: NSSize
         switch phase {
         case .idle: size = NSSize(width: 54, height: 18)
-        case .listening, .transcribing, .cleaning, .success:
+        case .listening, .transcribing, .offline, .cleaning:
             size = NSSize(width: 124, height: 32)
+        case .success(let message):
+            size = NSSize(width: message.hasPrefix("Offline") ? 174 : 124, height: 32)
         case .clipboard: size = NSSize(width: 190, height: 34)
         case .error: size = NSSize(width: 260, height: 36)
         }
@@ -115,7 +131,7 @@ struct FloatingHUDView: View {
         switch model.phase {
         case .idle: EmptyView()
         case .listening: listeningState
-        case .transcribing, .cleaning: processingState
+        case .transcribing, .offline, .cleaning: processingState
         default: resultState
         }
     }
@@ -156,23 +172,23 @@ struct FloatingHUDView: View {
                             .frame(width: index == position ? 5 : 3, height: index == position ? 5 : 3)
                     }
                 }.frame(width: 21)
-                Text(label)
+                Text(model.phase.label)
                     .font(.dictatorBody(11.5, weight: .semibold))
                     .foregroundStyle(Color.white.opacity(0.92))
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
             }.padding(.horizontal, 9)
         }
-        .accessibilityLabel(label)
+        .accessibilityLabel(model.phase.label)
     }
 
     private var resultState: some View {
         HStack(spacing: 8) {
             Image(systemName: resultIcon).font(.system(size: 10, weight: .bold)).foregroundStyle(resultColor)
-            Text(label).font(.dictatorBody(12, weight: .semibold)).foregroundStyle(Color.white.opacity(0.92))
+            Text(model.phase.label).font(.dictatorBody(12, weight: .semibold)).foregroundStyle(Color.white.opacity(0.92))
                 .lineLimit(1)
         }.padding(.horizontal, 13)
-        .accessibilityLabel(label)
+        .accessibilityLabel(model.phase.label)
     }
 
     private var resultIcon: String {
@@ -189,23 +205,12 @@ struct FloatingHUDView: View {
         return DictatorDesign.orchid
     }
 
-    private var label: String {
-        switch model.phase {
-        case .idle: ""
-        case .listening: "Listening"
-        case .transcribing: "Transcribing"
-        case .cleaning: "Cleaning up"
-        case .success(let value): value
-        case .clipboard: "Saved to Dictator clipboard"
-        case .error(let value): value
-        }
-    }
-
     private var phaseKey: String {
         switch model.phase {
         case .idle: "idle"
         case .listening: "listening"
         case .transcribing: "transcribing"
+        case .offline: "offline"
         case .cleaning: "cleaning"
         case .success: "success"
         case .clipboard: "clipboard"

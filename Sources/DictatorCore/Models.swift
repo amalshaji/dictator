@@ -481,6 +481,7 @@ public enum ProviderError: LocalizedError, Equatable, Sendable {
     case emptyTranscript
     case unsupported(String)
     case cleanupRejected(String)
+    case transport(URLError.Code)
 
     public var errorDescription: String? {
         switch self {
@@ -491,6 +492,27 @@ public enum ProviderError: LocalizedError, Equatable, Sendable {
         case .emptyTranscript: "The provider returned an empty transcript."
         case .unsupported(let message): message
         case .cleanupRejected(let reason): "Cleanup output was rejected: \(reason)"
+        case .transport(let code): URLError(code).localizedDescription
         }
+    }
+}
+
+public enum TransportFailureClassifier {
+    private static let offlineEligibleCodes: Set<URLError.Code> = [
+        .notConnectedToInternet,
+        .networkConnectionLost,
+        .cannotFindHost,
+        .cannotConnectToHost,
+        .dnsLookupFailed,
+        .timedOut,
+    ]
+
+    public static func code(for error: any Error) -> URLError.Code? {
+        if case ProviderError.transport(let code) = error { return code }
+        return (error as? URLError)?.code
+    }
+
+    public static func isOfflineEligible(_ error: any Error) -> Bool {
+        code(for: error).map(offlineEligibleCodes.contains) ?? false
     }
 }

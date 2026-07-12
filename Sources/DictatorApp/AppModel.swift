@@ -16,6 +16,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var selectedSTT: ProviderKind = .groq
     @Published var selectedLLM: ProviderKind = .groq { didSet { defaults.set(selectedLLM.rawValue, forKey: "selectedLLM") } }
     @Published var cleanupEnabled = false { didSet { defaults.set(cleanupEnabled, forKey: "cleanupEnabled") } }
+    @Published private(set) var offlineFallbackEnabled = false
     @Published var lastError: String?
     @Published var requestedDestination: String?
     @Published var shortcutsAvailable = false
@@ -32,9 +33,10 @@ final class AppModel: ObservableObject {
     let pricing = PricingStore()
     let appleSpeech: AppleSpeechCoordinator
 
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
     private let store = LocalStore(fileURL: LocalStore.applicationSupportURL())
     private let keychain: any CredentialStoring
+    private let transcriptionCoordinator: TranscriptionCoordinator
     private var appleSpeechObservation: AnyCancellable?
     private let recorder = AudioRecorder()
     private let hotkey = HotkeyMonitor()
@@ -45,16 +47,41 @@ final class AppModel: ObservableObject {
     private var focusedTarget: FocusedTarget?
 
     convenience init() {
-        self.init(keychain: KeychainStore(), appleSpeechProvider: Self.defaultAppleSpeechProvider())
+        self.init(
+            keychain: KeychainStore(),
+            appleSpeechProvider: Self.defaultAppleSpeechProvider(),
+            defaults: .standard,
+            connectivity: NetworkConnectivityMonitor()
+        )
     }
 
-    init(keychain: any CredentialStoring, appleSpeechProvider: (any LocalSpeechTranscribing)?) {
-        let defaults = UserDefaults.standard
+    convenience init(keychain: any CredentialStoring, appleSpeechProvider: (any LocalSpeechTranscribing)?) {
+        self.init(
+            keychain: keychain,
+            appleSpeechProvider: appleSpeechProvider,
+            defaults: .standard,
+            connectivity: NetworkConnectivityMonitor()
+        )
+    }
+
+    init(
+        keychain: any CredentialStoring,
+        appleSpeechProvider: (any LocalSpeechTranscribing)?,
+        defaults: UserDefaults,
+        connectivity: any ConnectivityMonitoring
+    ) {
+        self.defaults = defaults
         self.keychain = keychain
-        appleSpeech = AppleSpeechCoordinator(
+        let appleSpeech = AppleSpeechCoordinator(
             provider: appleSpeechProvider,
             selectedLocaleIdentifier: defaults.string(forKey: "appleSpeechLocale") ?? Locale.current.identifier,
             persistSelection: { defaults.set($0, forKey: "appleSpeechLocale") }
+        )
+        self.appleSpeech = appleSpeech
+        transcriptionCoordinator = TranscriptionCoordinator(
+            keychain: keychain,
+            appleSpeech: appleSpeech,
+            connectivity: connectivity
         )
         selectedSTT = STTProviderSelection.resolve(
             savedRawValue: defaults.string(forKey: "selectedSTT"),
@@ -64,6 +91,7 @@ final class AppModel: ObservableObject {
         )
         selectedLLM = ProviderKind(rawValue: defaults.string(forKey: "selectedLLM") ?? "") ?? .groq
         cleanupEnabled = defaults.bool(forKey: "cleanupEnabled")
+        offlineFallbackEnabled = defaults.bool(forKey: "offlineFallbackEnabled")
         selectedStyleID = defaults.string(forKey: "selectedStyleID").flatMap(UUID.init(uuidString:))
         dictateShortcut = loadShortcut(forKey: "shortcut.dictate", fallback: .dictate)
         pasteLatestShortcut = loadShortcut(forKey: "shortcut.pasteLatest", fallback: .pasteLatest)
@@ -150,28 +178,20 @@ final class AppModel: ObservableObject {
     private func process(_ audio: RecordedAudio, pipelineStarted: ContinuousClock.Instant) async {
         hud.show(.transcribing)
         do {
-            let raw: TranscriptionResult
-            if selectedSTT == .appleSpeech {
-                raw = try await appleSpeech.transcribe(audio: audio, vocabulary: data.vocabulary)
-            } else {
-                guard let provider = ProviderRegistry.sttProvider(for: selectedSTT) else {
-                    throw ProviderError.unsupported("Provider is not available")
+            let transcription = try await transcriptionCoordinator.transcribe(
+                audio: audio,
+                selectedProvider: selectedSTT,
+                selectedModel: configuredModel(for: .speechToText, provider: selectedSTT),
+                fallbackEnabled: offlineFallbackEnabled,
+                vocabulary: data.vocabulary,
+                onModeChange: { [hud] mode in
+                    if mode == .offline { hud.show(.offline) }
                 }
-                guard let credentials = try keychain.load(for: .speechToText, provider: selectedSTT) else {
-                    throw ProviderError.missingCredential("\(provider.metadata.displayName) API key")
-                }
-                let model = configuredModel(for: .speechToText, provider: selectedSTT) ?? provider.metadata.defaultModel
-                raw = try await transcribeWithRetry(
-                    provider: provider,
-                    audio: audio,
-                    options: .init(model: model, vocabulary: data.vocabulary),
-                    credentials: credentials
-                )
-            }
-            let cleanup = try cleanupConfiguration()
+            )
+            let cleanup = transcription.allowsCleanup ? try cleanupConfiguration() : nil
             if cleanup != nil { hud.show(.cleaning) }
             let processed = await transcriptProcessor.process(
-                rawText: raw.text,
+                rawText: transcription.result.text,
                 selectedText: focusedTarget?.selection?.text,
                 vocabulary: data.vocabulary,
                 snippets: data.snippets,
@@ -207,18 +227,22 @@ final class AppModel: ObservableObject {
             let insertion = await inserter.insert(requestedInsertion, into: focusedTarget)
             let pipelineLatency = Self.elapsedSeconds(since: pipelineStarted)
             if case .privateClipboard = insertion {
-                data.clipboard.insert(.init(text: finalText, rawText: raw.text, sourceBundleID: focusedTarget?.bundleIdentifier), at: 0)
+                data.clipboard.insert(.init(text: finalText, rawText: transcription.result.text, sourceBundleID: focusedTarget?.bundleIdentifier), at: 0)
             }
-            showCompletion(insertion: insertion, cleanupFallbackReason: cleanupFallbackReason)
+            showCompletion(
+                insertion: insertion,
+                cleanupFallbackReason: cleanupFallbackReason,
+                offlineMode: transcription.mode == .offline
+            )
             data.transcripts.insert(.init(
-                rawText: raw.text,
+                rawText: transcription.result.text,
                 finalText: finalText,
-                sttProvider: raw.provider,
-                sttModel: raw.model,
-                sttLocale: raw.language,
+                sttProvider: transcription.result.provider,
+                sttModel: transcription.result.model,
+                sttLocale: transcription.result.language,
                 sourceBundleID: focusedTarget?.bundleIdentifier,
                 audioDuration: audio.duration,
-                sttLatency: raw.latency,
+                sttLatency: transcription.result.latency,
                 pipelineLatency: pipelineLatency,
                 cleanup: cleanupResult.map(CleanupExecution.init(result:)),
                 insertionOutcome: insertion.label
@@ -234,24 +258,6 @@ final class AppModel: ObservableObject {
     private static func elapsedSeconds(since instant: ContinuousClock.Instant) -> TimeInterval {
         let components = instant.duration(to: .now).components
         return Double(components.seconds) + Double(components.attoseconds) / 1e18
-    }
-
-    private func transcribeWithRetry(provider: any SpeechToTextProvider, audio: RecordedAudio, options: TranscriptionOptions, credentials: ProviderCredentials) async throws -> TranscriptionResult {
-        var last: Error?
-        for attempt in 0..<3 {
-            do { return try await provider.transcribe(audio: audio, options: options, credentials: credentials) }
-            catch {
-                last = error
-                guard attempt < 2, isRetryable(error) else { throw error }
-                try? await Task.sleep(for: .milliseconds(250 * (attempt + 1)))
-            }
-        }
-        throw last ?? ProviderError.invalidResponse
-    }
-
-    private func isRetryable(_ error: Error) -> Bool {
-        if case ProviderError.httpStatus(let status, _) = error { return [408, 429, 502, 503].contains(status) }
-        return error is URLError
     }
 
     func credentials(purpose: ProviderPurpose, provider: ProviderKind) -> ProviderCredentials? {
@@ -451,11 +457,9 @@ final class AppModel: ObservableObject {
 
     func configureOnboardingProvider(kind: ProviderKind, apiKey: String, accountID: String?) async throws {
         if kind == .appleSpeech {
-            await appleSpeech.prepare()
-            guard appleSpeech.state.readiness.isReady else {
-                throw ProviderError.invalidConfiguration(appleSpeech.statusText)
-            }
+            try await prepareAppleSpeech()
             try selectSTT(.appleSpeech)
+            setOfflineFallbackEnabled(true)
             return
         }
         guard let provider = ProviderRegistry.sttProvider(for: kind) else { throw ProviderError.unsupported("Provider is unavailable") }
@@ -469,9 +473,37 @@ final class AppModel: ObservableObject {
         try selectSTT(kind)
     }
 
+    func configureOfflineFallback() async throws {
+        try await prepareAppleSpeech()
+        setOfflineFallbackEnabled(true)
+    }
+
+    private func prepareAppleSpeech() async throws {
+        if !appleSpeech.state.readiness.isReady { await appleSpeech.prepare() }
+        try Task.checkCancellation()
+        guard appleSpeech.state.readiness.isReady else {
+            throw ProviderError.invalidConfiguration(appleSpeech.statusText)
+        }
+    }
+
+    func disableOfflineFallback() {
+        setOfflineFallbackEnabled(false)
+    }
+
+    func selectAppleSpeechLocale(_ identifier: String) {
+        guard identifier != appleSpeech.state.selectedLocaleIdentifier else { return }
+        appleSpeech.selectLocale(identifier)
+        setOfflineFallbackEnabled(false)
+    }
+
     func finishOnboarding() {
         onboardingComplete = true
         defaults.set(true, forKey: "onboardingComplete")
+    }
+
+    private func setOfflineFallbackEnabled(_ enabled: Bool) {
+        offlineFallbackEnabled = enabled
+        defaults.set(enabled, forKey: "offlineFallbackEnabled")
     }
 
     var selectedSTTIsConfigured: Bool {
@@ -518,13 +550,25 @@ final class AppModel: ObservableObject {
         )
     }
 
-    private func showCompletion(insertion: InsertionResult, cleanupFallbackReason: String?) {
+    private func showCompletion(
+        insertion: InsertionResult,
+        cleanupFallbackReason: String?,
+        offlineMode: Bool = false
+    ) {
         if let cleanupFallbackReason {
             lastError = "Cleanup failed: \(cleanupFallbackReason)"
             hud.show(.error("Cleanup failed—used raw transcript"))
             return
         }
         lastError = nil
+        if offlineMode {
+            if case .privateClipboard = insertion {
+                hud.show(.success("Offline · Saved"))
+            } else {
+                hud.show(.success("Offline · Paste sent"))
+            }
+            return
+        }
         if case .privateClipboard = insertion {
             hud.show(.clipboard)
         } else {

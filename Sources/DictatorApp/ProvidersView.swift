@@ -68,6 +68,7 @@ struct ProvidersView: View {
 private struct AppleSpeechSetupRow: View {
     @ObservedObject var model: AppModel
     @State private var expanded = false
+    @State private var primarySetupRequested = false
 
     private var selected: Bool { model.selectedSTT == .appleSpeech }
 
@@ -84,51 +85,43 @@ private struct AppleSpeechSetupRow: View {
                 Text("Audio is transcribed entirely on this Mac after the initial language model download.")
                     .font(.dictatorBody(12)).foregroundStyle(.secondary)
 
-                if !model.appleSpeech.state.locales.isEmpty {
-                    field("Language") {
-                        DictatorMenuField(
-                            label: "Language",
-                            options: model.appleSpeech.state.locales.map {
-                                .init(value: $0.identifier, label: localeDisplayName($0.identifier))
-                            },
-                            selection: localeBinding
-                        )
-                    }
-                }
-
-                if let locale = model.appleSpeech.state.readiness.locale {
-                    field("Active engine") {
-                        Text(engineDisplayName(locale.engine))
-                            .font(.dictatorBody(12, weight: .medium))
-                    }
-                }
-
-                if case let .downloading(_, progress) = model.appleSpeech.state.readiness {
-                    ProgressView(value: progress) {
-                        Text("Downloading speech model… \(Int(progress * 100))%")
-                            .font(.dictatorBody(11)).foregroundStyle(.secondary)
-                    }
-                }
+                AppleSpeechModelSetupView(model: model)
 
                 HStack(spacing: 8) {
-                    Button(actionTitle) { Task { await prepareOrSelect() } }
+                    Button(actionTitle) { primarySetupRequested = true }
                         .dictatorButton()
-                        .disabled(actionDisabled)
+                        .disabled(actionDisabled || primarySetupRequested)
                     if case .failed = model.appleSpeech.state.readiness {
                         Button("Retry status") { Task { await model.appleSpeech.refresh() } }
                             .dictatorButton(.secondary)
                     }
                 }
+
+                Divider().overlay(DictatorDesign.border)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("OFFLINE FALLBACK")
+                        .font(.dictatorUtility(9)).foregroundStyle(DictatorDesign.muted)
+                    OfflineFallbackControl(
+                        model: model,
+                        selectedAsPrimary: selected,
+                        description: fallbackDescription
+                    )
+                }
             }
         }
-        .task { await model.appleSpeech.refresh() }
+        .task(id: primarySetupRequested) {
+            guard primarySetupRequested else { return }
+            defer { primarySetupRequested = false }
+            await prepareOrSelect()
+        }
     }
 
-    private var localeBinding: Binding<String> {
-        Binding(
-            get: { model.appleSpeech.state.selectedLocaleIdentifier },
-            set: { model.appleSpeech.selectLocale($0) }
-        )
+    private var fallbackDescription: String {
+        if selected {
+            return "Dictation already runs locally. Cloud cleanup pauses automatically when the Mac is offline."
+        }
+        return "Use Apple On-Device only when your selected cloud speech provider can’t connect."
     }
 
     private var statusColor: Color {
@@ -162,23 +155,6 @@ private struct AppleSpeechSetupRow: View {
         }
     }
 
-    private func field<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(label).font(.dictatorBody(11, weight: .semibold)).foregroundStyle(DictatorDesign.ink.opacity(0.72))
-            content()
-        }
-    }
-
-    private func localeDisplayName(_ identifier: String) -> String {
-        Locale.current.localizedString(forIdentifier: identifier) ?? identifier
-    }
-
-    private func engineDisplayName(_ engine: AppleTranscriptionEngine) -> String {
-        switch engine {
-        case .speechTranscriber: "SpeechTranscriber"
-        case .dictationTranscriber: "DictationTranscriber fallback"
-        }
-    }
 }
 
 private struct ProviderSetupRow: View {
