@@ -1,0 +1,26 @@
+<?xml version="1.0" standalone="yes"?><!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>Dictator</title>
+        <item>
+            <title>0.2.2</title>
+            <pubDate>Sun, 12 Jul 2026 08:27:39 +0000</pubDate>
+            <link>https://github.com/amalshaji/dictator</link>
+            <sparkle:version>4</sparkle:version>
+            <sparkle:shortVersionString>0.2.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[## What's Changed
+* Fix Xcode 26 release builds by @amalshaji in https://github.com/amalshaji/dictator/pull/15
+* Prepare 0.2.2 release by @amalshaji in https://github.com/amalshaji/dictator/pull/16
+
+
+**Full Changelog**: https://github.com/amalshaji/dictator/compare/v0.2.1...v0.2.2
+]]></description>
+            <enclosure url="https://github.com/amalshaji/dictator/releases/download/v0.2.2/Dictator-0.2.2-universal.dmg" length="5057062" type="application/octet-stream" sparkle:edSignature="qR02Ic6+eyNAJpDaKLN6AMNapcNzKnV4Q21uNaFjW611r3uQIe3r9ofIeSfkk54vfclzvNiRwm/eJjrC7UiCBA=="></enclosure>
+        </item>
+    </channel>
+</rss><!-- sparkle-signatures:
+edSignature: 4AI0RIRCLsvuWbzncD9Dm77l358TvWzrNL0chJZGMCqP5pUe72qIcFMjZ7ZSdDLkVYZ6VIjrbcVi/ZQHGa8uCQ==
+length: 1480
+-->
