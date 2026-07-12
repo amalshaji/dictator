@@ -49,7 +49,8 @@ test -d "$app"
 test -d "$sparkle"
 test -L "$sparkle/Versions/Current"
 codesign --verify --deep --strict --verbose=2 "$app"
-codesign -dv --verbose=4 "$app" 2>&1 | grep -q 'Signature=adhoc'
+signature_details=$(codesign -dv --verbose=4 "$app" 2>&1)
+grep -q 'Signature=adhoc' <<<"$signature_details"
 lipo -archs "$executable" | grep -q 'arm64'
 lipo -archs "$executable" | grep -q 'x86_64'
 otool -L "$executable" | grep -q 'Sparkle.framework'
