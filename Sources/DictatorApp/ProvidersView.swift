@@ -68,8 +68,7 @@ struct ProvidersView: View {
 private struct AppleSpeechSetupRow: View {
     @ObservedObject var model: AppModel
     @State private var expanded = false
-    @State private var configuringFallback = false
-    @State private var fallbackStatus = ""
+    @State private var primarySetupRequested = false
 
     private var selected: Bool { model.selectedSTT == .appleSpeech }
 
@@ -86,36 +85,12 @@ private struct AppleSpeechSetupRow: View {
                 Text("Audio is transcribed entirely on this Mac after the initial language model download.")
                     .font(.dictatorBody(12)).foregroundStyle(.secondary)
 
-                if !model.appleSpeech.state.locales.isEmpty {
-                    field("Language") {
-                        DictatorMenuField(
-                            label: "Language",
-                            options: model.appleSpeech.state.locales.map {
-                                .init(value: $0.identifier, label: localeDisplayName($0.identifier))
-                            },
-                            selection: localeBinding
-                        )
-                    }
-                }
-
-                if let locale = model.appleSpeech.state.readiness.locale {
-                    field("Active engine") {
-                        Text(engineDisplayName(locale.engine))
-                            .font(.dictatorBody(12, weight: .medium))
-                    }
-                }
-
-                if case let .downloading(_, progress) = model.appleSpeech.state.readiness {
-                    ProgressView(value: progress) {
-                        Text("Downloading speech model… \(Int(progress * 100))%")
-                            .font(.dictatorBody(11)).foregroundStyle(.secondary)
-                    }
-                }
+                AppleSpeechModelSetupView(model: model)
 
                 HStack(spacing: 8) {
-                    Button(actionTitle) { Task { await prepareOrSelect() } }
+                    Button(actionTitle) { primarySetupRequested = true }
                         .dictatorButton()
-                        .disabled(actionDisabled)
+                        .disabled(actionDisabled || primarySetupRequested)
                     if case .failed = model.appleSpeech.state.readiness {
                         Button("Retry status") { Task { await model.appleSpeech.refresh() } }
                             .dictatorButton(.secondary)
@@ -127,51 +102,19 @@ private struct AppleSpeechSetupRow: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("OFFLINE FALLBACK")
                         .font(.dictatorUtility(9)).foregroundStyle(DictatorDesign.muted)
-                    Text(fallbackDescription)
-                        .font(.dictatorBody(12)).foregroundStyle(.secondary)
-
-                    if selected {
-                        Label("Apple On-Device is your primary provider", systemImage: "checkmark.circle.fill")
-                            .font(.dictatorBody(12, weight: .medium)).foregroundStyle(.green)
-                    } else if model.offlineFallbackEnabled && model.appleSpeech.state.readiness.isReady {
-                        HStack(spacing: 8) {
-                            Label("Ready", systemImage: "checkmark.circle.fill")
-                                .font(.dictatorBody(12, weight: .medium)).foregroundStyle(.green)
-                            Button("Disable fallback") { model.disableOfflineFallback() }
-                                .dictatorButton(.secondary)
-                        }
-                    } else {
-                        if model.offlineFallbackEnabled {
-                            Label("The selected model needs to be downloaded again", systemImage: "exclamationmark.triangle.fill")
-                                .font(.dictatorBody(11, weight: .medium)).foregroundStyle(.orange)
-                        }
-                        HStack(spacing: 8) {
-                            Button(configuringFallback ? "Preparing model…" : fallbackActionTitle) {
-                                Task { await configureFallback() }
-                            }
-                            .dictatorButton(.secondary)
-                            .disabled(configuringFallback)
-                            if model.offlineFallbackEnabled {
-                                Button("Disable fallback") { model.disableOfflineFallback() }
-                                    .dictatorButton(.ghost)
-                            }
-                        }
-                    }
-
-                    if !fallbackStatus.isEmpty {
-                        Text(fallbackStatus).font(.dictatorBody(11, weight: .medium)).foregroundStyle(.orange)
-                    }
+                    OfflineFallbackControl(
+                        model: model,
+                        selectedAsPrimary: selected,
+                        description: fallbackDescription
+                    )
                 }
             }
         }
-        .task { await model.appleSpeech.refresh() }
-    }
-
-    private var localeBinding: Binding<String> {
-        Binding(
-            get: { model.appleSpeech.state.selectedLocaleIdentifier },
-            set: { model.selectAppleSpeechLocale($0) }
-        )
+        .task(id: primarySetupRequested) {
+            guard primarySetupRequested else { return }
+            defer { primarySetupRequested = false }
+            await prepareOrSelect()
+        }
     }
 
     private var fallbackDescription: String {
@@ -179,10 +122,6 @@ private struct AppleSpeechSetupRow: View {
             return "Dictation already runs locally. Cloud cleanup pauses automatically when the Mac is offline."
         }
         return "Use Apple On-Device only when your selected cloud speech provider can’t connect."
-    }
-
-    private var fallbackActionTitle: String {
-        model.offlineFallbackEnabled ? "Repair offline fallback" : "Set up offline fallback"
     }
 
     private var statusColor: Color {
@@ -216,34 +155,6 @@ private struct AppleSpeechSetupRow: View {
         }
     }
 
-    private func configureFallback() async {
-        configuringFallback = true
-        fallbackStatus = ""
-        defer { configuringFallback = false }
-        do {
-            try await model.configureOfflineFallback()
-        } catch {
-            fallbackStatus = error.localizedDescription
-        }
-    }
-
-    private func field<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(label).font(.dictatorBody(11, weight: .semibold)).foregroundStyle(DictatorDesign.ink.opacity(0.72))
-            content()
-        }
-    }
-
-    private func localeDisplayName(_ identifier: String) -> String {
-        Locale.current.localizedString(forIdentifier: identifier) ?? identifier
-    }
-
-    private func engineDisplayName(_ engine: AppleTranscriptionEngine) -> String {
-        switch engine {
-        case .speechTranscriber: "SpeechTranscriber"
-        case .dictationTranscriber: "DictationTranscriber fallback"
-        }
-    }
 }
 
 private struct ProviderSetupRow: View {

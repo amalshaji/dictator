@@ -20,9 +20,6 @@ struct OnboardingView: View {
     @State private var accountID = ""
     @State private var providerStatus = ""
     @State private var connecting = false
-    @State private var configuringOffline = false
-    @State private var offlineStatus = ""
-    @State private var offlineSetupTask: Task<Void, Never>?
     @State private var scratchText = ""
     @FocusState private var scratchFocused: Bool
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -106,7 +103,7 @@ struct OnboardingView: View {
                 }
             }
             if provider == .appleSpeech {
-                appleSpeechSetup
+                AppleSpeechModelSetupView(model: model)
             } else {
                 SecureField("API key", text: $apiKey).textFieldStyle(DictatorTextFieldStyle())
                 if provider == .cloudflare { TextField("Cloudflare account ID", text: $accountID).textFieldStyle(DictatorTextFieldStyle()) }
@@ -118,33 +115,6 @@ struct OnboardingView: View {
                     .foregroundStyle(model.selectedSTTIsConfigured ? .green : .orange)
             }
         }.frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var appleSpeechSetup: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if !model.appleSpeech.state.locales.isEmpty {
-                DictatorMenuField(
-                    label: "Language",
-                    options: model.appleSpeech.state.locales.map {
-                        .init(
-                            value: $0.identifier,
-                            label: Locale.current.localizedString(forIdentifier: $0.identifier) ?? $0.identifier
-                        )
-                    },
-                    selection: Binding(
-                        get: { model.appleSpeech.state.selectedLocaleIdentifier },
-                        set: { model.selectAppleSpeechLocale($0) }
-                    )
-                )
-            }
-            Text(model.appleSpeech.statusText)
-                .font(.dictatorBody(12, weight: .medium))
-                .foregroundStyle(model.appleSpeech.state.readiness.isReady ? DictatorDesign.focus : .secondary)
-            if case let .downloading(_, progress) = model.appleSpeech.state.readiness {
-                ProgressView(value: progress)
-            }
-        }
-        .task { await model.appleSpeech.refresh() }
     }
 
     private var offlineModeSetup: some View {
@@ -161,24 +131,15 @@ struct OnboardingView: View {
             .font(.dictatorBody(12, weight: .medium))
             .foregroundStyle(DictatorDesign.ink.opacity(0.72))
 
-            appleSpeechSetup
-
-            Button(offlineActionTitle) { startOfflineSetup() }
-                .dictatorButton()
-                .disabled(configuringOffline || model.offlineFallbackEnabled || !model.appleSpeechAvailable)
-
-            if !offlineStatus.isEmpty {
-                Text(offlineStatus)
-                    .font(.dictatorBody(12, weight: .medium))
-                    .foregroundStyle(model.offlineFallbackEnabled ? .green : .orange)
-            }
+            AppleSpeechModelSetupView(model: model)
+            OfflineFallbackControl(
+                model: model,
+                selectedAsPrimary: model.selectedSTT == .appleSpeech,
+                description: nil,
+                prominent: true
+            )
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var offlineActionTitle: String {
-        if model.offlineFallbackEnabled { return "Offline mode is ready" }
-        return configuringOffline ? "Preparing model…" : "Set up offline mode"
     }
 
     private var appleOrCloudActionTitle: String {
@@ -335,28 +296,7 @@ struct OnboardingView: View {
         } catch { providerStatus = error.localizedDescription }
     }
 
-    private func startOfflineSetup() {
-        offlineSetupTask?.cancel()
-        offlineStatus = ""
-        configuringOffline = true
-        offlineSetupTask = Task { @MainActor in
-            defer { configuringOffline = false }
-            do {
-                try await model.configureOfflineFallback()
-                guard !Task.isCancelled else { return }
-                offlineStatus = "Apple On-Device is ready for offline fallback"
-            } catch is CancellationError {
-                return
-            } catch {
-                offlineStatus = error.localizedDescription
-            }
-        }
-    }
-
     private func skipOfflineSetup() {
-        offlineSetupTask?.cancel()
-        offlineSetupTask = nil
-        configuringOffline = false
         model.disableOfflineFallback()
         if let next = step.next { step = next }
     }
