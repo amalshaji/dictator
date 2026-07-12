@@ -12,9 +12,13 @@ public struct URLSessionTransport: HTTPTransport {
     }
 
     public func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw ProviderError.invalidResponse }
-        return (data, http)
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse else { throw ProviderError.invalidResponse }
+            return (data, http)
+        } catch let error as URLError {
+            throw ProviderError.transport(error.code)
+        }
     }
 }
 

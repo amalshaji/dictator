@@ -68,6 +68,8 @@ struct ProvidersView: View {
 private struct AppleSpeechSetupRow: View {
     @ObservedObject var model: AppModel
     @State private var expanded = false
+    @State private var configuringFallback = false
+    @State private var fallbackStatus = ""
 
     private var selected: Bool { model.selectedSTT == .appleSpeech }
 
@@ -119,6 +121,47 @@ private struct AppleSpeechSetupRow: View {
                             .dictatorButton(.secondary)
                     }
                 }
+
+                Divider().overlay(DictatorDesign.border)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("OFFLINE FALLBACK")
+                        .font(.dictatorUtility(9)).foregroundStyle(DictatorDesign.muted)
+                    Text(fallbackDescription)
+                        .font(.dictatorBody(12)).foregroundStyle(.secondary)
+
+                    if selected {
+                        Label("Apple On-Device is your primary provider", systemImage: "checkmark.circle.fill")
+                            .font(.dictatorBody(12, weight: .medium)).foregroundStyle(.green)
+                    } else if model.offlineFallbackEnabled && model.appleSpeech.state.readiness.isReady {
+                        HStack(spacing: 8) {
+                            Label("Ready", systemImage: "checkmark.circle.fill")
+                                .font(.dictatorBody(12, weight: .medium)).foregroundStyle(.green)
+                            Button("Disable fallback") { model.disableOfflineFallback() }
+                                .dictatorButton(.secondary)
+                        }
+                    } else {
+                        if model.offlineFallbackEnabled {
+                            Label("The selected model needs to be downloaded again", systemImage: "exclamationmark.triangle.fill")
+                                .font(.dictatorBody(11, weight: .medium)).foregroundStyle(.orange)
+                        }
+                        HStack(spacing: 8) {
+                            Button(configuringFallback ? "Preparing model…" : fallbackActionTitle) {
+                                Task { await configureFallback() }
+                            }
+                            .dictatorButton(.secondary)
+                            .disabled(configuringFallback)
+                            if model.offlineFallbackEnabled {
+                                Button("Disable fallback") { model.disableOfflineFallback() }
+                                    .dictatorButton(.ghost)
+                            }
+                        }
+                    }
+
+                    if !fallbackStatus.isEmpty {
+                        Text(fallbackStatus).font(.dictatorBody(11, weight: .medium)).foregroundStyle(.orange)
+                    }
+                }
             }
         }
         .task { await model.appleSpeech.refresh() }
@@ -127,8 +170,19 @@ private struct AppleSpeechSetupRow: View {
     private var localeBinding: Binding<String> {
         Binding(
             get: { model.appleSpeech.state.selectedLocaleIdentifier },
-            set: { model.appleSpeech.selectLocale($0) }
+            set: { model.selectAppleSpeechLocale($0) }
         )
+    }
+
+    private var fallbackDescription: String {
+        if selected {
+            return "Dictation already runs locally. Cloud cleanup pauses automatically when the Mac is offline."
+        }
+        return "Use Apple On-Device only when your selected cloud speech provider can’t connect."
+    }
+
+    private var fallbackActionTitle: String {
+        model.offlineFallbackEnabled ? "Repair offline fallback" : "Set up offline fallback"
     }
 
     private var statusColor: Color {
@@ -159,6 +213,17 @@ private struct AppleSpeechSetupRow: View {
         if model.appleSpeech.state.readiness.isReady {
             do { try model.selectSTT(.appleSpeech) }
             catch { model.lastError = error.localizedDescription }
+        }
+    }
+
+    private func configureFallback() async {
+        configuringFallback = true
+        fallbackStatus = ""
+        defer { configuringFallback = false }
+        do {
+            try await model.configureOfflineFallback()
+        } catch {
+            fallbackStatus = error.localizedDescription
         }
     }
 

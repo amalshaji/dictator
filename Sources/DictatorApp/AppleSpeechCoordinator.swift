@@ -69,6 +69,7 @@ final class AppleSpeechCoordinator: ObservableObject {
             return
         }
         if state.locales.isEmpty { await refresh() }
+        if state.readiness.isReady { return }
         guard let locale = state.readiness.locale
                 ?? state.locales.first(where: { $0.identifier == state.selectedLocaleIdentifier })
         else { return }
@@ -92,6 +93,11 @@ final class AppleSpeechCoordinator: ObservableObject {
             else { return }
             apply(readiness, for: expectedIdentifier)
         } catch is CancellationError {
+            guard generation == expectedGeneration,
+                  state.selectedLocaleIdentifier == expectedIdentifier
+            else { return }
+            state.readiness = .checking
+            Task { await self.refresh() }
             return
         } catch {
             guard generation == expectedGeneration,

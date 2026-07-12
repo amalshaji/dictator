@@ -23,7 +23,7 @@ public struct TranscriptRepairService: Sendable {
         let text: String
         let origin: TranscriptRevisionOrigin
         switch processed {
-        case .raw(let processedText), .fallback(let processedText, _):
+        case .raw(let processedText), .fallback(let processedText, _), .offlineFallback(let processedText, _):
             text = processedText
             origin = .localProcessing
         case .cleaned(let result):
