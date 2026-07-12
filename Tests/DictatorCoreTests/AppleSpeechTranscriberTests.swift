@@ -67,12 +67,11 @@ final class AppleSpeechTranscriberTests: XCTestCase {
         )
 
         let readiness = try await AppleSpeechTranscriber(runtime: runtime).installAssets(for: "en_US") { value in
-            Task { await progress.append(value) }
+            progress.append(value)
         }
 
         XCTAssertEqual(readiness, .ready(.init(identifier: "en_US", engine: .dictationTranscriber)))
-        let values = await progress.values
-        XCTAssertEqual(values, [0, 0.5, 1])
+        XCTAssertEqual(progress.values, [0, 0.5, 1])
     }
 
     func testOnlyFinalSegmentsAreCombinedInOrder() async throws {
@@ -187,10 +186,19 @@ private actor FakeAppleSpeechRuntime: AppleSpeechRuntime {
     }
 }
 
-private actor ProgressRecorder {
-    private(set) var values: [Double] = []
+private final class ProgressRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [Double] = []
+
+    var values: [Double] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
 
     func append(_ value: Double) {
-        values.append(value)
+        lock.lock()
+        defer { lock.unlock() }
+        storage.append(value)
     }
 }
