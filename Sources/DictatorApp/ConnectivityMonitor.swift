@@ -1,4 +1,3 @@
-import DictatorCore
 import Foundation
 import Network
 
@@ -36,26 +35,5 @@ final class NetworkConnectivityMonitor: ConnectivityMonitoring, @unchecked Senda
 
     deinit {
         monitor.cancel()
-    }
-}
-
-enum OfflineFallbackRoute: Equatable {
-    case selectedProvider
-    case appleFallback
-    case unavailable
-}
-
-enum OfflineFallbackPolicy {
-    static func route(
-        selectedProvider: ProviderKind,
-        fallbackEnabled: Bool,
-        connectivity: ConnectivityState,
-        appleSpeechReady: Bool
-    ) -> OfflineFallbackRoute {
-        guard selectedProvider != .appleSpeech,
-              fallbackEnabled,
-              connectivity == .offline
-        else { return .selectedProvider }
-        return appleSpeechReady ? .appleFallback : .unavailable
     }
 }

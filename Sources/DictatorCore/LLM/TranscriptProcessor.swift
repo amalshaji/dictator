@@ -23,7 +23,6 @@ public enum ProcessedTranscript: Equatable, Sendable {
     case raw(String)
     case cleaned(CleanupResult)
     case fallback(String, reason: String)
-    case offlineFallback(String, reason: String)
     case failed(String)
 }
 
@@ -60,7 +59,6 @@ public struct TranscriptProcessor: Sendable {
         switch outcome {
         case .cleaned(let result): return .cleaned(result)
         case .transcriptionFallback(let text, let reason): return .fallback(text, reason: reason)
-        case .offlineFallback(let text, let reason): return .offlineFallback(text, reason: reason)
         case .failed(let reason): return .failed(reason)
         }
     }

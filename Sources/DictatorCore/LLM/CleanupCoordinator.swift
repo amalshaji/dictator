@@ -21,7 +21,7 @@ public struct CleanupCoordinator: Sendable {
                 group.addTask { try await provider.clean(request: request, model: model, credentials: credentials) }
                 group.addTask {
                     try await Task.sleep(for: timeout)
-                    throw ProviderError.transport(.timedOut)
+                    throw CancellationError()
                 }
                 defer { group.cancelAll() }
                 guard let value = try await group.next() else { throw ProviderError.invalidResponse }
@@ -29,9 +29,6 @@ public struct CleanupCoordinator: Sendable {
             }
             return .cleaned(result)
         } catch {
-            if TransportFailureClassifier.isOfflineEligible(error) {
-                return .offlineFallback(request.input.spokenText, reason: error.localizedDescription)
-            }
             switch request.input {
             case .transcription(let text):
                 return .transcriptionFallback(text, reason: error.localizedDescription)
@@ -45,6 +42,5 @@ public struct CleanupCoordinator: Sendable {
 public enum CleanupOutcome: Equatable, Sendable {
     case cleaned(CleanupResult)
     case transcriptionFallback(String, reason: String)
-    case offlineFallback(String, reason: String)
     case failed(String)
 }

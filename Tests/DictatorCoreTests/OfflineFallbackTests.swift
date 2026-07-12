@@ -21,7 +21,7 @@ final class OfflineFallbackTests: XCTestCase {
         XCTAssertFalse(TransportFailureClassifier.isOfflineEligible(ProviderError.missingCredential("API key")))
     }
 
-    func testContextualCleanupTransportFailureBecomesPlainOfflineDictation() async {
+    func testContextualCleanupTransportFailureStillProtectsSelection() async {
         let request = CleanupRequest(
             input: .contextual(spokenText: "replace this with a concise version", selectedText: "Long selected text"),
             vocabulary: []
@@ -34,10 +34,9 @@ final class OfflineFallbackTests: XCTestCase {
             credentials: .init(apiKey: "test")
         )
 
-        guard case .offlineFallback(let text, _) = outcome else {
-            return XCTFail("Expected offline plain-dictation fallback")
+        guard case .failed = outcome else {
+            return XCTFail("Cleanup must remain provider-neutral and protect selected text")
         }
-        XCTAssertEqual(text, "replace this with a concise version")
     }
 
     func testContextualCleanupProviderFailureStillProtectsSelection() async {
@@ -58,10 +57,9 @@ final class OfflineFallbackTests: XCTestCase {
         }
     }
 
-    func testTranscriptProcessorPreservesOfflineFallbackSignal() async {
+    func testTranscriptProcessorUsesNormalFallbackForTransportFailure() async {
         let result = await TranscriptProcessor().process(
             rawText: "plain offline dictation",
-            selectedText: "Selected text",
             vocabulary: [],
             snippets: [],
             cleanup: .init(
@@ -71,8 +69,8 @@ final class OfflineFallbackTests: XCTestCase {
             )
         )
 
-        guard case .offlineFallback(let text, _) = result else {
-            return XCTFail("Expected the app to receive the offline-mode signal")
+        guard case .fallback(let text, _) = result else {
+            return XCTFail("Transport failures must use the normal provider-neutral fallback")
         }
         XCTAssertEqual(text, "plain offline dictation")
     }

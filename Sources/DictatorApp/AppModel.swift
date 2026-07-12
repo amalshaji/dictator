@@ -36,7 +36,7 @@ final class AppModel: ObservableObject {
     private let defaults: UserDefaults
     private let store = LocalStore(fileURL: LocalStore.applicationSupportURL())
     private let keychain: any CredentialStoring
-    private let connectivity: any ConnectivityMonitoring
+    private let transcriptionCoordinator: TranscriptionCoordinator
     private var appleSpeechObservation: AnyCancellable?
     private let recorder = AudioRecorder()
     private let hotkey = HotkeyMonitor()
@@ -72,11 +72,16 @@ final class AppModel: ObservableObject {
     ) {
         self.defaults = defaults
         self.keychain = keychain
-        self.connectivity = connectivity
-        appleSpeech = AppleSpeechCoordinator(
+        let appleSpeech = AppleSpeechCoordinator(
             provider: appleSpeechProvider,
             selectedLocaleIdentifier: defaults.string(forKey: "appleSpeechLocale") ?? Locale.current.identifier,
             persistSelection: { defaults.set($0, forKey: "appleSpeechLocale") }
+        )
+        self.appleSpeech = appleSpeech
+        transcriptionCoordinator = TranscriptionCoordinator(
+            keychain: keychain,
+            appleSpeech: appleSpeech,
+            connectivity: connectivity
         )
         selectedSTT = STTProviderSelection.resolve(
             savedRawValue: defaults.string(forKey: "selectedSTT"),
@@ -173,13 +178,17 @@ final class AppModel: ObservableObject {
     private func process(_ audio: RecordedAudio, pipelineStarted: ContinuousClock.Instant) async {
         hud.show(.transcribing)
         do {
-            var transcription = try await transcribe(audio)
-            let offlineBeforeCleanup = transcription.offlineMode || connectivity.state == .offline
-            if offlineBeforeCleanup {
-                transcription.offlineMode = true
-                hud.show(.offline)
-            }
-            let cleanup = offlineBeforeCleanup ? nil : try cleanupConfiguration()
+            let transcription = try await transcriptionCoordinator.transcribe(
+                audio: audio,
+                selectedProvider: selectedSTT,
+                selectedModel: configuredModel(for: .speechToText, provider: selectedSTT),
+                fallbackEnabled: offlineFallbackEnabled,
+                vocabulary: data.vocabulary,
+                onModeChange: { [hud] mode in
+                    if mode == .offline { hud.show(.offline) }
+                }
+            )
+            let cleanup = transcription.allowsCleanup ? try cleanupConfiguration() : nil
             if cleanup != nil { hud.show(.cleaning) }
             let processed = await transcriptProcessor.process(
                 rawText: transcription.result.text,
@@ -199,10 +208,6 @@ final class AppModel: ObservableObject {
                 (finalText, cleanupResult, cleanupFallbackReason) = (result.text, result, nil)
             case .fallback(let text, let reason):
                 (finalText, cleanupResult, cleanupFallbackReason) = (text, nil, reason)
-            case .offlineFallback(let text, _):
-                transcription.offlineMode = true
-                hud.show(.offline)
-                (finalText, cleanupResult, cleanupFallbackReason) = (text, nil, nil)
             case .failed(let reason):
                 showError("Cleanup failed—selection unchanged: \(reason)")
                 return
@@ -227,7 +232,7 @@ final class AppModel: ObservableObject {
             showCompletion(
                 insertion: insertion,
                 cleanupFallbackReason: cleanupFallbackReason,
-                offlineMode: transcription.offlineMode
+                offlineMode: transcription.mode == .offline
             )
             data.transcripts.insert(.init(
                 rawText: transcription.result.text,
@@ -250,88 +255,9 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private struct TranscriptionExecution {
-        let result: TranscriptionResult
-        var offlineMode: Bool
-    }
-
-    private func transcribe(_ audio: RecordedAudio) async throws -> TranscriptionExecution {
-        if selectedSTT == .appleSpeech {
-            if connectivity.state == .offline { hud.show(.offline) }
-            let result = try await appleSpeech.transcribe(audio: audio, vocabulary: data.vocabulary)
-            return .init(result: result, offlineMode: connectivity.state == .offline)
-        }
-
-        let route = OfflineFallbackPolicy.route(
-            selectedProvider: selectedSTT,
-            fallbackEnabled: offlineFallbackEnabled,
-            connectivity: connectivity.state,
-            appleSpeechReady: appleSpeech.state.readiness.isReady
-        )
-        switch route {
-        case .appleFallback:
-            return try await transcribeWithAppleFallback(audio)
-        case .unavailable:
-            await appleSpeech.refresh()
-            guard appleSpeech.state.readiness.isReady else { throw offlineModelUnavailableError }
-            return try await transcribeWithAppleFallback(audio)
-        case .selectedProvider:
-            break
-        }
-
-        guard let provider = ProviderRegistry.sttProvider(for: selectedSTT) else {
-            throw ProviderError.unsupported("Provider is not available")
-        }
-        guard let credentials = try keychain.load(for: .speechToText, provider: selectedSTT) else {
-            throw ProviderError.missingCredential("\(provider.metadata.displayName) API key")
-        }
-        let model = configuredModel(for: .speechToText, provider: selectedSTT) ?? provider.metadata.defaultModel
-        let options = TranscriptionOptions(model: model, vocabulary: data.vocabulary)
-        var lastError: Error?
-        for attempt in 0..<3 {
-            do {
-                let result = try await provider.transcribe(audio: audio, options: options, credentials: credentials)
-                return .init(result: result, offlineMode: false)
-            } catch {
-                lastError = error
-                if offlineFallbackEnabled, TransportFailureClassifier.isOfflineEligible(error) {
-                    await appleSpeech.refresh()
-                    guard appleSpeech.state.readiness.isReady else { throw offlineModelUnavailableError }
-                    return try await transcribeWithAppleFallback(audio)
-                }
-                guard attempt < 2, isRetryable(error) else { throw error }
-                try? await Task.sleep(for: .milliseconds(250 * (attempt + 1)))
-            }
-        }
-        throw lastError ?? ProviderError.invalidResponse
-    }
-
-    private func transcribeWithAppleFallback(_ audio: RecordedAudio) async throws -> TranscriptionExecution {
-        hud.show(.offline)
-        if !appleSpeech.state.readiness.isReady { await appleSpeech.refresh() }
-        guard appleSpeech.state.readiness.isReady else { throw offlineModelUnavailableError }
-        do {
-            let result = try await appleSpeech.transcribe(audio: audio, vocabulary: data.vocabulary)
-            return .init(result: result, offlineMode: true)
-        } catch {
-            await appleSpeech.refresh()
-            guard appleSpeech.state.readiness.isReady else { throw offlineModelUnavailableError }
-            throw error
-        }
-    }
-
-    private var offlineModelUnavailableError: ProviderError {
-        .invalidConfiguration("Offline model unavailable—connect and repair offline mode in Providers.")
-    }
-
     private static func elapsedSeconds(since instant: ContinuousClock.Instant) -> TimeInterval {
         let components = instant.duration(to: .now).components
         return Double(components.seconds) + Double(components.attoseconds) / 1e18
-    }
-
-    private func isRetryable(_ error: Error) -> Bool {
-        if case ProviderError.httpStatus(let status, _) = error { return [408, 429, 502, 503].contains(status) }
-        return TransportFailureClassifier.code(for: error) != nil
     }
 
     func credentials(purpose: ProviderPurpose, provider: ProviderKind) -> ProviderCredentials? {
@@ -531,8 +457,9 @@ final class AppModel: ObservableObject {
 
     func configureOnboardingProvider(kind: ProviderKind, apiKey: String, accountID: String?) async throws {
         if kind == .appleSpeech {
-            try await configureOfflineFallback()
+            try await prepareAppleSpeech()
             try selectSTT(.appleSpeech)
+            setOfflineFallbackEnabled(true)
             return
         }
         guard let provider = ProviderRegistry.sttProvider(for: kind) else { throw ProviderError.unsupported("Provider is unavailable") }
@@ -547,12 +474,16 @@ final class AppModel: ObservableObject {
     }
 
     func configureOfflineFallback() async throws {
+        try await prepareAppleSpeech()
+        setOfflineFallbackEnabled(true)
+    }
+
+    private func prepareAppleSpeech() async throws {
         if !appleSpeech.state.readiness.isReady { await appleSpeech.prepare() }
         try Task.checkCancellation()
         guard appleSpeech.state.readiness.isReady else {
             throw ProviderError.invalidConfiguration(appleSpeech.statusText)
         }
-        setOfflineFallbackEnabled(true)
     }
 
     func disableOfflineFallback() {
