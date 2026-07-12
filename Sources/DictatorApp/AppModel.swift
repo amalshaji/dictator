@@ -13,7 +13,7 @@ enum ShortcutPurpose { case dictate, pasteLatest, openClipboard }
 final class AppModel: ObservableObject {
     @Published var data = PersistedData()
     @Published var phase: DictationPhase = .idle
-    @Published var selectedSTT: ProviderKind = .groq { didSet { defaults.set(selectedSTT.rawValue, forKey: "selectedSTT") } }
+    @Published private(set) var selectedSTT: ProviderKind = .groq
     @Published var selectedLLM: ProviderKind = .groq { didSet { defaults.set(selectedLLM.rawValue, forKey: "selectedLLM") } }
     @Published var cleanupEnabled = false { didSet { defaults.set(cleanupEnabled, forKey: "cleanupEnabled") } }
     @Published var lastError: String?
@@ -30,10 +30,12 @@ final class AppModel: ObservableObject {
         didSet { defaults.set(selectedStyleID?.uuidString, forKey: "selectedStyleID") }
     }
     let pricing = PricingStore()
+    let appleSpeech: AppleSpeechCoordinator
 
     private let defaults = UserDefaults.standard
     private let store = LocalStore(fileURL: LocalStore.applicationSupportURL())
-    private let keychain = KeychainStore()
+    private let keychain: any CredentialStoring
+    private var appleSpeechObservation: AnyCancellable?
     private let recorder = AudioRecorder()
     private let hotkey = HotkeyMonitor()
     private let inserter = AccessibilityInserter()
@@ -42,14 +44,35 @@ final class AppModel: ObservableObject {
     private let hud = FloatingPanelController()
     private var focusedTarget: FocusedTarget?
 
-    init() {
-        selectedSTT = ProviderKind(rawValue: defaults.string(forKey: "selectedSTT") ?? "") ?? .groq
+    convenience init() {
+        self.init(keychain: KeychainStore(), appleSpeechProvider: Self.defaultAppleSpeechProvider())
+    }
+
+    init(keychain: any CredentialStoring, appleSpeechProvider: (any LocalSpeechTranscribing)?) {
+        let defaults = UserDefaults.standard
+        self.keychain = keychain
+        appleSpeech = AppleSpeechCoordinator(
+            provider: appleSpeechProvider,
+            selectedLocaleIdentifier: defaults.string(forKey: "appleSpeechLocale") ?? Locale.current.identifier,
+            persistSelection: { defaults.set($0, forKey: "appleSpeechLocale") }
+        )
+        selectedSTT = STTProviderSelection.resolve(
+            savedRawValue: defaults.string(forKey: "selectedSTT"),
+            appleSpeechAvailable: appleSpeechProvider != nil,
+            lastCloudRawValue: defaults.string(forKey: "lastCloudSTT"),
+            existingInstallation: defaults.object(forKey: "onboardingComplete") != nil
+        )
         selectedLLM = ProviderKind(rawValue: defaults.string(forKey: "selectedLLM") ?? "") ?? .groq
         cleanupEnabled = defaults.bool(forKey: "cleanupEnabled")
         selectedStyleID = defaults.string(forKey: "selectedStyleID").flatMap(UUID.init(uuidString:))
         dictateShortcut = loadShortcut(forKey: "shortcut.dictate", fallback: .dictate)
         pasteLatestShortcut = loadShortcut(forKey: "shortcut.pasteLatest", fallback: .pasteLatest)
         openClipboardShortcut = loadShortcut(forKey: "shortcut.openClipboard", fallback: .openClipboard)
+        defaults.set(selectedSTT.rawValue, forKey: "selectedSTT")
+        if selectedSTT != .appleSpeech { defaults.set(selectedSTT.rawValue, forKey: "lastCloudSTT") }
+        appleSpeechObservation = appleSpeech.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
         configureHotkeys()
         recorder.onLevel = { [weak self] level in
             Task { @MainActor in self?.hud.model.push(level: level) }
@@ -71,6 +94,7 @@ final class AppModel: ObservableObject {
             await Task.yield()
             hud.show(.idle)
             await load()
+            if selectedSTT == .appleSpeech { await appleSpeech.refresh() }
         }
         if !runningTests { Task { @MainActor [weak self] in
             // TCC permission changes do not restart the process. Retry until the
@@ -80,6 +104,11 @@ final class AppModel: ObservableObject {
                 self.startHotkeysIfPossible()
             }
         } }
+    }
+
+    private static func defaultAppleSpeechProvider() -> (any LocalSpeechTranscribing)? {
+        if #available(macOS 26.0, *) { return AppleSpeechTranscriber() }
+        return nil
     }
 
     func startDictation(targetProcessIdentifier: pid_t? = nil) async {
@@ -121,10 +150,24 @@ final class AppModel: ObservableObject {
     private func process(_ audio: RecordedAudio, pipelineStarted: ContinuousClock.Instant) async {
         hud.show(.transcribing)
         do {
-            guard let provider = ProviderRegistry.sttProvider(for: selectedSTT) else { throw ProviderError.unsupported("Provider is not available") }
-            guard let credentials = try keychain.load(for: .speechToText, provider: selectedSTT) else { throw ProviderError.missingCredential("\(provider.metadata.displayName) API key") }
-            let model = configuredModel(for: .speechToText, provider: selectedSTT) ?? provider.metadata.defaultModel
-            let raw = try await transcribeWithRetry(provider: provider, audio: audio, options: .init(model: model, vocabulary: data.vocabulary), credentials: credentials)
+            let raw: TranscriptionResult
+            if selectedSTT == .appleSpeech {
+                raw = try await appleSpeech.transcribe(audio: audio, vocabulary: data.vocabulary)
+            } else {
+                guard let provider = ProviderRegistry.sttProvider(for: selectedSTT) else {
+                    throw ProviderError.unsupported("Provider is not available")
+                }
+                guard let credentials = try keychain.load(for: .speechToText, provider: selectedSTT) else {
+                    throw ProviderError.missingCredential("\(provider.metadata.displayName) API key")
+                }
+                let model = configuredModel(for: .speechToText, provider: selectedSTT) ?? provider.metadata.defaultModel
+                raw = try await transcribeWithRetry(
+                    provider: provider,
+                    audio: audio,
+                    options: .init(model: model, vocabulary: data.vocabulary),
+                    credentials: credentials
+                )
+            }
             let cleanup = try cleanupConfiguration()
             if cleanup != nil { hud.show(.cleaning) }
             let processed = await transcriptProcessor.process(
@@ -170,8 +213,9 @@ final class AppModel: ObservableObject {
             data.transcripts.insert(.init(
                 rawText: raw.text,
                 finalText: finalText,
-                sttProvider: selectedSTT,
-                sttModel: model,
+                sttProvider: raw.provider,
+                sttModel: raw.model,
+                sttLocale: raw.language,
                 sourceBundleID: focusedTarget?.bundleIdentifier,
                 audioDuration: audio.duration,
                 sttLatency: raw.latency,
@@ -215,11 +259,30 @@ final class AppModel: ObservableObject {
     }
 
     func saveCredentials(_ credentials: ProviderCredentials, purpose: ProviderPurpose, provider: ProviderKind, model: String) throws {
+        guard provider != .appleSpeech else {
+            throw ProviderError.invalidConfiguration("Apple On-Device transcription does not use API credentials.")
+        }
         guard !credentials.apiKey.isEmpty else { throw ProviderError.missingCredential("API key") }
         guard !model.isEmpty else { throw ProviderError.invalidConfiguration("Enter a model name.") }
         try keychain.save(credentials, for: purpose, provider: provider)
         defaults.set(model, forKey: modelKey(for: purpose, provider: provider))
         objectWillChange.send()
+    }
+
+    func selectSTT(_ provider: ProviderKind) throws {
+        guard provider != selectedSTT else { return }
+        let lastCloud = try STTProviderSelection.prepareTransition(
+            from: selectedSTT,
+            to: provider,
+            selectedCleanup: selectedLLM,
+            store: keychain
+        )
+        if let lastCloud { defaults.set(lastCloud.rawValue, forKey: "lastCloudSTT") }
+        selectedSTT = provider
+        defaults.set(provider.rawValue, forKey: "selectedSTT")
+        if provider == .appleSpeech, !appleSpeech.state.readiness.isReady {
+            Task { await appleSpeech.refresh() }
+        }
     }
 
     func saveVocabulary(_ entry: VocabularyEntry) throws {
@@ -387,6 +450,14 @@ final class AppModel: ObservableObject {
     }
 
     func configureOnboardingProvider(kind: ProviderKind, apiKey: String, accountID: String?) async throws {
+        if kind == .appleSpeech {
+            await appleSpeech.prepare()
+            guard appleSpeech.state.readiness.isReady else {
+                throw ProviderError.invalidConfiguration(appleSpeech.statusText)
+            }
+            try selectSTT(.appleSpeech)
+            return
+        }
         guard let provider = ProviderRegistry.sttProvider(for: kind) else { throw ProviderError.unsupported("Provider is unavailable") }
         let normalizedAccountID = accountID?.trimmingCharacters(in: .whitespacesAndNewlines)
         let credentials = ProviderCredentials(
@@ -395,7 +466,7 @@ final class AppModel: ObservableObject {
         )
         try await provider.validate(credentials: credentials)
         try saveCredentials(credentials, purpose: .speechToText, provider: kind, model: provider.metadata.defaultModel)
-        selectedSTT = kind
+        try selectSTT(kind)
     }
 
     func finishOnboarding() {
@@ -403,7 +474,17 @@ final class AppModel: ObservableObject {
         defaults.set(true, forKey: "onboardingComplete")
     }
 
-    var selectedSTTIsConfigured: Bool { credentials(purpose: .speechToText, provider: selectedSTT)?.apiKey.isEmpty == false }
+    var selectedSTTIsConfigured: Bool {
+        selectedSTT == .appleSpeech
+            ? appleSpeech.state.readiness.isReady
+            : credentials(purpose: .speechToText, provider: selectedSTT)?.apiKey.isEmpty == false
+    }
+
+    var appleSpeechAvailable: Bool { appleSpeech.isAvailable }
+
+    var sttMetadata: [ProviderMetadata] {
+        ProviderRegistry.sttMetadata(includeAppleSpeech: appleSpeechAvailable)
+    }
 
     func configuredModel(for purpose: ProviderPurpose, provider: ProviderKind) -> String? {
         defaults.string(forKey: modelKey(for: purpose, provider: provider))

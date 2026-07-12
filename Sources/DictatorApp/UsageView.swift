@@ -95,11 +95,15 @@ struct UsageView: View {
         breakdownContainer(isEmpty: report.sttBreakdown.isEmpty) {
             ForEach(report.sttBreakdown) { row in
                 breakdownRow(
-                    name: "\(row.provider.rawValue) · \(row.model)",
+                    name: "\(sttProviderName(row.provider)) · \(row.model)",
                     detail: "\(row.requests) req · \(String(format: "%.1f", row.audioSeconds / 60)) min · \(latency(row.medianLatency)) · \(UsageDisplayFormatter.currency(row.cost, complete: row.pricedRequests == row.requests))"
                 )
             }
         }
+    }
+
+    private func sttProviderName(_ provider: ProviderKind) -> String {
+        ProviderRegistry.sttMetadata(includeAppleSpeech: true).first { $0.kind == provider }?.displayName ?? provider.rawValue
     }
 
     private var llmBreakdown: some View {

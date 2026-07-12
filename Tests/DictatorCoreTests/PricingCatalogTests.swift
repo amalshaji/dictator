@@ -2,6 +2,17 @@ import XCTest
 @testable import DictatorCore
 
 final class PricingCatalogTests: XCTestCase {
+    func testAppleSpeechHasZeroBillableCost() {
+        XCTAssertEqual(
+            PricingCatalog.estimatedSTTCost(
+                provider: .appleSpeech,
+                model: AppleTranscriptionEngine.speechTranscriber.rawValue,
+                audioSeconds: 60
+            ),
+            0
+        )
+    }
+
     func testCatalogUsesAudioDurationAndMinimumBilling() {
         XCTAssertEqual(PricingCatalog.estimatedSTTCost(provider: .groq, model: "whisper-large-v3-turbo", audioSeconds: 3_600), Decimal(string: "0.04"))
         XCTAssertEqual(PricingCatalog.estimatedSTTCost(provider: .xAI, model: "grok-transcribe", audioSeconds: 1_800), Decimal(string: "0.05"))

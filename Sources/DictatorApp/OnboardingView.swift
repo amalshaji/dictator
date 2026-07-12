@@ -32,6 +32,7 @@ struct OnboardingView: View {
             .padding(38)
         }
         .onReceive(timer) { _ in if step == 1 { model.refreshPermissionState() } }
+        .onAppear { provider = model.selectedSTT }
         .onChange(of: step) { _, value in
             guard value == 3 else { return }
             Task { @MainActor in
@@ -54,7 +55,7 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 20) {
             WaveMarkLarge()
             Text("Speak. Release. Keep moving.").font(.dictatorDisplay(38))
-            Text("Dictator turns the Fn key into cloud-powered dictation anywhere on your Mac. Your provider keys stay in Keychain, and recordings are sent to your selected provider for transcription.")
+            Text("Dictator turns the Fn key into dictation anywhere on your Mac. Use Apple On-Device on supported Macs, or connect the cloud speech provider you prefer.")
                 .font(.dictatorBody(16)).foregroundStyle(.secondary).lineSpacing(4)
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -79,25 +80,64 @@ struct OnboardingView: View {
     private var providerSetup: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Connect speech-to-text").font(.dictatorDisplay(30))
-            Text("Use your own provider account. The key is saved only in macOS Keychain.")
+            Text("Apple keeps audio on this Mac after its initial model download. Cloud providers receive audio directly and keep their keys in macOS Keychain.")
                 .font(.dictatorBody(14)).foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 8) {
                 Text("CHOOSE A PROVIDER").font(.dictatorUtility(9)).foregroundStyle(DictatorDesign.muted)
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                    ForEach(ProviderRegistry.sttMetadata, id: \.kind) { item in
+                    ForEach(model.sttMetadata, id: \.kind) { item in
                         providerChoice(kind: item.kind, name: item.displayName)
                     }
                 }
             }
-            SecureField("API key", text: $apiKey).textFieldStyle(DictatorTextFieldStyle())
-            if provider == .cloudflare { TextField("Cloudflare account ID", text: $accountID).textFieldStyle(DictatorTextFieldStyle()) }
-            Button(connecting ? "Verifying…" : "Verify and save") { Task { await connect() } }
-                .dictatorButton().disabled(connecting || apiKey.isEmpty)
+            if provider == .appleSpeech {
+                appleSpeechSetup
+            } else {
+                SecureField("API key", text: $apiKey).textFieldStyle(DictatorTextFieldStyle())
+                if provider == .cloudflare { TextField("Cloudflare account ID", text: $accountID).textFieldStyle(DictatorTextFieldStyle()) }
+            }
+            Button(connecting ? appleOrCloudProgressTitle : appleOrCloudActionTitle) { Task { await connect() } }
+                .dictatorButton().disabled(connecting || (provider != .appleSpeech && apiKey.isEmpty))
             if !providerStatus.isEmpty {
                 Text(providerStatus).font(.dictatorBody(12, weight: .medium))
                     .foregroundStyle(model.selectedSTTIsConfigured ? .green : .orange)
             }
         }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var appleSpeechSetup: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if !model.appleSpeech.state.locales.isEmpty {
+                DictatorMenuField(
+                    label: "Language",
+                    options: model.appleSpeech.state.locales.map {
+                        .init(
+                            value: $0.identifier,
+                            label: Locale.current.localizedString(forIdentifier: $0.identifier) ?? $0.identifier
+                        )
+                    },
+                    selection: Binding(
+                        get: { model.appleSpeech.state.selectedLocaleIdentifier },
+                        set: { model.appleSpeech.selectLocale($0) }
+                    )
+                )
+            }
+            Text(model.appleSpeech.statusText)
+                .font(.dictatorBody(12, weight: .medium))
+                .foregroundStyle(model.appleSpeech.state.readiness.isReady ? DictatorDesign.focus : .secondary)
+            if case let .downloading(_, progress) = model.appleSpeech.state.readiness {
+                ProgressView(value: progress)
+            }
+        }
+        .task { await model.appleSpeech.refresh() }
+    }
+
+    private var appleOrCloudActionTitle: String {
+        provider == .appleSpeech ? "Prepare and use Apple On-Device" : "Verify and save"
+    }
+
+    private var appleOrCloudProgressTitle: String {
+        provider == .appleSpeech ? "Preparing model…" : "Verifying…"
     }
 
     private func providerChoice(kind: ProviderKind, name: String) -> some View {
@@ -148,7 +188,7 @@ struct OnboardingView: View {
                         .font(.dictatorUtility(10)).foregroundStyle(.green)
                 }
             }
-            Text("Click the scratchpad, hold Fn while speaking, then release. This uses the provider you just connected.")
+            Text("Click the scratchpad, hold Fn while speaking, then release. This uses the transcription option you just selected.")
                 .font(.dictatorBody(14)).foregroundStyle(.secondary).lineSpacing(3)
 
             HStack(spacing: 8) {
@@ -225,7 +265,7 @@ struct OnboardingView: View {
         defer { connecting = false }
         do {
             try await model.configureOnboardingProvider(kind: provider, apiKey: apiKey, accountID: accountID)
-            providerStatus = "Connection verified"
+            providerStatus = provider == .appleSpeech ? "Apple On-Device is ready" : "Connection verified"
         } catch { providerStatus = error.localizedDescription }
     }
 }

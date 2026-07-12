@@ -40,6 +40,7 @@ struct DictatorSegmentedSwitcher: View {
                         .foregroundStyle(selection == index ? DictatorDesign.ink : DictatorDesign.muted)
                         .padding(.horizontal, 12)
                         .frame(height: 32)
+                        .contentShape(Rectangle())
                         .background(selection == index ? DictatorDesign.control : .clear, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                         .shadow(color: selection == index ? .black.opacity(0.06) : .clear, radius: 2, y: 1)
                 }
@@ -111,6 +112,60 @@ struct DictatorTextFieldStyle: TextFieldStyle {
     }
 }
 
+struct DictatorMenuOption: Identifiable {
+    let value: String
+    let label: String
+
+    var id: String { value }
+}
+
+struct DictatorMenuField: View {
+    let label: String
+    let options: [DictatorMenuOption]
+    @Binding var selection: String
+
+    var body: some View {
+        Menu {
+            ForEach(options) { option in
+                Button {
+                    selection = option.value
+                } label: {
+                    if option.value == selection {
+                        Label(option.label, systemImage: "checkmark")
+                    } else {
+                        Text(option.label)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Text(selectedLabel)
+                    .font(.dictatorBody(13))
+                    .foregroundStyle(DictatorDesign.ink)
+                    .lineLimit(1)
+                Spacer(minLength: 12)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(DictatorDesign.muted)
+            }
+            .padding(.horizontal, 11)
+            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+            .contentShape(Rectangle())
+            .background(DictatorDesign.fog.opacity(0.72), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(DictatorDesign.border))
+        }
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .frame(maxWidth: .infinity)
+        .accessibilityLabel(label)
+        .accessibilityValue(selectedLabel)
+    }
+
+    private var selectedLabel: String {
+        options.first(where: { $0.value == selection })?.label ?? selection
+    }
+}
+
 struct DictatorEditorChrome: ViewModifier {
     func body(content: Content) -> some View {
         content
@@ -129,7 +184,7 @@ extension View {
 extension Font {
     static func dictatorDisplay(_ size: CGFloat) -> Font { .system(size: size, weight: .semibold, design: .rounded) }
     static func dictatorBody(_ size: CGFloat, weight: Weight = .regular) -> Font { .system(size: size, weight: weight, design: .default) }
-    static func dictatorUtility(_ size: CGFloat) -> Font { .system(size: size, weight: .medium, design: .monospaced) }
+    static func dictatorUtility(_ size: CGFloat) -> Font { .system(size: size, weight: .medium, design: .default) }
 }
 
 extension Date {

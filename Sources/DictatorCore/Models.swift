@@ -1,6 +1,7 @@
 import Foundation
 
 public enum ProviderKind: String, Codable, CaseIterable, Sendable {
+    case appleSpeech = "apple-speech"
     case groq
     case cloudflare
     case xAI = "xai"
@@ -10,6 +11,44 @@ public enum ProviderKind: String, Codable, CaseIterable, Sendable {
     case gemini
     case openRouter = "openrouter"
     case openAICompatible = "openai-compatible"
+}
+
+public enum AppleTranscriptionEngine: String, Codable, Equatable, Sendable {
+    case speechTranscriber = "speech-transcriber"
+    case dictationTranscriber = "dictation-transcriber"
+}
+
+public struct AppleSpeechLocale: Identifiable, Codable, Equatable, Sendable {
+    public let identifier: String
+    public let engine: AppleTranscriptionEngine
+
+    public var id: String { identifier }
+
+    public init(identifier: String, engine: AppleTranscriptionEngine) {
+        self.identifier = identifier
+        self.engine = engine
+    }
+}
+
+public enum AppleSpeechReadiness: Equatable, Sendable {
+    case checking
+    case downloadRequired(AppleSpeechLocale)
+    case downloading(AppleSpeechLocale, progress: Double)
+    case ready(AppleSpeechLocale)
+    case unavailable(String)
+    case failed(String)
+
+    public var locale: AppleSpeechLocale? {
+        switch self {
+        case .downloadRequired(let locale), .downloading(let locale, _), .ready(let locale): locale
+        case .checking, .unavailable, .failed: nil
+        }
+    }
+
+    public var isReady: Bool {
+        if case .ready = self { return true }
+        return false
+    }
 }
 
 public struct ProviderCredentials: Codable, Equatable, Sendable {
@@ -345,6 +384,7 @@ public struct TranscriptRecord: Identifiable, Codable, Equatable, Sendable {
     public var finalText: String
     public var sttProvider: ProviderKind
     public var sttModel: String
+    public var sttLocale: String?
     public var sourceBundleID: String?
     public var audioDuration: TimeInterval
     public var sttLatency: TimeInterval
@@ -363,7 +403,7 @@ public struct TranscriptRecord: Identifiable, Codable, Equatable, Sendable {
 
     public init(
         id: UUID = UUID(), createdAt: Date = Date(), rawText: String, finalText: String,
-        sttProvider: ProviderKind, sttModel: String, sourceBundleID: String? = nil, audioDuration: TimeInterval,
+        sttProvider: ProviderKind, sttModel: String, sttLocale: String? = nil, sourceBundleID: String? = nil, audioDuration: TimeInterval,
         sttLatency: TimeInterval, pipelineLatency: TimeInterval? = nil, cleanup: CleanupExecution? = nil, insertionOutcome: String,
         revisions: [TranscriptRevision] = [], preferredRevisionID: UUID? = nil
     ) {
@@ -373,6 +413,7 @@ public struct TranscriptRecord: Identifiable, Codable, Equatable, Sendable {
         self.finalText = finalText
         self.sttProvider = sttProvider
         self.sttModel = sttModel
+        self.sttLocale = sttLocale
         self.sourceBundleID = sourceBundleID
         self.audioDuration = audioDuration
         self.sttLatency = sttLatency
@@ -384,7 +425,7 @@ public struct TranscriptRecord: Identifiable, Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, createdAt, rawText, finalText, sttProvider, sttModel, sourceBundleID
+        case id, createdAt, rawText, finalText, sttProvider, sttModel, sttLocale, sourceBundleID
         case audioDuration, sttLatency, pipelineLatency, cleanup, insertionOutcome, revisions, preferredRevisionID
         case llmProvider, llmModel, cleanupLatency, llmUsage
     }
@@ -394,6 +435,7 @@ public struct TranscriptRecord: Identifiable, Codable, Equatable, Sendable {
         id = try c.decode(UUID.self, forKey: .id); createdAt = try c.decode(Date.self, forKey: .createdAt)
         rawText = try c.decode(String.self, forKey: .rawText); finalText = try c.decode(String.self, forKey: .finalText)
         sttProvider = try c.decode(ProviderKind.self, forKey: .sttProvider); sttModel = try c.decode(String.self, forKey: .sttModel)
+        sttLocale = try c.decodeIfPresent(String.self, forKey: .sttLocale)
         sourceBundleID = try c.decodeIfPresent(String.self, forKey: .sourceBundleID)
         audioDuration = try c.decode(TimeInterval.self, forKey: .audioDuration); sttLatency = try c.decode(TimeInterval.self, forKey: .sttLatency)
         pipelineLatency = try c.decodeIfPresent(TimeInterval.self, forKey: .pipelineLatency)
@@ -420,6 +462,7 @@ public struct TranscriptRecord: Identifiable, Codable, Equatable, Sendable {
         try c.encode(id, forKey: .id); try c.encode(createdAt, forKey: .createdAt)
         try c.encode(rawText, forKey: .rawText); try c.encode(finalText, forKey: .finalText)
         try c.encode(sttProvider, forKey: .sttProvider); try c.encode(sttModel, forKey: .sttModel)
+        try c.encodeIfPresent(sttLocale, forKey: .sttLocale)
         try c.encodeIfPresent(sourceBundleID, forKey: .sourceBundleID)
         try c.encode(audioDuration, forKey: .audioDuration); try c.encode(sttLatency, forKey: .sttLatency)
         try c.encodeIfPresent(pipelineLatency, forKey: .pipelineLatency)

@@ -93,6 +93,27 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertNil(model.selectedStyleID)
     }
 
+    func testAppleSpeechSetupIgnoresStaleLocaleReadiness() async throws {
+        let provider = DelayedAppleSpeechProvider()
+        let coordinator = AppleSpeechCoordinator(
+            provider: provider,
+            selectedLocaleIdentifier: "en_US",
+            persistSelection: { _ in }
+        )
+        let initialRefresh = Task { await coordinator.refresh() }
+
+        while coordinator.state.locales.isEmpty { await Task.yield() }
+        coordinator.selectLocale("fr_FR")
+        try await Task.sleep(for: .milliseconds(200))
+        await initialRefresh.value
+
+        XCTAssertEqual(coordinator.state.selectedLocaleIdentifier, "fr_FR")
+        XCTAssertEqual(
+            coordinator.state.readyLocale,
+            AppleSpeechLocale(identifier: "fr_FR", engine: .speechTranscriber)
+        )
+    }
+
     func testMissingFocusedTargetNeverTouchesAnotherApp() async {
         let result = await AccessibilityInserter().insert(.dictation("private text"), into: nil)
         XCTAssertEqual(result, .privateClipboard("no editable field was focused"))
@@ -331,6 +352,41 @@ final class AppBehaviorTests: XCTestCase {
         PostedKeyEvent(keyCode: 0x09, keyDown: true, flags: .maskCommand),
         PostedKeyEvent(keyCode: 0x09, keyDown: false, flags: .maskCommand),
     ]
+}
+
+private actor DelayedAppleSpeechProvider: LocalSpeechTranscribing {
+    private let locales = [
+        AppleSpeechLocale(identifier: "en_US", engine: .speechTranscriber),
+        AppleSpeechLocale(identifier: "fr_FR", engine: .speechTranscriber)
+    ]
+
+    func availableLocales() async -> [AppleSpeechLocale] { locales }
+
+    func readiness(for localeIdentifier: String) async -> AppleSpeechReadiness {
+        try? await Task.sleep(for: localeIdentifier == "en_US" ? .milliseconds(100) : .milliseconds(1))
+        return .ready(.init(identifier: localeIdentifier, engine: .speechTranscriber))
+    }
+
+    func installAssets(
+        for localeIdentifier: String,
+        progress: @escaping @Sendable (Double) -> Void
+    ) async throws -> AppleSpeechReadiness {
+        .ready(.init(identifier: localeIdentifier, engine: .speechTranscriber))
+    }
+
+    func transcribe(
+        audio: RecordedAudio,
+        localeIdentifier: String,
+        vocabulary: [VocabularyEntry]
+    ) async throws -> TranscriptionResult {
+        .init(
+            text: "test",
+            language: localeIdentifier,
+            provider: .appleSpeech,
+            model: AppleTranscriptionEngine.speechTranscriber.rawValue,
+            latency: 0
+        )
+    }
 }
 
 @MainActor

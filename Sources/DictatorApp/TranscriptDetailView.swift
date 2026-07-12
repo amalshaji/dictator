@@ -324,7 +324,7 @@ struct TranscriptDetailView: View {
 
     private func value(_ label: String, _ text: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(text).font(.dictatorDisplay(14)).monospacedDigit()
+            Text(text).font(.dictatorDisplay(14))
             Text(label).font(.dictatorBody(9)).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
