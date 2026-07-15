@@ -64,6 +64,14 @@ enum InsertionResult: Equatable {
     }
 }
 
+@MainActor
+protocol FocusedTargetInserting: AnyObject {
+    func captureFocusedTarget(processIdentifier: pid_t?) -> FocusedTarget?
+    func captureFocusedWindow(for target: FocusedTarget) -> FocusedWindowSnapshot?
+    func insert(_ insertion: TextInsertion, into target: FocusedTarget?) async -> InsertionResult
+    func pasteIntoFrontmostApp(_ text: String) async -> Bool
+}
+
 enum TargetCandidate {
     case editable(processIdentifier: pid_t, element: AXUIElement, selection: TextSelectionSnapshot?)
     case secure(processIdentifier: pid_t)
@@ -290,7 +298,7 @@ struct InsertionEnvironment {
 }
 
 @MainActor
-final class AccessibilityInserter {
+final class AccessibilityInserter: FocusedTargetInserting {
     private let resolver: AccessibilityTargetResolver
     private let environment: InsertionEnvironment
     private let paster: ClipboardPaster

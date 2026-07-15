@@ -17,6 +17,16 @@ private struct ScreenAwareRun {
     let credentials: ProviderCredentials
 }
 
+private enum ActiveDictationRun {
+    case standard(target: FocusedTarget?)
+    case screenAware(ScreenAwareRun)
+
+    var isScreenAware: Bool {
+        if case .screenAware = self { return true }
+        return false
+    }
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published var data = PersistedData()
@@ -50,17 +60,17 @@ final class AppModel: ObservableObject {
     private let defaults: UserDefaults
     private let store = LocalStore(fileURL: LocalStore.applicationSupportURL())
     private let keychain: any CredentialStoring
-    private let transcriptionCoordinator: TranscriptionCoordinator
+    private let transcriptionCoordinator: any TranscriptionCoordinating
     private var appleSpeechObservation: AnyCancellable?
     private let recorder: any AudioRecording
     private let screenCapture: any ScreenContextCapturing
     private let hotkeys: HotkeyLifecycleController
-    private let inserter = AccessibilityInserter()
+    private let inserter: any FocusedTargetInserting
+    private let screenAwareProvider: (ProviderKind) -> (any ScreenAwareLLMProvider)?
     private let transcriptProcessor = TranscriptProcessor()
     private let transcriptRepairService = TranscriptRepairService()
     private let hud = FloatingPanelController()
-    private var focusedTarget: FocusedTarget?
-    private var screenAwareRun: ScreenAwareRun?
+    private var activeRun: ActiveDictationRun?
 
     convenience init() {
         self.init(
@@ -87,20 +97,25 @@ final class AppModel: ObservableObject {
         connectivity: any ConnectivityMonitoring,
         hotkeys: HotkeyLifecycleController = HotkeyLifecycleController(),
         recorder: any AudioRecording = AudioRecorder(),
-        screenCapture: any ScreenContextCapturing = ScreenContextCaptureService()
+        screenCapture: any ScreenContextCapturing = ScreenContextCaptureService(),
+        transcriptionCoordinator: (any TranscriptionCoordinating)? = nil,
+        inserter: any FocusedTargetInserting = AccessibilityInserter(),
+        screenAwareProvider: @escaping (ProviderKind) -> (any ScreenAwareLLMProvider)? = ScreenAwareProviderRegistry.provider
     ) {
         self.defaults = defaults
         self.keychain = keychain
         self.hotkeys = hotkeys
         self.recorder = recorder
         self.screenCapture = screenCapture
+        self.inserter = inserter
+        self.screenAwareProvider = screenAwareProvider
         let appleSpeech = AppleSpeechCoordinator(
             provider: appleSpeechProvider,
             selectedLocaleIdentifier: defaults.string(forKey: "appleSpeechLocale") ?? Locale.current.identifier,
             persistSelection: { defaults.set($0, forKey: "appleSpeechLocale") }
         )
         self.appleSpeech = appleSpeech
-        transcriptionCoordinator = TranscriptionCoordinator(
+        self.transcriptionCoordinator = transcriptionCoordinator ?? TranscriptionCoordinator(
             keychain: keychain,
             appleSpeech: appleSpeech,
             connectivity: connectivity
@@ -173,10 +188,10 @@ final class AppModel: ObservableObject {
             showError("Microphone permission is required")
             return
         }
-        focusedTarget = inserter.captureFocusedTarget(processIdentifier: targetProcessIdentifier)
-        screenAwareRun = nil
+        let target = inserter.captureFocusedTarget(processIdentifier: targetProcessIdentifier)
         do {
             try recorder.start()
+            activeRun = .standard(target: target)
             phase = .listening
             hud.show(.listening)
         } catch { showError(error.localizedDescription) }
@@ -188,7 +203,7 @@ final class AppModel: ObservableObject {
             showError("Configure and enable screen-aware dictation in Providers.")
             return
         }
-        guard let provider = ScreenAwareProviderRegistry.provider(for: selectedScreenAwareLLM) else {
+        guard let provider = screenAwareProvider(selectedScreenAwareLLM) else {
             showError("The selected screen-aware provider is unavailable.")
             return
         }
@@ -230,14 +245,13 @@ final class AppModel: ObservableObject {
         }
         do {
             try recorder.start()
-            focusedTarget = target
-            screenAwareRun = ScreenAwareRun(
+            activeRun = .screenAware(ScreenAwareRun(
                 target: target,
                 window: window,
                 provider: provider,
                 model: model,
                 credentials: credentials
-            )
+            ))
             phase = .listening
             hud.show(.listening)
         } catch { showError(error.localizedDescription) }
@@ -245,28 +259,33 @@ final class AppModel: ObservableObject {
 
     func stopDictation() async {
         guard phase == .listening else { return }
+        guard let run = activeRun else {
+            showError("The active dictation session was lost.")
+            return
+        }
         phase = .processing
         let pipelineStarted = ContinuousClock.now
         let audio = recorder.stop()
+        activeRun = nil
         guard audio.duration >= 0.15 else {
             phase = .idle
-            let shortcut = screenAwareRun == nil ? dictateShortcut : screenAwareShortcut
-            screenAwareRun = nil
+            let shortcut = run.isScreenAware ? screenAwareShortcut : dictateShortcut
             hud.show(.error("Too short—hold \(shortcut.displayName) while speaking"))
             hud.hideAfterDelay()
             return
         }
-        if let screenAwareRun {
+        switch run {
+        case .screenAware(let screenAwareRun):
             await processScreenAware(audio, run: screenAwareRun, pipelineStarted: pipelineStarted)
-        } else {
-            await process(audio, pipelineStarted: pipelineStarted)
+        case .standard(let target):
+            await process(audio, target: target, pipelineStarted: pipelineStarted)
         }
     }
 
     func cancelDictation() {
         guard phase == .listening else { return }
         recorder.cancel()
-        screenAwareRun = nil
+        activeRun = nil
         phase = .idle
         hud.show(.success("Cancelled"))
         hud.hideAfterDelay()
@@ -306,49 +325,31 @@ final class AppModel: ObservableObject {
             let model = run.model
             let credentials = run.credentials
             let result = try await provider.generate(request: request, model: model, credentials: credentials)
-            let insertion: TextInsertion
-            if result.intent == .replaceSelection {
-                guard let selection = run.target.selection else {
-                    showError("The selected text is no longer available")
-                    return
-                }
-                insertion = .transformation(result.text, expectedSelection: selection)
-            } else {
-                insertion = .dictation(result.text)
-            }
-            let outcome = await inserter.insert(insertion, into: run.target)
-            if case .privateClipboard = outcome {
-                data.clipboard.insert(.init(
-                    text: result.text,
-                    rawText: transcriptionRun.result.text,
-                    sourceBundleID: run.target.bundleIdentifier
-                ), at: 0)
-            }
-            showCompletion(insertion: outcome, cleanupFallbackReason: nil)
-            data.transcripts.insert(.init(
-                rawText: transcriptionRun.result.text,
+            guard let insertion = requestedInsertion(
+                text: result.text,
+                replacesSelection: result.intent == .replaceSelection,
+                target: run.target
+            ) else { return }
+            await completeDictation(
+                audio: audio,
+                transcription: transcriptionRun,
                 finalText: result.text,
-                sttProvider: transcriptionRun.result.provider,
-                sttModel: transcriptionRun.result.model,
-                sttLocale: transcriptionRun.result.language,
-                sourceBundleID: run.target.bundleIdentifier,
-                audioDuration: audio.duration,
-                sttLatency: transcriptionRun.result.latency,
-                pipelineLatency: Self.elapsedSeconds(since: pipelineStarted),
+                insertion: insertion,
+                target: run.target,
                 llmExecution: .init(result: result),
-                insertionOutcome: outcome.label
-            ), at: 0)
-            screenAwareRun = nil
-            await persist()
-            phase = .idle
-            hud.hideAfterDelay()
+                cleanupFallbackReason: nil,
+                pipelineStarted: pipelineStarted
+            )
         } catch {
-            screenAwareRun = nil
             showError(error.localizedDescription)
         }
     }
 
-    private func process(_ audio: RecordedAudio, pipelineStarted: ContinuousClock.Instant) async {
+    private func process(
+        _ audio: RecordedAudio,
+        target: FocusedTarget?,
+        pipelineStarted: ContinuousClock.Instant
+    ) async {
         hud.show(.transcribing)
         do {
             let transcription = try await transcriptionCoordinator.transcribe(
@@ -365,7 +366,7 @@ final class AppModel: ObservableObject {
             if cleanup != nil { hud.show(.cleaning) }
             let processed = await transcriptProcessor.process(
                 rawText: transcription.result.text,
-                selectedText: focusedTarget?.selection?.text,
+                selectedText: target?.selection?.text,
                 vocabulary: data.vocabulary,
                 snippets: data.snippets,
                 cleanup: cleanup
@@ -386,46 +387,78 @@ final class AppModel: ObservableObject {
                 return
             }
 
-            let requestedInsertion: TextInsertion
-            if cleanupResult?.intent == .transformation {
-                guard let selection = focusedTarget?.selection else {
-                    showError("The selected text is no longer available")
-                    return
-                }
-                requestedInsertion = .transformation(finalText, expectedSelection: selection)
-            } else {
-                requestedInsertion = .dictation(finalText)
-            }
-
-            let insertion = await inserter.insert(requestedInsertion, into: focusedTarget)
-            let pipelineLatency = Self.elapsedSeconds(since: pipelineStarted)
-            if case .privateClipboard = insertion {
-                data.clipboard.insert(.init(text: finalText, rawText: transcription.result.text, sourceBundleID: focusedTarget?.bundleIdentifier), at: 0)
-            }
-            showCompletion(
-                insertion: insertion,
-                cleanupFallbackReason: cleanupFallbackReason,
-                offlineMode: transcription.mode == .offline
-            )
-            data.transcripts.insert(.init(
-                rawText: transcription.result.text,
+            guard let insertion = requestedInsertion(
+                text: finalText,
+                replacesSelection: cleanupResult?.intent == .transformation,
+                target: target
+            ) else { return }
+            await completeDictation(
+                audio: audio,
+                transcription: transcription,
                 finalText: finalText,
-                sttProvider: transcription.result.provider,
-                sttModel: transcription.result.model,
-                sttLocale: transcription.result.language,
-                sourceBundleID: focusedTarget?.bundleIdentifier,
-                audioDuration: audio.duration,
-                sttLatency: transcription.result.latency,
-                pipelineLatency: pipelineLatency,
+                insertion: insertion,
+                target: target,
                 llmExecution: cleanupResult.map(LLMExecution.init(result:)),
-                insertionOutcome: insertion.label
-            ), at: 0)
-            await persist()
-            phase = .idle
-            hud.hideAfterDelay()
+                cleanupFallbackReason: cleanupFallbackReason,
+                pipelineStarted: pipelineStarted
+            )
         } catch {
             showError(error.localizedDescription)
         }
+    }
+
+    private func requestedInsertion(
+        text: String,
+        replacesSelection: Bool,
+        target: FocusedTarget?
+    ) -> TextInsertion? {
+        guard replacesSelection else { return .dictation(text) }
+        guard let selection = target?.selection else {
+            showError("The selected text is no longer available")
+            return nil
+        }
+        return .transformation(text, expectedSelection: selection)
+    }
+
+    private func completeDictation(
+        audio: RecordedAudio,
+        transcription: TranscriptionRun,
+        finalText: String,
+        insertion: TextInsertion,
+        target: FocusedTarget?,
+        llmExecution: LLMExecution?,
+        cleanupFallbackReason: String?,
+        pipelineStarted: ContinuousClock.Instant
+    ) async {
+        let outcome = await inserter.insert(insertion, into: target)
+        if case .privateClipboard = outcome {
+            data.clipboard.insert(.init(
+                text: finalText,
+                rawText: transcription.result.text,
+                sourceBundleID: target?.bundleIdentifier
+            ), at: 0)
+        }
+        showCompletion(
+            insertion: outcome,
+            cleanupFallbackReason: cleanupFallbackReason,
+            offlineMode: transcription.mode == .offline
+        )
+        data.transcripts.insert(.init(
+            rawText: transcription.result.text,
+            finalText: finalText,
+            sttProvider: transcription.result.provider,
+            sttModel: transcription.result.model,
+            sttLocale: transcription.result.language,
+            sourceBundleID: target?.bundleIdentifier,
+            audioDuration: audio.duration,
+            sttLatency: transcription.result.latency,
+            pipelineLatency: Self.elapsedSeconds(since: pipelineStarted),
+            llmExecution: llmExecution,
+            insertionOutcome: outcome.label
+        ), at: 0)
+        await persist()
+        phase = .idle
+        hud.hideAfterDelay()
     }
 
     private static func elapsedSeconds(since instant: ContinuousClock.Instant) -> TimeInterval {

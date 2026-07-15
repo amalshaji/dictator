@@ -310,6 +310,64 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertEqual(model.lastError, "The selected model does not support image input. Choose a vision-capable model.")
     }
 
+    func testScreenAwareHappyPathUsesOneRunAndRecordsItsLLMExecution() async throws {
+        let suiteName = "ai.dictator.tests.screen-aware-happy-path.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(true, forKey: "screenAwareEnabled")
+        defaults.set(ProviderKind.groq.rawValue, forKey: "selectedScreenAwareLLM")
+        let modelName = "meta-llama/llama-4-scout-17b-16e-instruct"
+        defaults.set(modelName, forKey: "visionModel.groq")
+
+        let recorder = TestAudioRecorder()
+        recorder.recordedAudio = .init(wavData: Data([1]), duration: 1)
+        let target = ApplicationTarget(
+            element: AXUIElementCreateApplication(4242),
+            name: "Mail",
+            bundleIdentifier: "com.apple.mail",
+            processIdentifier: 4242
+        )
+        let focusedTarget = FocusedTarget.application(target)
+        let window = FocusedWindowSnapshot(
+            processIdentifier: 4242,
+            applicationName: "Mail",
+            bundleIdentifier: "com.apple.mail",
+            title: "Reply",
+            frame: CGRect(x: 10, y: 10, width: 800, height: 600)
+        )
+        let inserter = TestTargetInserter(target: focusedTarget, window: window)
+        let capture = TestScreenContextCapture()
+        capture.capturedContext = .init(imageData: Data([1, 2]), imageMIMEType: "image/jpeg", window: window)
+        let transcription = TestTranscriptionCoordinator(result: .init(
+            result: .init(text: "Reply that Tuesday works", provider: .groq, model: "whisper", latency: 0.1),
+            mode: .online
+        ))
+        let provider = TestScreenAwareProvider(model: modelName)
+        let model = AppModel(
+            keychain: ScreenAwareCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor(),
+            recorder: recorder,
+            screenCapture: capture,
+            transcriptionCoordinator: transcription,
+            inserter: inserter,
+            screenAwareProvider: { _ in provider }
+        )
+
+        await model.startScreenAwareDictation(targetProcessIdentifier: 4242)
+        await model.stopDictation()
+
+        XCTAssertEqual(model.phase, .idle)
+        XCTAssertEqual(inserter.insertedText, "Hi Sam,\n\nTuesday works for me.")
+        XCTAssertEqual(capture.captureCount, 1)
+        let record = try XCTUnwrap(model.data.transcripts.first)
+        XCTAssertEqual(record.sourceBundleID, "com.apple.mail")
+        XCTAssertEqual(record.llmExecution?.purpose, .screenAware)
+        XCTAssertEqual(record.llmExecution?.provider, .groq)
+        XCTAssertEqual(record.llmExecution?.model, modelName)
+    }
+
     func testEachWakeRecreatesHotkeyMonitorEvenWhenItReportsRunning() {
         let notifications = NotificationCenter()
         let hotkey = TestHotkeyMonitor(isRunning: true)
@@ -783,6 +841,7 @@ private final class TestHotkeyMonitor: HotkeyMonitoring {
 @MainActor
 private final class TestAudioRecorder: AudioRecording {
     var onLevel: (@Sendable (Double) -> Void)?
+    var recordedAudio = RecordedAudio(wavData: Data(), duration: 0)
     private(set) var cancelCount = 0
     private(set) var permissionRequestCount = 0
 
@@ -791,20 +850,83 @@ private final class TestAudioRecorder: AudioRecording {
         return true
     }
     func start() throws {}
-    func stop() -> RecordedAudio { RecordedAudio(wavData: Data(), duration: 0) }
+    func stop() -> RecordedAudio { recordedAudio }
     func cancel() { cancelCount += 1 }
 }
 
 @MainActor
 private final class TestScreenContextCapture: ScreenContextCapturing {
     var permissionGranted = true
+    var capturedContext: CapturedScreenContext?
     private(set) var captureCount = 0
 
     func requestPermission() -> Bool { true }
 
     func capture(_ window: FocusedWindowSnapshot) async throws -> CapturedScreenContext {
         captureCount += 1
+        if let capturedContext { return capturedContext }
         throw ScreenContextCaptureError.focusedWindowUnavailable
+    }
+}
+
+@MainActor
+private final class TestTranscriptionCoordinator: TranscriptionCoordinating {
+    let result: TranscriptionRun
+
+    init(result: TranscriptionRun) {
+        self.result = result
+    }
+
+    func transcribe(
+        audio: RecordedAudio,
+        selectedProvider: ProviderKind,
+        selectedModel: String?,
+        fallbackEnabled: Bool,
+        vocabulary: [VocabularyEntry],
+        onModeChange: (TranscriptionMode) -> Void
+    ) async throws -> TranscriptionRun {
+        result
+    }
+}
+
+@MainActor
+private final class TestTargetInserter: FocusedTargetInserting {
+    let target: FocusedTarget
+    let window: FocusedWindowSnapshot
+    private(set) var insertedText: String?
+
+    init(target: FocusedTarget, window: FocusedWindowSnapshot) {
+        self.target = target
+        self.window = window
+    }
+
+    func captureFocusedTarget(processIdentifier: pid_t?) -> FocusedTarget? { target }
+    func captureFocusedWindow(for target: FocusedTarget) -> FocusedWindowSnapshot? { window }
+    func insert(_ insertion: TextInsertion, into target: FocusedTarget?) async -> InsertionResult {
+        insertedText = insertion.text
+        return .pasteCommandPosted(.activeApplication)
+    }
+    func pasteIntoFrontmostApp(_ text: String) async -> Bool { true }
+}
+
+private struct TestScreenAwareProvider: ScreenAwareLLMProvider {
+    let model: String
+    var metadata: ProviderMetadata {
+        ScreenAwareProviderRegistry.provider(for: .groq)!.metadata
+    }
+
+    func validate(credentials: ProviderCredentials) async throws {}
+    func listModels(credentials: ProviderCredentials) async throws -> [String] { [model] }
+    func generate(request: ScreenAwareRequest, model: String, credentials: ProviderCredentials) async throws -> ScreenAwareResult {
+        .init(
+            intent: .insert,
+            text: "Hi Sam,\n\nTuesday works for me.",
+            provider: .groq,
+            model: model,
+            inputTokens: 42,
+            outputTokens: 12,
+            latency: 0.2
+        )
     }
 }
 
