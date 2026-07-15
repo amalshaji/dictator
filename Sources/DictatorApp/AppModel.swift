@@ -2,7 +2,6 @@ import AppKit
 import ApplicationServices
 import AVFoundation
 import Combine
-import CryptoKit
 import DictatorCore
 import Foundation
 import ServiceManagement
@@ -25,24 +24,6 @@ private enum ActiveDictationRun {
     var isScreenAware: Bool {
         if case .screenAware = self { return true }
         return false
-    }
-}
-
-private enum ScreenAwareConfigurationFingerprint {
-    static func value(
-        provider: ProviderKind,
-        model: String,
-        credentials: ProviderCredentials
-    ) -> String {
-        let components = [
-            provider.rawValue,
-            model.trimmingCharacters(in: .whitespacesAndNewlines),
-            credentials.apiKey,
-            credentials.accountID ?? "",
-            credentials.baseURL?.absoluteString ?? "",
-        ]
-        let digest = SHA256.hash(data: Data(components.joined(separator: "\0").utf8))
-        return digest.map { String(format: "%02x", $0) }.joined()
     }
 }
 
@@ -84,7 +65,7 @@ final class AppModel: ObservableObject {
     private let screenCapture: any ScreenContextCapturing
     private let hotkeys: HotkeyLifecycleController
     private let inserter: any FocusedTargetInserting
-    private let screenAwareProvider: (ProviderKind) -> (any ScreenAwareLLMProvider)?
+    private let providerConnections: ProviderConnectionService
     private let transcriptProcessor = TranscriptProcessor()
     private let transcriptRepairService = TranscriptRepairService()
     private let hud = FloatingPanelController()
@@ -126,7 +107,10 @@ final class AppModel: ObservableObject {
         self.recorder = recorder
         self.screenCapture = screenCapture
         self.inserter = inserter
-        self.screenAwareProvider = screenAwareProvider
+        providerConnections = ProviderConnectionService(
+            defaults: defaults,
+            screenAwareProvider: screenAwareProvider
+        )
         let appleSpeech = AppleSpeechCoordinator(
             provider: appleSpeechProvider,
             selectedLocaleIdentifier: defaults.string(forKey: "appleSpeechLocale") ?? Locale.current.identifier,
@@ -145,7 +129,9 @@ final class AppModel: ObservableObject {
             existingInstallation: defaults.object(forKey: "onboardingComplete") != nil
         )
         selectedLLM = ProviderKind(rawValue: defaults.string(forKey: "selectedLLM") ?? "") ?? .groq
-        let screenAwareFallback = ScreenAwareProviderRegistry.provider(for: selectedLLM) == nil ? ProviderKind.gemini : selectedLLM
+        let screenAwareFallback = providerConnections.screenAwareProvider(for: selectedLLM) == nil
+            ? ProviderKind.gemini
+            : selectedLLM
         selectedScreenAwareLLM = ProviderKind(rawValue: defaults.string(forKey: "selectedScreenAwareLLM") ?? "")
             ?? screenAwareFallback
         cleanupEnabled = defaults.bool(forKey: "cleanupEnabled")
@@ -220,7 +206,7 @@ final class AppModel: ObservableObject {
             showError("Configure and enable screen-aware dictation in Providers.")
             return
         }
-        guard let provider = screenAwareProvider(selectedScreenAwareLLM) else {
+        guard let provider = providerConnections.screenAwareProvider(for: selectedScreenAwareLLM) else {
             showError("The selected screen-aware provider is unavailable.")
             return
         }
@@ -512,31 +498,13 @@ final class AppModel: ObservableObject {
         model: String,
         credentials: ProviderCredentials
     ) async throws {
-        switch purpose {
-        case .speechToText:
-            guard let implementation = ProviderRegistry.sttProvider(for: provider) else {
-                throw ProviderError.invalidConfiguration("This speech provider is unavailable.")
-            }
-            try await implementation.validate(credentials: credentials)
-        case .cleanup:
-            guard let implementation = CleanupProviderRegistry.provider(for: provider) else {
-                throw ProviderError.invalidConfiguration("This cleanup provider is unavailable.")
-            }
-            try await implementation.validate(credentials: credentials)
-        case .screenAware:
-            guard let implementation = screenAwareProvider(provider) else {
-                throw ProviderError.invalidConfiguration("This screen-aware provider is unavailable.")
-            }
-            guard ScreenAwareModelCapabilities.capability(provider: provider, model: model) != .unsupported else {
-                throw ProviderError.invalidConfiguration("This model is known not to support image input.")
-            }
-            _ = try await implementation.generate(
-                request: ScreenAwareConnectionProbe.request(),
-                model: model,
-                credentials: credentials
-            )
-            confirmScreenAwareModel(provider: provider, model: model, credentials: credentials)
-        }
+        try await providerConnections.test(
+            purpose: purpose,
+            provider: provider,
+            model: model,
+            credentials: credentials
+        )
+        if purpose == .screenAware { objectWillChange.send() }
     }
 
     func selectSTT(_ provider: ProviderKind) throws {
@@ -788,8 +756,11 @@ final class AppModel: ObservableObject {
         model: String,
         credentials: ProviderCredentials
     ) -> Bool {
-        defaults.string(forKey: screenAwareConfirmationKey(provider: provider, model: model))
-            == ScreenAwareConfigurationFingerprint.value(provider: provider, model: model, credentials: credentials)
+        providerConnections.isScreenAwareModelConfirmed(
+            provider: provider,
+            model: model,
+            credentials: credentials
+        )
     }
 
     func confirmScreenAwareModel(
@@ -797,15 +768,12 @@ final class AppModel: ObservableObject {
         model: String,
         credentials: ProviderCredentials
     ) {
-        defaults.set(
-            ScreenAwareConfigurationFingerprint.value(provider: provider, model: model, credentials: credentials),
-            forKey: screenAwareConfirmationKey(provider: provider, model: model)
+        providerConnections.confirmScreenAwareModel(
+            provider: provider,
+            model: model,
+            credentials: credentials
         )
         objectWillChange.send()
-    }
-
-    private func screenAwareConfirmationKey(provider: ProviderKind, model: String) -> String {
-        "screenAwareModelConfirmed.\(provider.rawValue).\(model)"
     }
 
     var selectedSTTIsConfigured: Bool {
@@ -815,7 +783,7 @@ final class AppModel: ObservableObject {
     }
 
     var screenAwareProviderIsConfigured: Bool {
-        guard let provider = screenAwareProvider(selectedScreenAwareLLM),
+        guard let provider = providerConnections.screenAwareProvider(for: selectedScreenAwareLLM),
               let credentials = credentials(purpose: .screenAware, provider: selectedScreenAwareLLM),
               !credentials.apiKey.isEmpty
         else { return false }
