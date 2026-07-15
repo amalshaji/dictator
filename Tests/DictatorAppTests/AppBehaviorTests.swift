@@ -93,6 +93,58 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertTrue(model.isProviderConfigured(purpose: .cleanup, provider: .groq))
     }
 
+    func testScreenAwareDefaultsToSelectedCleanupProvider() throws {
+        let suiteName = "ai.dictator.tests.screen-aware-default-provider.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(ProviderKind.groq.rawValue, forKey: "selectedLLM")
+        let model = AppModel(
+            keychain: HUDTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor()
+        )
+
+        XCTAssertEqual(model.selectedScreenAwareLLM, .groq)
+    }
+
+    func testScreenAwareReusesSpeechCredentialForSameProvider() throws {
+        let suiteName = "ai.dictator.tests.screen-aware-shared-credential.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(ProviderKind.groq.rawValue, forKey: "selectedScreenAwareLLM")
+        let model = AppModel(
+            keychain: SpeechOnlyGroqCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor()
+        )
+
+        XCTAssertEqual(model.credentials(purpose: .screenAware, provider: .groq)?.apiKey, "shared-key")
+        XCTAssertTrue(model.screenAwareProviderIsConfigured)
+    }
+
+    func testScreenCapturePermissionCanRefreshAfterSettingsChange() throws {
+        let suiteName = "ai.dictator.tests.screen-capture-permission-refresh.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let capture = TestScreenContextCapture()
+        capture.permissionGranted = false
+        let model = AppModel(
+            keychain: HUDTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor(),
+            screenCapture: capture
+        )
+
+        model.refreshScreenCapturePermission()
+        XCTAssertFalse(model.screenCaptureGranted)
+        capture.permissionGranted = true
+        model.refreshScreenCapturePermission()
+        XCTAssertTrue(model.screenCaptureGranted)
+    }
+
     func testChangingVisibleHUDPositionDefersPanelResize() async throws {
         let existingWindows = Set(NSApp.windows.map(ObjectIdentifier.init))
         let screen = try XCTUnwrap(NSScreen.main ?? NSScreen.screens.first)
@@ -353,6 +405,7 @@ final class AppBehaviorTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suiteName) }
         defaults.set(true, forKey: "screenAwareEnabled")
         defaults.set(ProviderKind.groq.rawValue, forKey: "selectedScreenAwareLLM")
+        defaults.set("openai/gpt-oss-20b", forKey: "visionModel.groq")
         let recorder = TestAudioRecorder()
         let capture = TestScreenContextCapture()
         let model = AppModel(
@@ -782,6 +835,15 @@ private struct ConfiguredProviderCredentialStore: CredentialStoring {
     func load(for purpose: ProviderPurpose, provider: ProviderKind) throws -> ProviderCredentials? {
         guard case .cleanup = purpose, provider == .groq else { return nil }
         return ProviderCredentials(apiKey: "test-key")
+    }
+}
+
+private struct SpeechOnlyGroqCredentialStore: CredentialStoring {
+    func save(_ credentials: ProviderCredentials, for purpose: ProviderPurpose, provider: ProviderKind) throws {}
+
+    func load(for purpose: ProviderPurpose, provider: ProviderKind) throws -> ProviderCredentials? {
+        guard purpose == .speechToText, provider == .groq else { return nil }
+        return ProviderCredentials(apiKey: "shared-key")
     }
 }
 

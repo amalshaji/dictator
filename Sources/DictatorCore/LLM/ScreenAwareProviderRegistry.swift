@@ -33,6 +33,9 @@ public enum ScreenAwareModelCapabilities {
         if provider == .gemini, normalized.hasPrefix("gemini-") {
             return .supported
         }
+        if provider == .groq, normalized == "meta-llama/llama-4-scout-17b-16e-instruct" {
+            return .supported
+        }
         if normalized == "openai/gpt-oss-20b" || normalized.hasPrefix("@cf/") {
             return .unsupported
         }

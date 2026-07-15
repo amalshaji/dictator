@@ -23,7 +23,7 @@ final class AppModel: ObservableObject {
     @Published var phase: DictationPhase = .idle
     @Published private(set) var selectedSTT: ProviderKind = .groq
     @Published var selectedLLM: ProviderKind = .groq { didSet { defaults.set(selectedLLM.rawValue, forKey: "selectedLLM") } }
-    @Published var selectedScreenAwareLLM: ProviderKind = .gemini {
+    @Published var selectedScreenAwareLLM: ProviderKind = .groq {
         didSet { defaults.set(selectedScreenAwareLLM.rawValue, forKey: "selectedScreenAwareLLM") }
     }
     @Published var cleanupEnabled = false { didSet { defaults.set(cleanupEnabled, forKey: "cleanupEnabled") } }
@@ -113,7 +113,9 @@ final class AppModel: ObservableObject {
             existingInstallation: defaults.object(forKey: "onboardingComplete") != nil
         )
         selectedLLM = ProviderKind(rawValue: defaults.string(forKey: "selectedLLM") ?? "") ?? .groq
-        selectedScreenAwareLLM = ProviderKind(rawValue: defaults.string(forKey: "selectedScreenAwareLLM") ?? "") ?? .gemini
+        let screenAwareFallback = ScreenAwareProviderRegistry.provider(for: selectedLLM) == nil ? ProviderKind.gemini : selectedLLM
+        selectedScreenAwareLLM = ProviderKind(rawValue: defaults.string(forKey: "selectedScreenAwareLLM") ?? "")
+            ?? screenAwareFallback
         cleanupEnabled = defaults.bool(forKey: "cleanupEnabled")
         screenAwareEnabled = defaults.bool(forKey: "screenAwareEnabled")
         offlineFallbackEnabled = defaults.bool(forKey: "offlineFallbackEnabled")
@@ -596,6 +598,10 @@ final class AppModel: ObservableObject {
         screenCaptureGranted = screenCapture.requestPermission()
     }
 
+    func refreshScreenCapturePermission() {
+        screenCaptureGranted = screenCapture.permissionGranted
+    }
+
     func retryShortcuts() { hotkeys.retry() }
 
     @discardableResult
@@ -751,8 +757,16 @@ final class AppModel: ObservableObject {
 
     private func resolvedCredentials(purpose: ProviderPurpose, provider: ProviderKind) throws -> ProviderCredentials? {
         if let saved = try keychain.load(for: purpose, provider: provider) { return saved }
-        guard case .cleanup = purpose, provider == selectedSTT else { return nil }
-        return try keychain.load(for: .speechToText, provider: provider)
+        switch purpose {
+        case .speechToText:
+            return nil
+        case .cleanup:
+            guard provider == selectedSTT else { return nil }
+            return try keychain.load(for: .speechToText, provider: provider)
+        case .screenAware:
+            if let cleanup = try keychain.load(for: .cleanup, provider: provider) { return cleanup }
+            return try keychain.load(for: .speechToText, provider: provider)
+        }
     }
 
     private func cleanupConfiguration() throws -> TranscriptCleanupConfiguration? {

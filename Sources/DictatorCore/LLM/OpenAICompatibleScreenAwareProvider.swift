@@ -151,7 +151,7 @@ public struct OpenAICompatibleScreenAwareProvider: ScreenAwareLLMProvider {
 
 public extension OpenAICompatibleScreenAwareProvider {
     static func groq(transport: any HTTPTransport = URLSessionTransport()) -> Self {
-        .init(kind: .groq, displayName: "Groq", defaultModel: "openai/gpt-oss-20b", defaultBaseURL: URL(string: "https://api.groq.com/openai/v1")!, transport: transport)
+        .init(kind: .groq, displayName: "Groq", defaultModel: "meta-llama/llama-4-scout-17b-16e-instruct", defaultBaseURL: URL(string: "https://api.groq.com/openai/v1")!, transport: transport)
     }
 
     static func xAI(transport: any HTTPTransport = URLSessionTransport()) -> Self {

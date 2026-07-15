@@ -177,6 +177,16 @@ final class ProviderContractTests: XCTestCase {
         XCTAssertEqual(result.inputTokens, 42)
     }
 
+    func testGroqScreenAwareDefaultsToDocumentedVisionModel() throws {
+        let provider = try XCTUnwrap(ScreenAwareProviderRegistry.provider(for: .groq))
+
+        XCTAssertEqual(provider.metadata.defaultModel, "meta-llama/llama-4-scout-17b-16e-instruct")
+        XCTAssertEqual(
+            ScreenAwareModelCapabilities.capability(provider: .groq, model: provider.metadata.defaultModel),
+            .supported
+        )
+    }
+
     func testGeminiScreenAwareSendsInlineImageAndParsesSelectionReplacement() async throws {
         let response = #"{"candidates":[{"content":{"parts":[{"text":"{\"intent\":\"replaceSelection\",\"text\":\"Concise copy\"}"}]}}],"usageMetadata":{"promptTokenCount":21,"candidatesTokenCount":4}}"#
         let transport = MockTransport { request in

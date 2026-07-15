@@ -50,6 +50,9 @@ struct MainView: View {
             destination = requested
             model.requestedDestination = nil
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            model.refreshScreenCapturePermission()
+        }
     }
 
     private var sidebar: some View {
