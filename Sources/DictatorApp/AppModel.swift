@@ -17,6 +17,7 @@ final class AppModel: ObservableObject {
     @Published var selectedLLM: ProviderKind = .groq { didSet { defaults.set(selectedLLM.rawValue, forKey: "selectedLLM") } }
     @Published var cleanupEnabled = false { didSet { defaults.set(cleanupEnabled, forKey: "cleanupEnabled") } }
     @Published private(set) var offlineFallbackEnabled = false
+    @Published private(set) var hudPositionMode: HUDPositionMode = .bottom
     @Published var lastError: String?
     @Published var requestedDestination: String?
     @Published var shortcutsAvailable = false
@@ -92,10 +93,12 @@ final class AppModel: ObservableObject {
         selectedLLM = ProviderKind(rawValue: defaults.string(forKey: "selectedLLM") ?? "") ?? .groq
         cleanupEnabled = defaults.bool(forKey: "cleanupEnabled")
         offlineFallbackEnabled = defaults.bool(forKey: "offlineFallbackEnabled")
+        hudPositionMode = HUDPositionMode(rawValue: defaults.string(forKey: "hudPositionMode") ?? "") ?? .bottom
         selectedStyleID = defaults.string(forKey: "selectedStyleID").flatMap(UUID.init(uuidString:))
         dictateShortcut = loadShortcut(forKey: "shortcut.dictate", fallback: .dictate)
         pasteLatestShortcut = loadShortcut(forKey: "shortcut.pasteLatest", fallback: .pasteLatest)
         openClipboardShortcut = loadShortcut(forKey: "shortcut.openClipboard", fallback: .openClipboard)
+        hud.setPositionMode(hudPositionMode)
         defaults.set(selectedSTT.rawValue, forKey: "selectedSTT")
         if selectedSTT != .appleSpeech { defaults.set(selectedSTT.rawValue, forKey: "lastCloudSTT") }
         appleSpeechObservation = appleSpeech.objectWillChange.sink { [weak self] _ in
@@ -504,6 +507,12 @@ final class AppModel: ObservableObject {
     private func setOfflineFallbackEnabled(_ enabled: Bool) {
         offlineFallbackEnabled = enabled
         defaults.set(enabled, forKey: "offlineFallbackEnabled")
+    }
+
+    func setHUDPositionMode(_ mode: HUDPositionMode) {
+        hudPositionMode = mode
+        defaults.set(mode.rawValue, forKey: "hudPositionMode")
+        hud.setPositionMode(mode)
     }
 
     var selectedSTTIsConfigured: Bool {
