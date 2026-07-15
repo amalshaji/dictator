@@ -196,17 +196,17 @@ struct SettingsView: View {
                             Text("Choose where dictation status appears.").font(.dictatorBody(11)).foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Picker("Status pill position", selection: Binding(
-                            get: { model.hudPositionMode },
-                            set: { model.setHUDPositionMode($0) }
-                        )) {
-                            Text("Bottom").tag(HUDPositionMode.bottom)
-                            Text("Next to pointer").tag(HUDPositionMode.pointer)
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.segmented)
-                        .frame(width: 220)
-                        .accessibilityLabel("Status pill position")
+                        DictatorSegmentedSwitcher(
+                            label: "Status pill position",
+                            options: [
+                                .init(title: "Bottom", icon: "dock.rectangle"),
+                                .init(title: "Next to pointer", icon: "cursorarrow")
+                            ],
+                            selection: Binding(
+                                get: { model.hudPositionMode == .bottom ? 0 : 1 },
+                                set: { model.setHUDPositionMode($0 == 0 ? .bottom : .pointer) }
+                            )
+                        )
                     }
                     .padding(.vertical, 10)
                     .overlay(alignment: .bottom) { Divider() }
