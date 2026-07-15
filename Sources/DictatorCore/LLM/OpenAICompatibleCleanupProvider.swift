@@ -2,8 +2,7 @@ import Foundation
 
 public struct OpenAICompatibleCleanupProvider: CleanupLLMProvider {
     public let metadata: ProviderMetadata
-    private let defaultBaseURL: URL
-    private let transport: any HTTPTransport
+    private let client: OpenAICompatibleClient
 
     public init(
         kind: ProviderKind,
@@ -19,91 +18,39 @@ public struct OpenAICompatibleCleanupProvider: CleanupLLMProvider {
             models: [defaultModel],
             requiresAccountID: false
         )
-        self.defaultBaseURL = defaultBaseURL
-        self.transport = transport
+        client = OpenAICompatibleClient(kind: kind, defaultBaseURL: defaultBaseURL, transport: transport)
     }
 
     public func validate(credentials: ProviderCredentials) async throws {
-        _ = try await listModels(credentials: credentials)
+        try await client.validate(credentials: credentials)
     }
 
     public func listModels(credentials: ProviderCredentials) async throws -> [String] {
-        guard !credentials.apiKey.isEmpty else { throw ProviderError.missingCredential("API key") }
-        let baseURL = try resolvedBaseURL(credentials)
-        var request = URLRequest(url: baseURL.appending(path: "models"))
-        request.setValue("Bearer \(credentials.apiKey)", forHTTPHeaderField: "Authorization")
-        let (data, response) = try await transport.data(for: request)
-        try HTTPHelpers.requireSuccess(data: data, response: response)
-        let payload = try JSONDecoder().decode(ModelsResponse.self, from: data)
-        return payload.data.map(\.id).sorted()
+        try await client.listModels(credentials: credentials)
     }
 
     public func clean(request cleanup: CleanupRequest, model: String, credentials: ProviderCredentials) async throws -> CleanupResult {
-        guard !credentials.apiKey.isEmpty else { throw ProviderError.missingCredential("API key") }
-        let started = ContinuousClock.now
-        let baseURL = try resolvedBaseURL(credentials)
-        var request = URLRequest(url: baseURL.appending(path: "chat/completions"))
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(credentials.apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let body = ChatRequest(
+        let result = try await client.complete(
             model: model,
             messages: [
-                .init(role: "system", content: CleanupPrompt.system(vocabulary: cleanup.vocabulary, styleInstruction: cleanup.styleInstruction)),
-                .init(role: "user", content: try CleanupPrompt.user(request: cleanup))
+                .init(role: "system", content: .text(CleanupPrompt.system(
+                    vocabulary: cleanup.vocabulary,
+                    styleInstruction: cleanup.styleInstruction
+                ))),
+                .init(role: "user", content: .text(try CleanupPrompt.user(request: cleanup)))
             ],
-            temperature: 0,
-            responseFormat: .init(type: "json_object")
+            credentials: credentials
         )
-        request.httpBody = try JSONEncoder().encode(body)
-        let (data, response) = try await transport.data(for: request)
-        try HTTPHelpers.requireSuccess(data: data, response: response)
-        let payload = try JSONDecoder().decode(ChatResponse.self, from: data)
-        guard let content = payload.choices.first?.message.content else { throw ProviderError.invalidResponse }
-        let output = try CleanupResponseDecoder.decode(content, for: cleanup)
+        let output = try CleanupResponseDecoder.decode(result.content, for: cleanup)
         return CleanupResult(
             output: output,
             provider: metadata.kind,
             model: model,
-            inputTokens: payload.usage?.promptTokens,
-            outputTokens: payload.usage?.completionTokens,
-            providerReportedCostUSD: payload.usage?.cost.map { Decimal($0) },
-            latency: seconds(since: started)
+            inputTokens: result.inputTokens,
+            outputTokens: result.outputTokens,
+            providerReportedCostUSD: result.providerReportedCostUSD,
+            latency: result.latency
         )
-    }
-
-    private func resolvedBaseURL(_ credentials: ProviderCredentials) throws -> URL {
-        if metadata.kind == .openAICompatible, credentials.baseURL == nil {
-            throw ProviderError.missingCredential("base URL")
-        }
-        let url = credentials.baseURL ?? defaultBaseURL
-        guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil else {
-            throw ProviderError.invalidConfiguration("Enter a valid HTTP or HTTPS base URL.")
-        }
-        return url
-    }
-
-    private struct ModelsResponse: Decodable { let data: [Model]; struct Model: Decodable { let id: String } }
-    private struct ChatRequest: Encodable {
-        let model: String
-        let messages: [Message]
-        let temperature: Double
-        let responseFormat: ResponseFormat
-        enum CodingKeys: String, CodingKey { case model, messages, temperature; case responseFormat = "response_format" }
-        struct Message: Encodable { let role: String; let content: String }
-        struct ResponseFormat: Encodable { let type: String }
-    }
-    private struct ChatResponse: Decodable {
-        let choices: [Choice]
-        let usage: Usage?
-        struct Choice: Decodable { let message: Message }
-        struct Message: Decodable { let content: String }
-        struct Usage: Decodable {
-            let promptTokens: Int?
-            let completionTokens: Int?
-            let cost: Double?
-            enum CodingKeys: String, CodingKey { case promptTokens = "prompt_tokens"; case completionTokens = "completion_tokens"; case cost }
-        }
     }
 }
 

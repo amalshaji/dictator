@@ -83,6 +83,7 @@
 		E618AB28C86AFE49A453CFDD /* GeminiScreenAwareProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E0FADDE380F583E0F20423C /* GeminiScreenAwareProvider.swift */; };
 		E62AEBAD5CF5868172EDA069 /* ProviderRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = B65298E989CE976B8AC87D24 /* ProviderRegistry.swift */; };
 		E72A39FA57EB249A26BCEC3C /* reference.wav in Resources */ = {isa = PBXBuildFile; fileRef = 852B2D3B0174B4982819E9A6 /* reference.wav */; };
+		E9692891BA3312A811663CC0 /* LLMWireClients.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF09B459E4DE1804104CC24D /* LLMWireClients.swift */; };
 		F03466E4D1AB16D34C1FD977 /* DictatorCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 4D3BCE5B8674726D3FB4D6F3 /* DictatorCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		F12D009FB95E097A11CEE6CE /* GladiaSTTProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4E649F883F224BD1E3D28A4 /* GladiaSTTProvider.swift */; };
 		F33EEEB4F6EE2EE91436E60C /* ProviderProtocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4759970AC51C0D858F64EE1 /* ProviderProtocols.swift */; };
@@ -221,6 +222,7 @@
 		A1516983F9B4D83DC8588AE4 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A2177B09D0A361293F057AEB /* DictatorIntegrationTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DictatorIntegrationTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		AD3F369271169E07B6518301 /* OfflineFallbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineFallbackTests.swift; sourceTree = "<group>"; };
+		AF09B459E4DE1804104CC24D /* LLMWireClients.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LLMWireClients.swift; sourceTree = "<group>"; };
 		B4E649F883F224BD1E3D28A4 /* GladiaSTTProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GladiaSTTProvider.swift; sourceTree = "<group>"; };
 		B65298E989CE976B8AC87D24 /* ProviderRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderRegistry.swift; sourceTree = "<group>"; };
 		BA2E710185E50EE29D648637 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
@@ -341,6 +343,7 @@
 				76DA46DD749F44062847C2AD /* CloudflareCleanupProvider.swift */,
 				3143D0AF2913301C0A5F241C /* GeminiCleanupProvider.swift */,
 				6E0FADDE380F583E0F20423C /* GeminiScreenAwareProvider.swift */,
+				AF09B459E4DE1804104CC24D /* LLMWireClients.swift */,
 				5A0B6F1005DA2FDA21D5A10C /* OpenAICompatibleCleanupProvider.swift */,
 				001EDA144D94E9EB529D26D3 /* OpenAICompatibleScreenAwareProvider.swift */,
 				158BCE95DEEE1BF6A7A2F58B /* ScreenAwareProviderRegistry.swift */,
@@ -714,6 +717,7 @@
 				1045D7C095B88C52DCFCBDFE /* GroqSTTProvider.swift in Sources */,
 				DF317AD8F8364B4244D819A4 /* HTTPClient.swift in Sources */,
 				053480535CFF23EAF76B60C5 /* KeychainStore.swift in Sources */,
+				E9692891BA3312A811663CC0 /* LLMWireClients.swift in Sources */,
 				1134B9A344A7F34735F9D1BC /* LocalStore.swift in Sources */,
 				55E5BF220EAB76BF19372829 /* ModelTokenRate.swift in Sources */,
 				CFD4B1E8D8FAB2D1FE97A5E5 /* Models.swift in Sources */,
