@@ -74,7 +74,7 @@ final class FloatingPanelController {
         panel.contentView = NSHostingView(rootView: FloatingHUDView(model: model))
     }
 
-    deinit {
+    isolated deinit {
         hideTask?.cancel()
         panel.close()
     }
