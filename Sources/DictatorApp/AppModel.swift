@@ -39,6 +39,7 @@ final class AppModel: ObservableObject {
     @Published var cleanupEnabled = false { didSet { defaults.set(cleanupEnabled, forKey: "cleanupEnabled") } }
     @Published var screenAwareEnabled = false { didSet { defaults.set(screenAwareEnabled, forKey: "screenAwareEnabled") } }
     @Published private(set) var offlineFallbackEnabled = false
+    @Published private(set) var hudPositionMode: HUDPositionMode = .notch
     @Published var lastError: String?
     @Published var requestedDestination: String?
     @Published var shortcutsAvailable = false
@@ -57,7 +58,7 @@ final class AppModel: ObservableObject {
     let appleSpeech: AppleSpeechCoordinator
 
     private let defaults: UserDefaults
-    private let store = LocalStore(fileURL: LocalStore.applicationSupportURL())
+    private let store: LocalStore
     private let keychain: any CredentialStoring
     private let transcriptionCoordinator: any TranscriptionCoordinating
     private var appleSpeechObservation: AnyCancellable?
@@ -102,7 +103,11 @@ final class AppModel: ObservableObject {
         inserter: any FocusedTargetInserting = AccessibilityInserter(),
         screenAwareProvider: @escaping (ProviderKind) -> (any ScreenAwareLLMProvider)? = ScreenAwareProviderRegistry.provider
     ) {
+        let runningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
         self.defaults = defaults
+        store = LocalStore(fileURL: runningTests
+            ? FileManager.default.temporaryDirectory.appending(path: "DictatorTests-\(UUID().uuidString).json")
+            : LocalStore.applicationSupportURL())
         self.keychain = keychain
         self.hotkeys = hotkeys
         self.recorder = recorder
@@ -138,10 +143,16 @@ final class AppModel: ObservableObject {
         cleanupEnabled = defaults.bool(forKey: "cleanupEnabled")
         screenAwareEnabled = defaults.bool(forKey: "screenAwareEnabled")
         offlineFallbackEnabled = defaults.bool(forKey: "offlineFallbackEnabled")
+        let savedHUDPosition = defaults.string(forKey: "hudPositionMode")
+        hudPositionMode = HUDPositionMode(rawValue: savedHUDPosition ?? "") ?? .notch
+        if savedHUDPosition != hudPositionMode.rawValue {
+            defaults.set(hudPositionMode.rawValue, forKey: "hudPositionMode")
+        }
         selectedStyleID = defaults.string(forKey: "selectedStyleID").flatMap(UUID.init(uuidString:))
         dictateShortcut = loadShortcut(forKey: "shortcut.dictate", fallback: .dictate)
         pasteLatestShortcut = loadShortcut(forKey: "shortcut.pasteLatest", fallback: .pasteLatest)
         openClipboardShortcut = loadShortcut(forKey: "shortcut.openClipboard", fallback: .openClipboard)
+        hud.setPositionMode(hudPositionMode)
         defaults.set(selectedSTT.rawValue, forKey: "selectedSTT")
         if selectedSTT != .appleSpeech { defaults.set(selectedSTT.rawValue, forKey: "lastCloudSTT") }
         appleSpeechObservation = appleSpeech.objectWillChange.sink { [weak self] _ in
@@ -166,13 +177,14 @@ final class AppModel: ObservableObject {
             cancelDictation()
         }
         hotkeys.onStateChange = { [weak self] state in self?.applyHotkeyState(state) }
-        let runningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
         if !runningTests {
             if onboardingComplete { requestRequiredPermissions() }
             hotkeys.start()
         }
-        initialLoadTask = Task { @MainActor [weak self] in
-            await self?.load()
+        if !runningTests {
+            initialLoadTask = Task { @MainActor [weak self] in
+                await self?.load()
+            }
         }
         Task { @MainActor [weak self] in
             await Task.yield()
@@ -180,8 +192,10 @@ final class AppModel: ObservableObject {
             // Defer panel layout until SwiftUI has finished installing this StateObject.
             // Resizing an NSHostingView during AttributeGraph construction aborts on macOS 26.
             hud.show(.idle)
-            await waitForInitialLoad()
-            if selectedSTT == .appleSpeech { await appleSpeech.refresh() }
+            if !runningTests {
+                await waitForInitialLoad()
+                if selectedSTT == .appleSpeech { await appleSpeech.refresh() }
+            }
         }
     }
 
@@ -752,6 +766,12 @@ final class AppModel: ObservableObject {
     private func setOfflineFallbackEnabled(_ enabled: Bool) {
         offlineFallbackEnabled = enabled
         defaults.set(enabled, forKey: "offlineFallbackEnabled")
+    }
+
+    func setHUDPositionMode(_ mode: HUDPositionMode) {
+        hudPositionMode = mode
+        defaults.set(mode.rawValue, forKey: "hudPositionMode")
+        hud.setPositionMode(mode)
     }
 
     func selectScreenAwareProvider(_ provider: ProviderKind) {
