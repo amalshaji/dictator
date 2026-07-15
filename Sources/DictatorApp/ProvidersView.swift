@@ -211,6 +211,7 @@ private struct ProviderSetupRow: View {
         }
         .onAppear {
             selectedModel = model.configuredModel(for: purpose, provider: provider.kind) ?? provider.defaultModel
+            status = model.isProviderConfigured(purpose: purpose, provider: provider.kind) ? "Configured" : "Not configured"
         }
         .onChange(of: expanded) { _, isExpanded in
             if isExpanded { loadCredentialsIfNeeded() }
