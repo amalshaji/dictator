@@ -185,13 +185,13 @@ struct TranscriptDetailView: View {
 
     private func latencySection(_ record: TranscriptRecord) -> some View {
         let total = record.pipelineLatency
-        let overhead = total.map { max(0, $0 - record.sttLatency - (record.cleanup?.latency ?? 0)) }
+        let overhead = total.map { max(0, $0 - record.sttLatency - (record.llmExecution?.latency ?? 0)) }
         return VStack(alignment: .leading, spacing: 8) {
             Text("LATENCY").font(.dictatorUtility(9)).foregroundStyle(DictatorDesign.muted)
             HStack(spacing: 0) {
                 value("Total pipeline", total.map(latency) ?? "—")
                 value("STT request", latency(record.sttLatency))
-                value("LLM cleanup", record.cleanup.map { latency($0.latency) } ?? "—")
+                value("LLM processing", record.llmExecution.map { latency($0.latency) } ?? "—")
                 value("Other overhead", overhead.map(latency) ?? "—")
             }
         }
@@ -220,13 +220,13 @@ struct TranscriptDetailView: View {
         DisclosureGroup {
             VStack(alignment: .leading, spacing: 5) {
                 Text("STT: \(record.sttProvider.rawValue) · \(record.sttModel)")
-                if let cleanup = record.cleanup {
-                    Text("Cleanup: \(cleanup.provider.rawValue) · \(cleanup.model)")
+                if let execution = record.llmExecution {
+                    Text("\(llmPurposeLabel(execution.purpose)): \(execution.provider.rawValue) · \(execution.model)")
                 }
                 Text("Insertion: \(record.insertionOutcome)" + (record.sourceBundleID.map { " · \($0)" } ?? ""))
-                if let cleanup = record.cleanup, let usage = cleanup.usage {
+                if let execution = record.llmExecution, let usage = execution.usage {
                     Text("Tokens: \(tokenText(usage))")
-                    Text("LLM cost: \(costText(execution: cleanup))")
+                    Text("LLM cost: \(costText(execution: execution))")
                 }
             }
             .font(.dictatorBody(11))
@@ -304,7 +304,7 @@ struct TranscriptDetailView: View {
         return parts.joined(separator: " · ")
     }
 
-    private func costText(execution: CleanupExecution) -> String {
+    private func costText(execution: LLMExecution) -> String {
         guard let usage = execution.usage,
               let cost = PricingCatalog.estimatedLLMCost(
                   provider: execution.provider,
@@ -315,6 +315,10 @@ struct TranscriptDetailView: View {
         else { return "unavailable" }
         return "$" + NSDecimalNumber(decimal: cost).stringValue
             + (usage.providerReportedCostUSD == nil ? " estimated" : " reported")
+    }
+
+    private func llmPurposeLabel(_ purpose: LLMExecutionPurpose) -> String {
+        purpose == .cleanup ? "Cleanup" : "Screen aware"
     }
 
     private func tokenText(_ usage: LLMUsage) -> String {

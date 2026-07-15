@@ -2,6 +2,32 @@ import XCTest
 @testable import DictatorCore
 
 final class UsageAnalyticsTests: XCTestCase {
+    func testScreenAwareExecutionCountsAsLLMUsage() {
+        let execution = LLMExecution(
+            purpose: .screenAware,
+            provider: .groq,
+            model: "meta-llama/llama-4-scout-17b-16e-instruct",
+            latency: 0.4,
+            usage: .init(inputTokens: 120, outputTokens: 18)
+        )
+        let record = TranscriptRecord(
+            rawText: "Reply to this email",
+            finalText: "Tuesday works for me.",
+            sttProvider: .groq,
+            sttModel: "whisper-large-v3-turbo",
+            audioDuration: 2,
+            sttLatency: 0.2,
+            llmExecution: execution,
+            insertionOutcome: "typed"
+        )
+
+        let report = UsageAnalytics.report([record], since: .distantPast, rates: PricingCatalog.fallbackRates)
+
+        XCTAssertEqual(report.llm.requests, 1)
+        XCTAssertEqual(report.llm.inputTokens, 120)
+        XCTAssertEqual(report.llm.outputTokens, 18)
+    }
+
     func testMissingTokensKeepRequestAndMakeCostUnavailable() {
         let cleanup = CleanupExecution(provider: .groq, model: "openai/gpt-oss-20b", latency: 0.2, usage: .init())
         let record = TranscriptRecord(rawText: "raw", finalText: "final", sttProvider: .groq, sttModel: "whisper-large-v3-turbo", audioDuration: 1, sttLatency: 0.1, cleanup: cleanup, insertionOutcome: "typed")

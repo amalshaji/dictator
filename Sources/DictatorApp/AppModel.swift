@@ -335,6 +335,7 @@ final class AppModel: ObservableObject {
                 audioDuration: audio.duration,
                 sttLatency: transcriptionRun.result.latency,
                 pipelineLatency: Self.elapsedSeconds(since: pipelineStarted),
+                llmExecution: .init(result: result),
                 insertionOutcome: outcome.label
             ), at: 0)
             screenAwareRun = nil
@@ -416,7 +417,7 @@ final class AppModel: ObservableObject {
                 audioDuration: audio.duration,
                 sttLatency: transcription.result.latency,
                 pipelineLatency: pipelineLatency,
-                cleanup: cleanupResult.map(CleanupExecution.init(result:)),
+                llmExecution: cleanupResult.map(LLMExecution.init(result:)),
                 insertionOutcome: insertion.label
             ), at: 0)
             await persist()

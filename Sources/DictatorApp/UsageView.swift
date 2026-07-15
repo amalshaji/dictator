@@ -56,13 +56,13 @@ struct UsageView: View {
                 ])
                 sttBreakdown
             }
-            usageSection("LLM cleanup") {
+            usageSection("LLM processing") {
                 metricGrid([
-                    ("Cleanup requests", "\(report.llm.requests)"),
+                    ("LLM requests", "\(report.llm.requests)"),
                     ("Input tokens", tokenSummary(report.llm.inputTokens, samples: report.llm.inputTokenSamples)),
                     ("Output tokens", tokenSummary(report.llm.outputTokens, samples: report.llm.outputTokenSamples)),
                     ("LLM cost", UsageDisplayFormatter.currency(report.llm.cost, complete: report.llm.pricedRequests == report.llm.requests)),
-                    ("Median cleanup", latency(report.llm.medianLatency))
+                    ("Median LLM", latency(report.llm.medianLatency))
                 ])
                 llmBreakdown
             }
