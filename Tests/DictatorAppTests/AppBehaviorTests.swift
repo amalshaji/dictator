@@ -1,5 +1,6 @@
 import ApplicationServices
 import AppKit
+import AVFoundation
 import Combine
 import CoreGraphics
 import DictatorCore
@@ -76,6 +77,58 @@ final class AppBehaviorTests: XCTestCase {
         )
 
         XCTAssertEqual(model.hudPositionMode, .pointer)
+    }
+
+    func testChangingVisibleHUDPositionDefersPanelResize() async throws {
+        let existingWindows = Set(NSApp.windows.map(ObjectIdentifier.init))
+        let screen = try XCTUnwrap(NSScreen.main ?? NSScreen.screens.first)
+        let pointer = NSPoint(x: screen.visibleFrame.midX, y: screen.visibleFrame.midY)
+        let controller = FloatingPanelController(pointerLocation: { pointer })
+        controller.show(.listening)
+        let panel = try XCTUnwrap(NSApp.windows.first {
+            !existingWindows.contains(ObjectIdentifier($0)) && $0 is NSPanel
+        })
+        defer { panel.close() }
+        let bottomFrame = panel.frame
+        let pointerFrame = HUDPositioning.pointerFrame(
+            size: bottomFrame.size,
+            pointer: pointer,
+            visibleFrame: screen.visibleFrame
+        )
+        XCTAssertNotEqual(pointerFrame, bottomFrame, "Test pointer must produce a visible frame change")
+        let didMove = expectation(forNotification: NSWindow.didMoveNotification, object: panel)
+
+        controller.setPositionMode(.pointer)
+
+        XCTAssertEqual(panel.frame, bottomFrame)
+        await fulfillment(of: [didMove], timeout: 1)
+        XCTAssertEqual(panel.frame.origin.x, pointerFrame.origin.x, accuracy: 1)
+        XCTAssertEqual(panel.frame.origin.y, pointerFrame.origin.y, accuracy: 1)
+        XCTAssertEqual(panel.frame.size, pointerFrame.size)
+    }
+
+    func testAudioTapHandlerRunsOutsideMainActor() async throws {
+        let levels = AudioLevelRecorder()
+        let recorder = AudioRecorder()
+        recorder.onLevel = { levels.append($0) }
+        let tap = recorder.makeTapHandler()
+
+        try await Task.detached {
+            let format = try XCTUnwrap(
+                AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 2)
+            )
+            let pcm = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 2))
+            pcm.frameLength = 2
+            let channels = try XCTUnwrap(pcm.floatChannelData)
+            for channel in 0..<2 {
+                channels[channel][0] = 0.01
+                channels[channel][1] = 0.01
+            }
+
+            tap(pcm, AVAudioTime(hostTime: 0))
+        }.value
+
+        XCTAssertEqual(try XCTUnwrap(levels.values.first), 0.375, accuracy: 0.001)
     }
 
     func testHUDOnlyTracksPointerForActivePhases() {
@@ -643,6 +696,14 @@ private final class TestAudioRecorder: AudioRecording {
     func start() throws {}
     func stop() -> RecordedAudio { RecordedAudio(wavData: Data(), duration: 0) }
     func cancel() { cancelCount += 1 }
+}
+
+private final class AudioLevelRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [Double] = []
+
+    var values: [Double] { lock.withLock { storage } }
+    func append(_ value: Double) { lock.withLock { storage.append(value) } }
 }
 
 @MainActor

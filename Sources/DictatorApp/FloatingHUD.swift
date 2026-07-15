@@ -81,11 +81,14 @@ final class FloatingPanelController {
     private let panel: NSPanel
     private var hideTask: Task<Void, Never>?
     private var pointerTrackingTask: Task<Void, Never>?
+    private var positionUpdateTask: Task<Void, Never>?
     private var positionMode: HUDPositionMode = .bottom
     private var lastPointerLocation: NSPoint?
     private let transitionDuration = 0.24
+    private let pointerLocation: () -> NSPoint
 
-    init() {
+    init(pointerLocation: @escaping () -> NSPoint = { NSEvent.mouseLocation }) {
+        self.pointerLocation = pointerLocation
         panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 280, height: 58),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -105,9 +108,15 @@ final class FloatingPanelController {
     func setPositionMode(_ mode: HUDPositionMode) {
         guard positionMode != mode else { return }
         positionMode = mode
+        positionUpdateTask?.cancel()
         guard panel.isVisible else { return }
-        resize(for: model.phase, animated: panel.isVisible)
-        updatePointerTracking(for: model.phase)
+        positionUpdateTask = Task { @MainActor [weak self] in
+            // Avoid resizing the hosting view during a SwiftUI AttributeGraph update.
+            await Task.yield()
+            guard let self, !Task.isCancelled, self.positionMode == mode, self.panel.isVisible else { return }
+            self.resize(for: self.model.phase, animated: true)
+            self.updatePointerTracking(for: self.model.phase)
+        }
     }
 
     func show(_ phase: HUDPhase) {
@@ -161,7 +170,7 @@ final class FloatingPanelController {
 
     private func targetFrame(size: NSSize, phase: HUDPhase) -> NSRect? {
         if positionMode == .pointer, phase.tracksPointer {
-            let pointer = NSEvent.mouseLocation
+            let pointer = pointerLocation()
             guard let screen = screen(containing: pointer) else { return nil }
             return HUDPositioning.pointerFrame(size: size, pointer: pointer, visibleFrame: screen.visibleFrame)
         }
@@ -195,7 +204,7 @@ final class FloatingPanelController {
     }
 
     private func updatePointerPosition() {
-        let pointer = NSEvent.mouseLocation
+        let pointer = pointerLocation()
         guard pointer != lastPointerLocation else { return }
         lastPointerLocation = pointer
         guard let screen = screen(containing: pointer) else { return }
