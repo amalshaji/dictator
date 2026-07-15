@@ -1,5 +1,6 @@
 import AppKit
 import CoreGraphics
+import DictatorCore
 import Foundation
 import ScreenCaptureKit
 import UniformTypeIdentifiers
@@ -80,6 +81,38 @@ enum ScreenContextCaptureError: LocalizedError {
 }
 
 @MainActor
+enum ScreenAwareConnectionProbe {
+    static func request() throws -> ScreenAwareRequest {
+        let bytes: [UInt8] = [
+            255, 255, 255, 255, 235, 235, 235, 255,
+            215, 215, 215, 255, 195, 195, 195, 255,
+        ]
+        guard let provider = CGDataProvider(data: Data(bytes) as CFData),
+              let image = CGImage(
+                  width: 2,
+                  height: 2,
+                  bitsPerComponent: 8,
+                  bitsPerPixel: 32,
+                  bytesPerRow: 8,
+                  space: CGColorSpaceCreateDeviceRGB(),
+                  bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+                  provider: provider,
+                  decode: nil,
+                  shouldInterpolate: false,
+                  intent: .defaultIntent
+              ),
+              let imageData = ScreenContextCaptureService.jpegData(from: image)
+        else { throw ScreenContextCaptureError.encodingFailed }
+
+        return ScreenAwareRequest(
+            command: "Return the word OK.",
+            imageData: imageData,
+            imageMIMEType: "image/jpeg"
+        )
+    }
+}
+
+@MainActor
 final class ScreenContextCaptureService: ScreenContextCapturing {
     var permissionGranted: Bool { CGPreflightScreenCaptureAccess() }
 
@@ -116,7 +149,7 @@ final class ScreenContextCaptureService: ScreenContextCapturing {
         return CapturedScreenContext(imageData: data, imageMIMEType: "image/jpeg", window: window)
     }
 
-    private static func jpegData(from image: CGImage) -> Data? {
+    static func jpegData(from image: CGImage) -> Data? {
         let data = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(
             data,

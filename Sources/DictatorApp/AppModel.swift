@@ -2,6 +2,7 @@ import AppKit
 import ApplicationServices
 import AVFoundation
 import Combine
+import CryptoKit
 import DictatorCore
 import Foundation
 import ServiceManagement
@@ -24,6 +25,24 @@ private enum ActiveDictationRun {
     var isScreenAware: Bool {
         if case .screenAware = self { return true }
         return false
+    }
+}
+
+private enum ScreenAwareConfigurationFingerprint {
+    static func value(
+        provider: ProviderKind,
+        model: String,
+        credentials: ProviderCredentials
+    ) -> String {
+        let components = [
+            provider.rawValue,
+            model.trimmingCharacters(in: .whitespacesAndNewlines),
+            credentials.apiKey,
+            credentials.accountID ?? "",
+            credentials.baseURL?.absoluteString ?? "",
+        ]
+        let digest = SHA256.hash(data: Data(components.joined(separator: "\0").utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
     }
 }
 
@@ -209,18 +228,22 @@ final class AppModel: ObservableObject {
         }
         let model = configuredModel(for: .screenAware, provider: selectedScreenAwareLLM)
             ?? provider.metadata.defaultModel
-        switch ScreenAwareModelCapabilities.capability(provider: selectedScreenAwareLLM, model: model) {
-        case .unsupported:
+        let capability = ScreenAwareModelCapabilities.capability(provider: selectedScreenAwareLLM, model: model)
+        guard capability != .unsupported else {
             showError("The selected model does not support image input. Choose a vision-capable model.")
             return
-        case .requiresConfirmation where !isScreenAwareModelConfirmed(provider: selectedScreenAwareLLM, model: model):
-            showError("Test this screen-aware model in Providers before using it.")
-            return
-        case .supported, .requiresConfirmation:
-            break
         }
         guard let credentials = try? resolvedCredentials(purpose: .screenAware, provider: selectedScreenAwareLLM) else {
             showError("Configure the screen-aware provider credentials first.")
+            return
+        }
+        if capability == .requiresConfirmation,
+           !isScreenAwareModelConfirmed(
+            provider: selectedScreenAwareLLM,
+            model: model,
+            credentials: credentials
+           ) {
+            showError("Test this screen-aware model in Providers before using it.")
             return
         }
         guard screenCapture.permissionGranted else {
@@ -485,6 +508,39 @@ final class AppModel: ObservableObject {
         objectWillChange.send()
     }
 
+    func testProviderConnection(
+        purpose: ProviderPurpose,
+        provider: ProviderKind,
+        model: String,
+        credentials: ProviderCredentials
+    ) async throws {
+        switch purpose {
+        case .speechToText:
+            guard let implementation = ProviderRegistry.sttProvider(for: provider) else {
+                throw ProviderError.invalidConfiguration("This speech provider is unavailable.")
+            }
+            try await implementation.validate(credentials: credentials)
+        case .cleanup:
+            guard let implementation = CleanupProviderRegistry.provider(for: provider) else {
+                throw ProviderError.invalidConfiguration("This cleanup provider is unavailable.")
+            }
+            try await implementation.validate(credentials: credentials)
+        case .screenAware:
+            guard let implementation = screenAwareProvider(provider) else {
+                throw ProviderError.invalidConfiguration("This screen-aware provider is unavailable.")
+            }
+            guard ScreenAwareModelCapabilities.capability(provider: provider, model: model) != .unsupported else {
+                throw ProviderError.invalidConfiguration("This model is known not to support image input.")
+            }
+            _ = try await implementation.generate(
+                request: ScreenAwareConnectionProbe.request(),
+                model: model,
+                credentials: credentials
+            )
+            confirmScreenAwareModel(provider: provider, model: model, credentials: credentials)
+        }
+    }
+
     func selectSTT(_ provider: ProviderKind) throws {
         guard provider != selectedSTT else { return }
         let lastCloud = try STTProviderSelection.prepareTransition(
@@ -732,12 +788,24 @@ final class AppModel: ObservableObject {
         selectedScreenAwareLLM = provider
     }
 
-    func isScreenAwareModelConfirmed(provider: ProviderKind, model: String) -> Bool {
-        defaults.bool(forKey: screenAwareConfirmationKey(provider: provider, model: model))
+    func isScreenAwareModelConfirmed(
+        provider: ProviderKind,
+        model: String,
+        credentials: ProviderCredentials
+    ) -> Bool {
+        defaults.string(forKey: screenAwareConfirmationKey(provider: provider, model: model))
+            == ScreenAwareConfigurationFingerprint.value(provider: provider, model: model, credentials: credentials)
     }
 
-    func confirmScreenAwareModel(provider: ProviderKind, model: String) {
-        defaults.set(true, forKey: screenAwareConfirmationKey(provider: provider, model: model))
+    func confirmScreenAwareModel(
+        provider: ProviderKind,
+        model: String,
+        credentials: ProviderCredentials
+    ) {
+        defaults.set(
+            ScreenAwareConfigurationFingerprint.value(provider: provider, model: model, credentials: credentials),
+            forKey: screenAwareConfirmationKey(provider: provider, model: model)
+        )
         objectWillChange.send()
     }
 
@@ -752,14 +820,20 @@ final class AppModel: ObservableObject {
     }
 
     var screenAwareProviderIsConfigured: Bool {
-        guard let provider = ScreenAwareProviderRegistry.provider(for: selectedScreenAwareLLM),
-              credentials(purpose: .screenAware, provider: selectedScreenAwareLLM)?.apiKey.isEmpty == false
+        guard let provider = screenAwareProvider(selectedScreenAwareLLM),
+              let credentials = credentials(purpose: .screenAware, provider: selectedScreenAwareLLM),
+              !credentials.apiKey.isEmpty
         else { return false }
         let model = configuredModel(for: .screenAware, provider: selectedScreenAwareLLM) ?? provider.metadata.defaultModel
         return switch ScreenAwareModelCapabilities.capability(provider: selectedScreenAwareLLM, model: model) {
         case .supported: true
         case .unsupported: false
-        case .requiresConfirmation: isScreenAwareModelConfirmed(provider: selectedScreenAwareLLM, model: model)
+        case .requiresConfirmation:
+            isScreenAwareModelConfirmed(
+                provider: selectedScreenAwareLLM,
+                model: model,
+                credentials: credentials
+            )
         }
     }
 

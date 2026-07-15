@@ -73,14 +73,75 @@ final class AppBehaviorTests: XCTestCase {
     }
 
     func testScreenAwareConnectionTestImageIsDecodableJPEG() throws {
-        XCTAssertEqual(ScreenAwareConnectionTestImage.mimeType, "image/jpeg")
+        let request = try ScreenAwareConnectionProbe.request()
+        XCTAssertEqual(request.imageMIMEType, "image/jpeg")
 
-        let source = try XCTUnwrap(CGImageSourceCreateWithData(ScreenAwareConnectionTestImage.data as CFData, nil))
+        let source = try XCTUnwrap(CGImageSourceCreateWithData(request.imageData as CFData, nil))
         XCTAssertEqual(CGImageSourceGetType(source) as String?, "public.jpeg")
         let image = try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil))
 
         XCTAssertGreaterThanOrEqual(image.width, 2)
         XCTAssertGreaterThanOrEqual(image.height, 2)
+    }
+
+    func testScreenAwareConfirmationIsBoundToCredentialsAndBaseURL() throws {
+        let suiteName = "ai.dictator.tests.screen-aware-confirmation-fingerprint.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = AppModel(
+            keychain: HUDTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor()
+        )
+        let provider = ProviderKind.openAICompatible
+        let modelName = "vision-model"
+        let original = ProviderCredentials(
+            apiKey: "key-a",
+            baseURL: URL(string: "https://one.example/v1")!
+        )
+
+        model.confirmScreenAwareModel(provider: provider, model: modelName, credentials: original)
+
+        XCTAssertTrue(model.isScreenAwareModelConfirmed(provider: provider, model: modelName, credentials: original))
+        XCTAssertFalse(model.isScreenAwareModelConfirmed(
+            provider: provider,
+            model: modelName,
+            credentials: .init(apiKey: "key-b", baseURL: original.baseURL)
+        ))
+        XCTAssertFalse(model.isScreenAwareModelConfirmed(
+            provider: provider,
+            model: modelName,
+            credentials: .init(apiKey: original.apiKey, baseURL: URL(string: "https://two.example/v1"))
+        ))
+    }
+
+    func testScreenAwareConnectionTestConfirmsOnlyTheTestedConfiguration() async throws {
+        let suiteName = "ai.dictator.tests.screen-aware-provider-test.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let provider = TestScreenAwareProvider(model: "vision-model")
+        let model = AppModel(
+            keychain: HUDTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor(),
+            screenAwareProvider: { _ in provider }
+        )
+        let credentials = ProviderCredentials(apiKey: "tested-key", baseURL: URL(string: "https://example.com/v1"))
+
+        try await model.testProviderConnection(
+            purpose: .screenAware,
+            provider: .openAICompatible,
+            model: "vision-model",
+            credentials: credentials
+        )
+
+        XCTAssertTrue(model.isScreenAwareModelConfirmed(
+            provider: .openAICompatible,
+            model: "vision-model",
+            credentials: credentials
+        ))
     }
 
     func testScreenAwareReusesSpeechCredentialForSameProvider() throws {

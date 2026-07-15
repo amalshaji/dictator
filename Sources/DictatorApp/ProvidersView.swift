@@ -1,11 +1,6 @@
 import DictatorCore
 import SwiftUI
 
-enum ScreenAwareConnectionTestImage {
-    static let data = Data(base64Encoded: "/9j/4AAQSkZJRgABAQAASABIAAD/4QBARXhpZgAATU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAAqACAAQAAAABAAAAEKADAAQAAAABAAAAEAAAAAD/7QA4UGhvdG9zaG9wIDMuMAA4QklNBAQAAAAAAAA4QklNBCUAAAAAABDUHYzZjwCyBOmACZjs+EJ+/8AAEQgAEAAQAwEiAAIRAQMRAf/EAB8AAAEFAQEBAQEBAAAAAAAAAAABAgMEBQYHCAkKC//EALUQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+v/EAB8BAAMBAQEBAQEBAQEAAAAAAAABAgMEBQYHCAkKC//EALURAAIBAgQEAwQHBQQEAAECdwABAgMRBAUhMQYSQVEHYXETIjKBCBRCkaGxwQkjM1LwFWJy0QoWJDThJfEXGBkaJicoKSo1Njc4OTpDREVGR0hJSlNUVVZXWFlaY2RlZmdoaWpzdHV2d3h5eoKDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uLj5OXm5+jp6vLz9PX29/j5+v/bAEMAAQEBAQEBAgEBAgMCAgIDBAMDAwMEBQQEBAQEBQYFBQUFBQUGBgYGBgYGBgcHBwcHBwgICAgICQkJCQkJCQkJCf/bAEMBAQEBAgICBAICBAkGBQYJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCf/dAAQAAf/aAAwDAQACEQMRAD8A/Deiiiv9AD9oP//Z")!
-    static let mimeType = "image/jpeg"
-}
-
 struct ProvidersView: View {
     @ObservedObject var model: AppModel
     @State private var tab = 0
@@ -296,32 +291,12 @@ private struct ProviderSetupRow: View {
         defer { testing = false }
         do {
             let credentials = try enteredCredentials()
-            switch purpose {
-            case .speechToText:
-                guard let implementation = ProviderRegistry.sttProvider(for: provider.kind) else {
-                    throw ProviderError.invalidConfiguration("This speech provider is unavailable.")
-                }
-                try await implementation.validate(credentials: credentials)
-            case .cleanup:
-                guard let implementation = CleanupProviderRegistry.provider(for: provider.kind) else {
-                    throw ProviderError.invalidConfiguration("This cleanup provider is unavailable.")
-                }
-                try await implementation.validate(credentials: credentials)
-            case .screenAware:
-                guard let implementation = ScreenAwareProviderRegistry.provider(for: provider.kind) else {
-                    throw ProviderError.invalidConfiguration("This screen-aware provider is unavailable.")
-                }
-                let modelName = selectedModel.trimmed
-                guard ScreenAwareModelCapabilities.capability(provider: provider.kind, model: modelName) != .unsupported else {
-                    throw ProviderError.invalidConfiguration("This model is known not to support image input.")
-                }
-                _ = try await implementation.generate(
-                    request: .init(command: "Return the word OK.", imageData: ScreenAwareConnectionTestImage.data, imageMIMEType: ScreenAwareConnectionTestImage.mimeType),
-                    model: modelName,
-                    credentials: credentials
-                )
-                model.confirmScreenAwareModel(provider: provider.kind, model: modelName)
-            }
+            try await model.testProviderConnection(
+                purpose: purpose,
+                provider: provider.kind,
+                model: selectedModel.trimmed,
+                credentials: credentials
+            )
             status = "Connection verified"
         } catch { status = error.localizedDescription }
     }
