@@ -76,6 +76,9 @@ final class FloatingPanelController {
     let model = HUDModel()
     private let panel: NSPanel
     private var hideTask: Task<Void, Never>?
+    private var pointerTrackingTask: Task<Void, Never>?
+    private var positionMode: HUDPositionMode = .bottom
+    private var lastPointerLocation: NSPoint?
     private let transitionDuration = 0.24
 
     init() {
@@ -91,7 +94,15 @@ final class FloatingPanelController {
         panel.backgroundColor = .clear
         panel.hasShadow = false
         panel.hidesOnDeactivate = false
+        panel.ignoresMouseEvents = true
         panel.contentView = NSHostingView(rootView: FloatingHUDView(model: model))
+    }
+
+    func setPositionMode(_ mode: HUDPositionMode) {
+        guard positionMode != mode else { return }
+        positionMode = mode
+        resize(for: model.phase, animated: panel.isVisible)
+        updatePointerTracking(for: model.phase)
     }
 
     func show(_ phase: HUDPhase) {
@@ -100,6 +111,7 @@ final class FloatingPanelController {
         let animation = Animation.timingCurve(0.22, 0.72, 0.22, 1, duration: shouldAnimate ? transitionDuration : 0)
         withAnimation(animation) { model.phase = phase }
         resize(for: phase, animated: shouldAnimate)
+        updatePointerTracking(for: phase)
         panel.orderFrontRegardless()
     }
 
@@ -111,30 +123,15 @@ final class FloatingPanelController {
             guard let self else { return }
             let animation = Animation.timingCurve(0.22, 0.72, 0.22, 1, duration: self.transitionDuration)
             withAnimation(animation) { self.model.phase = .idle }
+            self.updatePointerTracking(for: .idle)
             self.resize(for: .idle, animated: true)
         }
     }
 
     private func resize(for phase: HUDPhase, animated: Bool) {
-        let size: NSSize
-        switch phase {
-        case .idle: size = NSSize(width: 54, height: 18)
-        case .listening, .transcribing, .offline, .cleaning:
-            size = NSSize(width: 124, height: 32)
-        case .success(let message):
-            size = NSSize(width: message.hasPrefix("Offline") ? 174 : 124, height: 32)
-        case .clipboard: size = NSSize(width: 190, height: 34)
-        case .error: size = NSSize(width: 260, height: 36)
-        }
-        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
-        let frame = screen.visibleFrame
-        let target = NSRect(
-            x: frame.midX - size.width / 2,
-            y: frame.minY + 31 - size.height / 2,
-            width: size.width,
-            height: size.height
-        )
-        guard animated else {
+        let size = size(for: phase)
+        guard let target = targetFrame(size: size, phase: phase) else { return }
+        guard animated, positionMode == .bottom else {
             panel.setFrame(target, display: true)
             return
         }
@@ -143,6 +140,70 @@ final class FloatingPanelController {
             context.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 0.72, 0.22, 1)
             panel.animator().setFrame(target, display: true)
         }
+    }
+
+    private func size(for phase: HUDPhase) -> NSSize {
+        switch phase {
+        case .idle: NSSize(width: 54, height: 18)
+        case .listening, .transcribing, .offline, .cleaning:
+            NSSize(width: 124, height: 32)
+        case .success(let message):
+            NSSize(width: message.hasPrefix("Offline") ? 174 : 124, height: 32)
+        case .clipboard: NSSize(width: 190, height: 34)
+        case .error: NSSize(width: 260, height: 36)
+        }
+    }
+
+    private func targetFrame(size: NSSize, phase: HUDPhase) -> NSRect? {
+        if positionMode == .pointer, phase.tracksPointer {
+            let pointer = NSEvent.mouseLocation
+            guard let screen = screen(containing: pointer) else { return nil }
+            return HUDPositioning.pointerFrame(size: size, pointer: pointer, visibleFrame: screen.visibleFrame)
+        }
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return nil }
+        let frame = screen.visibleFrame
+        return NSRect(
+            x: frame.midX - size.width / 2,
+            y: frame.minY + 31 - size.height / 2,
+            width: size.width,
+            height: size.height
+        )
+    }
+
+    private func updatePointerTracking(for phase: HUDPhase) {
+        guard positionMode == .pointer, phase.tracksPointer else {
+            pointerTrackingTask?.cancel()
+            pointerTrackingTask = nil
+            lastPointerLocation = nil
+            return
+        }
+        guard pointerTrackingTask == nil else { return }
+        lastPointerLocation = nil
+        pointerTrackingTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                self.updatePointerPosition()
+                do { try await Task.sleep(for: .milliseconds(16)) }
+                catch { return }
+            }
+        }
+    }
+
+    private func updatePointerPosition() {
+        let pointer = NSEvent.mouseLocation
+        guard pointer != lastPointerLocation else { return }
+        lastPointerLocation = pointer
+        guard let screen = screen(containing: pointer) else { return }
+        let target = HUDPositioning.pointerFrame(
+            size: size(for: model.phase),
+            pointer: pointer,
+            visibleFrame: screen.visibleFrame
+        )
+        panel.setFrameOrigin(target.origin)
+    }
+
+    private func screen(containing point: NSPoint) -> NSScreen? {
+        NSScreen.screens.first { $0.frame.contains(point) } ?? NSScreen.main ?? NSScreen.screens.first
     }
 }
 

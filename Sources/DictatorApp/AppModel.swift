@@ -98,6 +98,7 @@ final class AppModel: ObservableObject {
         dictateShortcut = loadShortcut(forKey: "shortcut.dictate", fallback: .dictate)
         pasteLatestShortcut = loadShortcut(forKey: "shortcut.pasteLatest", fallback: .pasteLatest)
         openClipboardShortcut = loadShortcut(forKey: "shortcut.openClipboard", fallback: .openClipboard)
+        hud.setPositionMode(hudPositionMode)
         defaults.set(selectedSTT.rawValue, forKey: "selectedSTT")
         if selectedSTT != .appleSpeech { defaults.set(selectedSTT.rawValue, forKey: "lastCloudSTT") }
         appleSpeechObservation = appleSpeech.objectWillChange.sink { [weak self] _ in
@@ -511,6 +512,7 @@ final class AppModel: ObservableObject {
     func setHUDPositionMode(_ mode: HUDPositionMode) {
         hudPositionMode = mode
         defaults.set(mode.rawValue, forKey: "hudPositionMode")
+        hud.setPositionMode(mode)
     }
 
     var selectedSTTIsConfigured: Bool {

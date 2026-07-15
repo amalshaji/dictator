@@ -190,6 +190,26 @@ struct SettingsView: View {
                         .padding(.vertical, 11)
                 }
                 settingsSection("App") {
+                    HStack(spacing: 20) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Status pill").font(.dictatorBody(14, weight: .medium))
+                            Text("Choose where dictation status appears.").font(.dictatorBody(11)).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Picker("Status pill position", selection: Binding(
+                            get: { model.hudPositionMode },
+                            set: { model.setHUDPositionMode($0) }
+                        )) {
+                            Text("Bottom").tag(HUDPositionMode.bottom)
+                            Text("Next to pointer").tag(HUDPositionMode.pointer)
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .frame(width: 220)
+                        .accessibilityLabel("Status pill position")
+                    }
+                    .padding(.vertical, 10)
+                    .overlay(alignment: .bottom) { Divider() }
                     Toggle("Launch Dictator at login", isOn: Binding(
                         get: { model.launchesAtLogin },
                         set: { model.setLaunchAtLogin($0) }
