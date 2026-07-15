@@ -105,6 +105,26 @@ final class AppBehaviorTests: XCTestCase {
         )
     }
 
+    func testHUDPointerFrameUsesPreferredOffsetAtLeftAndBottomEdges() {
+        let frame = HUDPositioning.pointerFrame(
+            size: NSSize(width: 260, height: 36),
+            pointer: NSPoint(x: 2, y: 2),
+            visibleFrame: NSRect(x: 0, y: 0, width: 1_440, height: 900)
+        )
+
+        XCTAssertEqual(frame, NSRect(x: 18, y: 18, width: 260, height: 36))
+    }
+
+    func testHUDPointerFrameConstrainsOversizedPillToVisibleBounds() {
+        let frame = HUDPositioning.pointerFrame(
+            size: NSSize(width: 260, height: 100),
+            pointer: NSPoint(x: 100, y: 40),
+            visibleFrame: NSRect(x: 0, y: 0, width: 200, height: 80)
+        )
+
+        XCTAssertEqual(frame, NSRect(x: 8, y: 8, width: 184, height: 64))
+    }
+
     func testHUDPointerFrameRespectsInsetOnNegativeCoordinateDisplay() {
         let frame = HUDPositioning.pointerFrame(
             size: NSSize(width: 260, height: 36),

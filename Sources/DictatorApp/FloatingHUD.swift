@@ -43,20 +43,24 @@ enum HUDPositioning {
 
     static func pointerFrame(size: NSSize, pointer: NSPoint, visibleFrame: NSRect) -> NSRect {
         let bounds = visibleFrame.insetBy(dx: screenInset, dy: screenInset)
+        let constrainedSize = NSSize(
+            width: min(size.width, max(0, bounds.width)),
+            height: min(size.height, max(0, bounds.height))
+        )
 
         var x = pointer.x + pointerGap
-        if x + size.width > bounds.maxX {
-            x = pointer.x - pointerGap - size.width
+        if x + constrainedSize.width > bounds.maxX {
+            x = pointer.x - pointerGap - constrainedSize.width
         }
 
         var y = pointer.y + pointerGap
-        if y + size.height > bounds.maxY {
-            y = pointer.y - pointerGap - size.height
+        if y + constrainedSize.height > bounds.maxY {
+            y = pointer.y - pointerGap - constrainedSize.height
         }
 
-        x = min(max(x, bounds.minX), max(bounds.minX, bounds.maxX - size.width))
-        y = min(max(y, bounds.minY), max(bounds.minY, bounds.maxY - size.height))
-        return NSRect(origin: NSPoint(x: x, y: y), size: size)
+        x = min(max(x, bounds.minX), max(bounds.minX, bounds.maxX - constrainedSize.width))
+        y = min(max(y, bounds.minY), max(bounds.minY, bounds.maxY - constrainedSize.height))
+        return NSRect(origin: NSPoint(x: x, y: y), size: constrainedSize)
     }
 }
 
@@ -199,7 +203,11 @@ final class FloatingPanelController {
             pointer: pointer,
             visibleFrame: screen.visibleFrame
         )
-        panel.setFrameOrigin(target.origin)
+        if panel.frame.size == target.size {
+            panel.setFrameOrigin(target.origin)
+        } else {
+            panel.setFrame(target, display: true)
+        }
     }
 
     private func screen(containing point: NSPoint) -> NSScreen? {
