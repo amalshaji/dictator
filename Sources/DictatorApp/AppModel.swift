@@ -70,6 +70,7 @@ final class AppModel: ObservableObject {
     private let transcriptRepairService = TranscriptRepairService()
     private let hud = FloatingPanelController()
     private var activeRun: ActiveDictationRun?
+    private var initialLoadTask: Task<Void, Never>?
 
     convenience init() {
         self.init(
@@ -170,12 +171,16 @@ final class AppModel: ObservableObject {
             if onboardingComplete { requestRequiredPermissions() }
             hotkeys.start()
         }
-        // Defer panel layout until SwiftUI has finished installing this StateObject.
-        // Resizing an NSHostingView during AttributeGraph construction aborts on macOS 26.
-        Task { @MainActor in
+        initialLoadTask = Task { @MainActor [weak self] in
+            await self?.load()
+        }
+        Task { @MainActor [weak self] in
             await Task.yield()
+            guard let self else { return }
+            // Defer panel layout until SwiftUI has finished installing this StateObject.
+            // Resizing an NSHostingView during AttributeGraph construction aborts on macOS 26.
             hud.show(.idle)
-            await load()
+            await waitForInitialLoad()
             if selectedSTT == .appleSpeech { await appleSpeech.refresh() }
         }
     }
@@ -186,6 +191,7 @@ final class AppModel: ObservableObject {
     }
 
     func startDictation(targetProcessIdentifier: pid_t? = nil) async {
+        await waitForInitialLoad()
         guard phase == .idle else { return }
         guard await recorder.requestPermission() else {
             showError("Microphone permission is required")
@@ -201,6 +207,7 @@ final class AppModel: ObservableObject {
     }
 
     func startScreenAwareDictation(targetProcessIdentifier: pid_t? = nil) async {
+        await waitForInitialLoad()
         guard phase == .idle else { return }
         guard screenAwareEnabled else {
             showError("Configure and enable screen-aware dictation in Providers.")
@@ -937,6 +944,11 @@ final class AppModel: ObservableObject {
             data = try await store.load()
             if let selectedStyleID, !data.styles.contains(where: { $0.id == selectedStyleID && $0.isEnabled }) { self.selectedStyleID = nil }
         } catch { lastError = error.localizedDescription }
+    }
+
+    private func waitForInitialLoad() async {
+        await initialLoadTask?.value
+        initialLoadTask = nil
     }
 
     private func schedulePersistence() {
