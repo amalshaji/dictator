@@ -6,6 +6,7 @@ import CoreGraphics
 import DictatorCore
 import Foundation
 import DictatorCore
+import ImageIO
 import XCTest
 @testable import Dictator
 
@@ -108,11 +109,15 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertEqual(model.selectedScreenAwareLLM, .groq)
     }
 
-    func testScreenAwareConnectionTestImageMeetsProviderMinimumDimensions() throws {
-        let bitmap = try XCTUnwrap(NSBitmapImageRep(data: ScreenAwareConnectionTestImage.data))
+    func testScreenAwareConnectionTestImageIsDecodableJPEG() throws {
+        XCTAssertEqual(ScreenAwareConnectionTestImage.mimeType, "image/jpeg")
 
-        XCTAssertGreaterThanOrEqual(bitmap.pixelsWide, 2)
-        XCTAssertGreaterThanOrEqual(bitmap.pixelsHigh, 2)
+        let source = try XCTUnwrap(CGImageSourceCreateWithData(ScreenAwareConnectionTestImage.data as CFData, nil))
+        XCTAssertEqual(CGImageSourceGetType(source) as String?, "public.jpeg")
+        let image = try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil))
+
+        XCTAssertGreaterThanOrEqual(image.width, 2)
+        XCTAssertGreaterThanOrEqual(image.height, 2)
     }
 
     func testScreenAwareReusesSpeechCredentialForSameProvider() throws {
