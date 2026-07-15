@@ -317,6 +317,13 @@ final class AppBehaviorTests: XCTestCase {
 
     func testScreenAwareShortcutIsAnExactModifierChord() throws {
         let shortcut = GlobalShortcut.screenAware
+        guard case .modifierChord(let modifiersRawValue) = shortcut.trigger else {
+            return XCTFail("Expected a typed modifier chord")
+        }
+        XCTAssertEqual(
+            CGEventFlags(rawValue: modifiersRawValue),
+            [.maskControl, .maskAlternate]
+        )
         XCTAssertEqual(shortcut.displayName, "⌃⌥")
         XCTAssertTrue(ShortcutMatcher.matchesModifiers(shortcut, flags: [.maskControl, .maskAlternate]))
         XCTAssertFalse(ShortcutMatcher.matchesModifiers(shortcut, flags: [.maskControl]))
@@ -324,6 +331,26 @@ final class AppBehaviorTests: XCTestCase {
 
         let restored = try JSONDecoder().decode(GlobalShortcut.self, from: JSONEncoder().encode(shortcut))
         XCTAssertEqual(restored, shortcut)
+
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(shortcut)) as? [String: Any]
+        )
+        XCTAssertNotNil(object["trigger"])
+        XCTAssertNil(object["keyCode"])
+        XCTAssertNil(object["isFunctionModifier"])
+        XCTAssertNil(object["isModifierOnly"])
+    }
+
+    func testLegacyShortcutDecodesIntoTypedKeyTrigger() throws {
+        let legacy = #"{"keyCode":8,"modifiersRawValue":1179648,"keyLabel":"C","isFunctionModifier":false,"isModifierOnly":false}"#
+
+        let shortcut = try JSONDecoder().decode(GlobalShortcut.self, from: Data(legacy.utf8))
+
+        guard case .key(let keyCode, _, let label) = shortcut.trigger else {
+            return XCTFail("Expected a typed key trigger")
+        }
+        XCTAssertEqual(keyCode, 8)
+        XCTAssertEqual(label, "C")
     }
 
     func testScreenAwareModifierChordEmitsOnePressAndRelease() throws {
@@ -881,7 +908,7 @@ private final class TestHotkeyMonitor: HotkeyMonitoring {
         self.dictateIsDown = dictateIsDown
     }
 
-    func configure(dictate: GlobalShortcut, screenAware: GlobalShortcut, pasteLatest: GlobalShortcut, openClipboard: GlobalShortcut) {}
+    func configure(dictate: GlobalShortcut, pasteLatest: GlobalShortcut, openClipboard: GlobalShortcut) {}
 
     func start() throws {
         startCount += 1

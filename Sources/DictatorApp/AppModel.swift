@@ -8,7 +8,7 @@ import Foundation
 import ServiceManagement
 
 enum DictationPhase: Equatable { case idle, listening, processing }
-enum ShortcutPurpose { case dictate, screenAware, pasteLatest, openClipboard }
+enum ShortcutPurpose { case dictate, pasteLatest, openClipboard }
 
 private struct ScreenAwareRun {
     let target: FocusedTarget
@@ -67,7 +67,6 @@ final class AppModel: ObservableObject {
     @Published var screenCaptureGranted = CGPreflightScreenCaptureAccess()
     @Published var onboardingComplete = UserDefaults.standard.bool(forKey: "onboardingComplete")
     @Published private(set) var dictateShortcut = GlobalShortcut.dictate
-    @Published private(set) var screenAwareShortcut = GlobalShortcut.screenAware
     @Published private(set) var pasteLatestShortcut = GlobalShortcut.pasteLatest
     @Published private(set) var openClipboardShortcut = GlobalShortcut.openClipboard
     @Published var selectedStyleID: UUID? = nil {
@@ -154,7 +153,6 @@ final class AppModel: ObservableObject {
         offlineFallbackEnabled = defaults.bool(forKey: "offlineFallbackEnabled")
         selectedStyleID = defaults.string(forKey: "selectedStyleID").flatMap(UUID.init(uuidString:))
         dictateShortcut = loadShortcut(forKey: "shortcut.dictate", fallback: .dictate)
-        screenAwareShortcut = loadShortcut(forKey: "shortcut.screenAware", fallback: .screenAware)
         pasteLatestShortcut = loadShortcut(forKey: "shortcut.pasteLatest", fallback: .pasteLatest)
         openClipboardShortcut = loadShortcut(forKey: "shortcut.openClipboard", fallback: .openClipboard)
         defaults.set(selectedSTT.rawValue, forKey: "selectedSTT")
@@ -292,7 +290,7 @@ final class AppModel: ObservableObject {
         activeRun = nil
         guard audio.duration >= 0.15 else {
             phase = .idle
-            let shortcut = run.isScreenAware ? screenAwareShortcut : dictateShortcut
+            let shortcut = run.isScreenAware ? GlobalShortcut.screenAware : dictateShortcut
             hud.show(.error("Too short—hold \(shortcut.displayName) while speaking"))
             hud.hideAfterDelay()
             return
@@ -692,16 +690,14 @@ final class AppModel: ObservableObject {
     func setShortcut(_ shortcut: GlobalShortcut, for purpose: ShortcutPurpose) -> Bool {
         let others: [GlobalShortcut]
         switch purpose {
-        case .dictate: others = [screenAwareShortcut, pasteLatestShortcut, openClipboardShortcut]
-        case .screenAware: others = [dictateShortcut, pasteLatestShortcut, openClipboardShortcut]
-        case .pasteLatest: others = [dictateShortcut, screenAwareShortcut, openClipboardShortcut]
-        case .openClipboard: others = [dictateShortcut, screenAwareShortcut, pasteLatestShortcut]
+        case .dictate: others = [.screenAware, pasteLatestShortcut, openClipboardShortcut]
+        case .pasteLatest: others = [dictateShortcut, .screenAware, openClipboardShortcut]
+        case .openClipboard: others = [dictateShortcut, .screenAware, pasteLatestShortcut]
         }
         guard !others.contains(shortcut) else { return false }
 
         switch purpose {
         case .dictate: dictateShortcut = shortcut
-        case .screenAware: screenAwareShortcut = shortcut
         case .pasteLatest: pasteLatestShortcut = shortcut
         case .openClipboard: openClipboardShortcut = shortcut
         }
@@ -712,7 +708,6 @@ final class AppModel: ObservableObject {
 
     func resetShortcuts() {
         dictateShortcut = .dictate
-        screenAwareShortcut = .screenAware
         pasteLatestShortcut = .pasteLatest
         openClipboardShortcut = .openClipboard
         persistShortcuts()
@@ -934,7 +929,6 @@ final class AppModel: ObservableObject {
     private func configureHotkeys() {
         hotkeys.configure(
             dictate: dictateShortcut,
-            screenAware: screenAwareShortcut,
             pasteLatest: pasteLatestShortcut,
             openClipboard: openClipboardShortcut
         )
@@ -950,7 +944,6 @@ final class AppModel: ObservableObject {
     private func persistShortcuts() {
         let encoder = JSONEncoder()
         defaults.set(try? encoder.encode(dictateShortcut), forKey: "shortcut.dictate")
-        defaults.set(try? encoder.encode(screenAwareShortcut), forKey: "shortcut.screenAware")
         defaults.set(try? encoder.encode(pasteLatestShortcut), forKey: "shortcut.pasteLatest")
         defaults.set(try? encoder.encode(openClipboardShortcut), forKey: "shortcut.openClipboard")
     }

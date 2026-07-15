@@ -126,7 +126,7 @@ struct SettingsView: View {
                         }
                     }
                     shortcutRow("Screen aware", detail: "Hold while speaking about the focused window") {
-                        Text(model.screenAwareShortcut.displayName)
+                        Text(GlobalShortcut.screenAware.displayName)
                             .font(.dictatorUtility(12)).foregroundStyle(DictatorDesign.ink)
                             .padding(.horizontal, 12).frame(height: 30)
                             .background(DictatorDesign.control, in: RoundedRectangle(cornerRadius: 8))
