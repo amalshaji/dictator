@@ -28,23 +28,34 @@ final class AudioRecorder: AudioRecording {
         let format = input.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else { throw AudioRecorderError.noInput }
         input.removeTap(onBus: 0)
-        input.installTap(onBus: 0, bufferSize: 1_024, format: format) { [buffer, onLevel] pcm, _ in
-            guard let channels = pcm.floatChannelData else { return }
-            let frames = Int(pcm.frameLength)
-            let channelCount = Int(pcm.format.channelCount)
-            guard frames > 0 else { return }
-            var mono = [Float](repeating: 0, count: frames)
-            for channel in 0..<channelCount {
-                for frame in 0..<frames { mono[frame] += channels[channel][frame] / Float(channelCount) }
-            }
-            let rms = sqrt(mono.reduce(0) { $0 + $1 * $1 } / Float(frames))
-            let decibels = 20 * log10(max(Double(rms), 0.000_01))
-            let normalizedLevel = max(0, min(1, (decibels + 55) / 40))
-            onLevel?(normalizedLevel)
-            buffer.appendResampled(mono, sourceRate: pcm.format.sampleRate)
-        }
+        input.installTap(onBus: 0, bufferSize: 1_024, format: format, block: makeTapHandler())
         engine.prepare()
         try engine.start()
+    }
+
+    func makeTapHandler() -> @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void {
+        { [buffer, onLevel] pcm, _ in
+            guard let processed = AudioRecorder.process(pcm) else { return }
+            onLevel?(processed.normalizedLevel)
+            buffer.appendResampled(processed.samples, sourceRate: pcm.format.sampleRate)
+        }
+    }
+
+    nonisolated private static func process(
+        _ pcm: AVAudioPCMBuffer
+    ) -> (samples: [Float], normalizedLevel: Double)? {
+        guard let channels = pcm.floatChannelData else { return nil }
+        let frames = Int(pcm.frameLength)
+        let channelCount = Int(pcm.format.channelCount)
+        guard frames > 0, channelCount > 0 else { return nil }
+        var mono = [Float](repeating: 0, count: frames)
+        for channel in 0..<channelCount {
+            for frame in 0..<frames { mono[frame] += channels[channel][frame] / Float(channelCount) }
+        }
+        let rms = sqrt(mono.reduce(0) { $0 + $1 * $1 } / Float(frames))
+        let decibels = 20 * log10(max(Double(rms), 0.000_01))
+        let normalizedLevel = max(0, min(1, (decibels + 55) / 40))
+        return (mono, normalizedLevel)
     }
 
     func stop() -> RecordedAudio {
