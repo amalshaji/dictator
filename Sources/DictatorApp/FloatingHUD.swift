@@ -2,6 +2,13 @@ import AppKit
 import QuartzCore
 import SwiftUI
 
+enum HUDPositionMode: String, CaseIterable, Identifiable {
+    case bottom
+    case pointer
+
+    var id: String { rawValue }
+}
+
 enum HUDPhase: Equatable {
     case idle
     case listening
@@ -23,6 +30,33 @@ enum HUDPhase: Equatable {
         case .clipboard: "Saved to Dictator clipboard"
         case .error(let value): value
         }
+    }
+
+    var tracksPointer: Bool {
+        self != .idle
+    }
+}
+
+enum HUDPositioning {
+    private static let pointerGap: CGFloat = 16
+    private static let screenInset: CGFloat = 8
+
+    static func pointerFrame(size: NSSize, pointer: NSPoint, visibleFrame: NSRect) -> NSRect {
+        let bounds = visibleFrame.insetBy(dx: screenInset, dy: screenInset)
+
+        var x = pointer.x + pointerGap
+        if x + size.width > bounds.maxX {
+            x = pointer.x - pointerGap - size.width
+        }
+
+        var y = pointer.y + pointerGap
+        if y + size.height > bounds.maxY {
+            y = pointer.y - pointerGap - size.height
+        }
+
+        x = min(max(x, bounds.minX), max(bounds.minX, bounds.maxX - size.width))
+        y = min(max(y, bounds.minY), max(bounds.minY, bounds.maxY - size.height))
+        return NSRect(origin: NSPoint(x: x, y: y), size: size)
     }
 }
 

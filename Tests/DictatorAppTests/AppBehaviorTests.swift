@@ -41,6 +41,80 @@ final class AppBehaviorTests: XCTestCase {
         }
     }
 
+    func testHUDPositionModeDefaultsToBottomAndPersistsPointerSelection() throws {
+        let suiteName = "ai.dictator.tests.hud-position.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set("unsupported", forKey: "hudPositionMode")
+
+        let model = AppModel(
+            keychain: HUDTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor()
+        )
+
+        XCTAssertEqual(model.hudPositionMode, .bottom)
+
+        model.setHUDPositionMode(.pointer)
+
+        XCTAssertEqual(model.hudPositionMode, .pointer)
+        XCTAssertEqual(defaults.string(forKey: "hudPositionMode"), HUDPositionMode.pointer.rawValue)
+    }
+
+    func testHUDOnlyTracksPointerForActivePhases() {
+        XCTAssertFalse(HUDPhase.idle.tracksPointer)
+        XCTAssertTrue(HUDPhase.listening.tracksPointer)
+        XCTAssertTrue(HUDPhase.transcribing.tracksPointer)
+        XCTAssertTrue(HUDPhase.offline.tracksPointer)
+        XCTAssertTrue(HUDPhase.cleaning.tracksPointer)
+        XCTAssertTrue(HUDPhase.success("Done").tracksPointer)
+        XCTAssertTrue(HUDPhase.clipboard.tracksPointer)
+        XCTAssertTrue(HUDPhase.error("Failed").tracksPointer)
+    }
+
+    func testHUDPointerFrameUsesPreferredAboveRightOffset() {
+        let frame = HUDPositioning.pointerFrame(
+            size: NSSize(width: 124, height: 32),
+            pointer: NSPoint(x: 400, y: 300),
+            visibleFrame: NSRect(x: 0, y: 0, width: 1_440, height: 900)
+        )
+
+        XCTAssertEqual(frame, NSRect(x: 416, y: 316, width: 124, height: 32))
+    }
+
+    func testHUDPointerFrameFlipsAtRightAndTopEdges() {
+        let visibleFrame = NSRect(x: 0, y: 0, width: 1_440, height: 900)
+        let size = NSSize(width: 260, height: 36)
+
+        XCTAssertEqual(
+            HUDPositioning.pointerFrame(
+                size: size,
+                pointer: NSPoint(x: 1_430, y: 300),
+                visibleFrame: visibleFrame
+            ),
+            NSRect(x: 1_154, y: 316, width: 260, height: 36)
+        )
+        XCTAssertEqual(
+            HUDPositioning.pointerFrame(
+                size: size,
+                pointer: NSPoint(x: 400, y: 890),
+                visibleFrame: visibleFrame
+            ),
+            NSRect(x: 416, y: 838, width: 260, height: 36)
+        )
+    }
+
+    func testHUDPointerFrameRespectsInsetOnNegativeCoordinateDisplay() {
+        let frame = HUDPositioning.pointerFrame(
+            size: NSSize(width: 260, height: 36),
+            pointer: NSPoint(x: -10, y: 1_070),
+            visibleFrame: NSRect(x: -1_920, y: 0, width: 1_920, height: 1_080)
+        )
+
+        XCTAssertEqual(frame, NSRect(x: -286, y: 1_018, width: 260, height: 36))
+    }
+
     func testTranscriptMetadataLabelsSTTProviderAndLatency() {
         let record = TranscriptRecord(
             rawText: "Hello", finalText: "Hello", sttProvider: .groq, sttModel: "whisper",
@@ -352,6 +426,15 @@ final class AppBehaviorTests: XCTestCase {
         PostedKeyEvent(keyCode: 0x09, keyDown: true, flags: .maskCommand),
         PostedKeyEvent(keyCode: 0x09, keyDown: false, flags: .maskCommand),
     ]
+}
+
+private struct HUDTestCredentialStore: CredentialStoring {
+    func save(_ credentials: ProviderCredentials, for purpose: ProviderPurpose, provider: ProviderKind) throws {}
+    func load(for purpose: ProviderPurpose, provider: ProviderKind) throws -> ProviderCredentials? { nil }
+}
+
+private struct HUDTestConnectivityMonitor: ConnectivityMonitoring {
+    let state: ConnectivityState = .online
 }
 
 private actor DelayedAppleSpeechProvider: LocalSpeechTranscribing {
