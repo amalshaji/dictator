@@ -526,6 +526,16 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertTrue(fixture.clipboard.didRestore)
     }
 
+    func testInsertionPreservesParagraphBreaks() async {
+        let fixture = InsertionFixture(bundleIdentifier: "com.apple.mail")
+        let email = "Hi Sam,\n\nThanks for the update. I will review it today.\n\nBest,\nAmal"
+
+        let result = await fixture.inserter.insert(.dictation(email), into: .application(fixture.application))
+
+        XCTAssertEqual(result, .pasteCommandPosted(.activeApplication))
+        XCTAssertEqual(fixture.clipboard.lastPreparedText, email)
+    }
+
     func testApplicationFallbackDoesNotPasteAfterAppSwitch() async {
         let fixture = InsertionFixture()
         fixture.applicationState.frontmostPID = 777
@@ -949,6 +959,7 @@ private final class TestClipboard: ClipboardAccess {
     var didRestore = false
     private var preparedText: String?
     private var preparedSessionID: String?
+    var lastPreparedText: String? { preparedText }
 
     func snapshot() -> PasteboardSnapshot { PasteboardSnapshot(items: []) }
     func prepare(text: String, sessionID: String) -> Bool {

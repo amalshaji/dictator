@@ -226,6 +226,25 @@ final class ProviderContractTests: XCTestCase {
             XCTAssertEqual(error as? ProviderError, .invalidResponse)
         }
     }
+
+    func testScreenAwarePromptRequiresDestinationAppropriateFormatting() {
+        let prompt = ScreenAwarePrompt.system
+
+        XCTAssertTrue(prompt.contains("Match the destination's writing format"))
+        XCTAssertTrue(prompt.contains("email body"))
+        XCTAssertTrue(prompt.contains("single-line field"))
+        XCTAssertTrue(prompt.contains("plain text"))
+    }
+
+    func testScreenAwareDecoderPreservesParagraphBreaks() throws {
+        let result = try ScreenAwareResponseDecoder.decode(
+            #"{"intent":"insert","text":"Hi Sam,\n\nThanks for the update. I will review it today.\n\nBest,\nAmal"}"#,
+            selectedText: nil
+        )
+
+        XCTAssertEqual(result.0, .insert)
+        XCTAssertEqual(result.1, "Hi Sam,\n\nThanks for the update. I will review it today.\n\nBest,\nAmal")
+    }
 }
 
 
