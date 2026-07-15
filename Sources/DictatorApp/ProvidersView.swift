@@ -1,6 +1,10 @@
 import DictatorCore
 import SwiftUI
 
+enum ScreenAwareConnectionTestImage {
+    static let data = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR4nGP8z8Dwn4GBgYGJAQoAHgQCAfTdpVQAAAAASUVORK5CYII=")!
+}
+
 struct ProvidersView: View {
     @ObservedObject var model: AppModel
     @State private var tab = 0
@@ -310,11 +314,8 @@ private struct ProviderSetupRow: View {
                 guard ScreenAwareModelCapabilities.capability(provider: provider.kind, model: modelName) != .unsupported else {
                     throw ProviderError.invalidConfiguration("This model is known not to support image input.")
                 }
-                guard let testImage = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=") else {
-                    throw ProviderError.invalidConfiguration("Could not prepare the image-input test.")
-                }
                 _ = try await implementation.generate(
-                    request: .init(command: "Return the word OK.", imageData: testImage, imageMIMEType: "image/png"),
+                    request: .init(command: "Return the word OK.", imageData: ScreenAwareConnectionTestImage.data, imageMIMEType: "image/png"),
                     model: modelName,
                     credentials: credentials
                 )

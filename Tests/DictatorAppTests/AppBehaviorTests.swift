@@ -108,6 +108,13 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertEqual(model.selectedScreenAwareLLM, .groq)
     }
 
+    func testScreenAwareConnectionTestImageMeetsProviderMinimumDimensions() throws {
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(data: ScreenAwareConnectionTestImage.data))
+
+        XCTAssertGreaterThanOrEqual(bitmap.pixelsWide, 2)
+        XCTAssertGreaterThanOrEqual(bitmap.pixelsHigh, 2)
+    }
+
     func testScreenAwareReusesSpeechCredentialForSameProvider() throws {
         let suiteName = "ai.dictator.tests.screen-aware-shared-credential.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
