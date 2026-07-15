@@ -2,6 +2,8 @@
 
 Dictator is a native macOS menu-bar dictation app. Hold `Fn` to record, release to transcribe on-device with Apple Speech or through a user-selected cloud provider, and insert the result into the field that was focused when recording began. If no editable field was focused, the text is stored in Dictator's private clipboard.
 
+> ⚠️ Dictator is still in the early stages of development. Expect rough edges.
+
 ## Shortcuts
 
 - Hold `Fn`: record dictation
