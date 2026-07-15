@@ -268,6 +268,10 @@ final class AppModel: ObservableObject {
         try? resolvedCredentials(purpose: purpose, provider: provider)
     }
 
+    func isProviderConfigured(purpose: ProviderPurpose, provider: ProviderKind) -> Bool {
+        credentials(purpose: purpose, provider: provider)?.apiKey.isEmpty == false
+    }
+
     func saveCredentials(_ credentials: ProviderCredentials, purpose: ProviderPurpose, provider: ProviderKind, model: String) throws {
         guard provider != .appleSpeech else {
             throw ProviderError.invalidConfiguration("Apple On-Device transcription does not use API credentials.")

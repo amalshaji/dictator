@@ -79,6 +79,20 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertEqual(model.hudPositionMode, .pointer)
     }
 
+    func testSavedProviderCredentialsAreReportedAsConfiguredBeforeExpansion() throws {
+        let suiteName = "ai.dictator.tests.provider-status.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = AppModel(
+            keychain: ConfiguredProviderCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor()
+        )
+
+        XCTAssertTrue(model.isProviderConfigured(purpose: .cleanup, provider: .groq))
+    }
+
     func testChangingVisibleHUDPositionDefersPanelResize() async throws {
         let existingWindows = Set(NSApp.windows.map(ObjectIdentifier.init))
         let screen = try XCTUnwrap(NSScreen.main ?? NSScreen.screens.first)
@@ -649,6 +663,15 @@ final class AppBehaviorTests: XCTestCase {
 private struct HUDTestCredentialStore: CredentialStoring {
     func save(_ credentials: ProviderCredentials, for purpose: ProviderPurpose, provider: ProviderKind) throws {}
     func load(for purpose: ProviderPurpose, provider: ProviderKind) throws -> ProviderCredentials? { nil }
+}
+
+private struct ConfiguredProviderCredentialStore: CredentialStoring {
+    func save(_ credentials: ProviderCredentials, for purpose: ProviderPurpose, provider: ProviderKind) throws {}
+
+    func load(for purpose: ProviderPurpose, provider: ProviderKind) throws -> ProviderCredentials? {
+        guard case .cleanup = purpose, provider == .groq else { return nil }
+        return ProviderCredentials(apiKey: "test-key")
+    }
 }
 
 @MainActor
