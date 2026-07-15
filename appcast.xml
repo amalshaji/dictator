@@ -6,6 +6,21 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>Dictator</title>
         <item>
+            <title>0.4.0</title>
+            <pubDate>Wed, 15 Jul 2026 09:36:06 +0000</pubDate>
+            <link>https://github.com/amalshaji/dictator</link>
+            <sparkle:version>6</sparkle:version>
+            <sparkle:shortVersionString>0.4.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[## What's Changed
+* Add cursor-following status pill by @amalshaji in https://github.com/amalshaji/dictator/pull/19
+* Restore shortcuts after system wake by @amalshaji in https://github.com/amalshaji/dictator/pull/20
+
+**Full Changelog**: https://github.com/amalshaji/dictator/compare/v0.3.0...v0.4.0
+]]></description>
+            <enclosure url="https://github.com/amalshaji/dictator/releases/download/v0.4.0/Dictator-0.4.0-universal.dmg" length="5168587" type="application/octet-stream" sparkle:edSignature="Sgfp6LkZ3BBpXCw/oJm3x3VNJjXYwTLhVbqqLoDJz+YDXzLef1ayUvXV+yttMIwNeyjKN37bUDInngmvntAuDQ=="/>
+        </item>
+        <item>
             <title>0.3.0</title>
             <pubDate>Wed, 15 Jul 2026 09:29:00 +0000</pubDate>
             <link>https://github.com/amalshaji/dictator</link>
@@ -38,6 +53,6 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: nUbDGcMPCmCgtu75rxIMz6NN5vLvcilgJ/qE/W4Rk+XF7GuhZ3GZzu5xYWOr236NwM8SeZYk743SuFOKfK3ZCg==
-length: 2432
+edSignature: MvZm/J12c5Idu/VyqoNF27Z2UERSJElVBzTIXmLwGgaVx6EJ4YJA9OvCjtg+Uf1f3B3UKWs49NEZWXk5lq89AA==
+length: 3489
 -->
