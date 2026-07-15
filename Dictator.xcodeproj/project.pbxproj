@@ -50,6 +50,7 @@
 		8C4795E4656E211E51672FB2 /* UsageAnalytics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DE7CC6940B6F95A081E1217 /* UsageAnalytics.swift */; };
 		8CF9722F982C6DF2E107FC76 /* PricingCatalogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BED3E89EFC05EB99961ED5F /* PricingCatalogTests.swift */; };
 		8E816D0EB37AE900D4BC0029 /* TranscriptUsageModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16ACC75ACA325096D12417D3 /* TranscriptUsageModelsTests.swift */; };
+		9043B601215CBE5FB157E30C /* HotkeyLifecycleController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C61235B8B0BF4A290AFB63ED /* HotkeyLifecycleController.swift */; };
 		9230E8B75D9A4589ED8FD70F /* DictatorCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 4D3BCE5B8674726D3FB4D6F3 /* DictatorCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		9468E6BBB680C5FAA06F9B4D /* AssemblyAISTTProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68951BFD4E2C57E9E33F4D4F /* AssemblyAISTTProvider.swift */; };
 		99E467AFFE4481A94F1953CF /* DictatorCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 4D3BCE5B8674726D3FB4D6F3 /* DictatorCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
@@ -219,6 +220,7 @@
 		C1C677B956D3D95165F5F43E /* SnippetExpander.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnippetExpander.swift; sourceTree = "<group>"; };
 		C28C40D0E2AE218D43B3805C /* PricingCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PricingCatalog.swift; sourceTree = "<group>"; };
 		C4759970AC51C0D858F64EE1 /* ProviderProtocols.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderProtocols.swift; sourceTree = "<group>"; };
+		C61235B8B0BF4A290AFB63ED /* HotkeyLifecycleController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyLifecycleController.swift; sourceTree = "<group>"; };
 		C9CAFBE630B82E2DB2683D43 /* AccessibilityInserter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityInserter.swift; sourceTree = "<group>"; };
 		CF360A11FE7AA3B5B5DF2ED7 /* MainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainView.swift; sourceTree = "<group>"; };
 		D897F9B1FF3DAEE510FBFC5F /* DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystem.swift; sourceTree = "<group>"; };
@@ -419,6 +421,7 @@
 				F0B42911F4E7426DDEF2CFA1 /* DictatorApp.swift */,
 				3C842084D491B697791F6ED1 /* FloatingHUD.swift */,
 				0BC0D96F05B5DF82F1C7A28C /* HomeView.swift */,
+				C61235B8B0BF4A290AFB63ED /* HotkeyLifecycleController.swift */,
 				22EAD6EF30C05E4F398325C0 /* HotkeyMonitor.swift */,
 				132C58396B4BFD90B17D7B18 /* Info.plist */,
 				F17B163297A19C1DBF5F5418 /* LibraryViews.swift */,
@@ -660,6 +663,7 @@
 				9E9E6120943F6218F2D4D304 /* DictatorApp.swift in Sources */,
 				4BAFA96E63EFB004950D3B96 /* FloatingHUD.swift in Sources */,
 				23DE06A8B70571FC9A96B0B5 /* HomeView.swift in Sources */,
+				9043B601215CBE5FB157E30C /* HotkeyLifecycleController.swift in Sources */,
 				B2DFFD6CD43DBA9B18A37301 /* HotkeyMonitor.swift in Sources */,
 				453A46F9F561D2EDE8DB1E72 /* LibraryViews.swift in Sources */,
 				4357E1CF925A1940DFF6D05F /* MainView.swift in Sources */,

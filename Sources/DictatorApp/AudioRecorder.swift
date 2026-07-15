@@ -2,7 +2,18 @@ import AVFoundation
 import DictatorCore
 import Foundation
 
-final class AudioRecorder: @unchecked Sendable {
+@MainActor
+protocol AudioRecording: AnyObject {
+    var onLevel: (@Sendable (Double) -> Void)? { get set }
+
+    func requestPermission() async -> Bool
+    func start() throws
+    func stop() -> RecordedAudio
+    func cancel()
+}
+
+@MainActor
+final class AudioRecorder: AudioRecording {
     private let engine = AVAudioEngine()
     private let buffer = AudioBuffer()
     var onLevel: (@Sendable (Double) -> Void)?
