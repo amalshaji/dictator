@@ -43,43 +43,6 @@ final class AppBehaviorTests: XCTestCase {
         }
     }
 
-    func testHUDPositionModeDefaultsToNotchAndPersistsBottomSelection() throws {
-        let suiteName = "ai.dictator.tests.hud-position.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        defaults.set("unsupported", forKey: "hudPositionMode")
-
-        let model = AppModel(
-            keychain: HUDTestCredentialStore(),
-            appleSpeechProvider: nil,
-            defaults: defaults,
-            connectivity: HUDTestConnectivityMonitor()
-        )
-
-        XCTAssertEqual(model.hudPositionMode, .notch)
-
-        model.setHUDPositionMode(.bottom)
-
-        XCTAssertEqual(model.hudPositionMode, .bottom)
-        XCTAssertEqual(defaults.string(forKey: "hudPositionMode"), HUDPositionMode.bottom.rawValue)
-    }
-
-    func testAppModelMigratesPointerHUDModeToNotch() throws {
-        let suiteName = "ai.dictator.tests.hud-position-restoration.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        defaults.set("pointer", forKey: "hudPositionMode")
-
-        let model = AppModel(
-            keychain: HUDTestCredentialStore(),
-            appleSpeechProvider: nil,
-            defaults: defaults,
-            connectivity: HUDTestConnectivityMonitor()
-        )
-
-        XCTAssertEqual(model.hudPositionMode, .notch)
-    }
-
     func testSavedProviderCredentialsAreReportedAsConfiguredBeforeExpansion() throws {
         let suiteName = "ai.dictator.tests.provider-status.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -157,33 +120,17 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertTrue(model.screenCaptureGranted)
     }
 
-    func testChangingVisibleHUDPositionDefersPanelResize() async throws {
+    func testHUDShowsOnlyOneVisiblePanel() {
         let existingWindows = Set(NSApp.windows.map(ObjectIdentifier.init))
-        let screen = try XCTUnwrap(NSScreen.main ?? NSScreen.screens.first)
         let controller = FloatingPanelController()
+
         controller.show(.listening)
-        let panel = try XCTUnwrap(NSApp.windows.first {
-            !existingWindows.contains(ObjectIdentifier($0)) && $0 is NSPanel && $0.frame.width > 100
-        })
-        defer { panel.close() }
-        let notchFrame = panel.frame
-        let bottomFrame = NSRect(
-            x: screen.visibleFrame.midX - notchFrame.width / 2,
-            y: screen.visibleFrame.minY + 31 - notchFrame.height / 2,
-            width: notchFrame.width,
-            height: notchFrame.height
-        )
-        XCTAssertNotEqual(notchFrame, bottomFrame)
-        let didMove = expectation(forNotification: NSWindow.didMoveNotification, object: panel)
 
-        controller.setPositionMode(.bottom)
-
-        XCTAssertEqual(panel.frame, notchFrame)
-        await fulfillment(of: [didMove], timeout: 1)
-        try await Task.sleep(for: .milliseconds(400))
-        XCTAssertEqual(panel.frame.origin.x, bottomFrame.origin.x, accuracy: 1)
-        XCTAssertEqual(panel.frame.origin.y, bottomFrame.origin.y, accuracy: 1)
-        XCTAssertEqual(panel.frame.size, bottomFrame.size)
+        let panels = NSApp.windows.filter {
+            !existingWindows.contains(ObjectIdentifier($0)) && $0 is NSPanel
+        }
+        defer { panels.forEach { $0.close() } }
+        XCTAssertEqual(panels.filter(\.isVisible).count, 1)
     }
 
     func testAudioTapHandlerRunsOutsideMainActor() async throws {
@@ -210,28 +157,6 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(levels.values.first), 0.375, accuracy: 0.001)
     }
 
-    func testHUDOnlyTracksPointerForActivePhases() {
-        XCTAssertFalse(HUDPhase.idle.tracksPointer)
-        XCTAssertTrue(HUDPhase.listening.tracksPointer)
-        XCTAssertTrue(HUDPhase.transcribing.tracksPointer)
-        XCTAssertTrue(HUDPhase.offline.tracksPointer)
-        XCTAssertTrue(HUDPhase.cleaning.tracksPointer)
-        XCTAssertTrue(HUDPhase.understanding.tracksPointer)
-        XCTAssertTrue(HUDPhase.success("Done").tracksPointer)
-        XCTAssertTrue(HUDPhase.clipboard.tracksPointer)
-        XCTAssertTrue(HUDPhase.error("Failed").tracksPointer)
-    }
-
-    func testHUDPointerFrameUsesPreferredAboveRightOffset() {
-        let frame = HUDPositioning.pointerFrame(
-            size: NSSize(width: 124, height: 32),
-            pointer: NSPoint(x: 400, y: 300),
-            visibleFrame: NSRect(x: 0, y: 0, width: 1_440, height: 900)
-        )
-
-        XCTAssertEqual(frame, NSRect(x: 416, y: 316, width: 124, height: 32))
-    }
-
     func testHUDNotchFramePinsToTopCenter() {
         XCTAssertEqual(
             HUDPositioning.notchFrame(
@@ -251,58 +176,6 @@ final class AppBehaviorTests: XCTestCase {
             ),
             NSRect(x: 694, y: 918, width: 124, height: 32)
         )
-    }
-
-    func testHUDPointerFrameFlipsAtRightAndTopEdges() {
-        let visibleFrame = NSRect(x: 0, y: 0, width: 1_440, height: 900)
-        let size = NSSize(width: 260, height: 36)
-
-        XCTAssertEqual(
-            HUDPositioning.pointerFrame(
-                size: size,
-                pointer: NSPoint(x: 1_430, y: 300),
-                visibleFrame: visibleFrame
-            ),
-            NSRect(x: 1_154, y: 316, width: 260, height: 36)
-        )
-        XCTAssertEqual(
-            HUDPositioning.pointerFrame(
-                size: size,
-                pointer: NSPoint(x: 400, y: 890),
-                visibleFrame: visibleFrame
-            ),
-            NSRect(x: 416, y: 838, width: 260, height: 36)
-        )
-    }
-
-    func testHUDPointerFrameUsesPreferredOffsetAtLeftAndBottomEdges() {
-        let frame = HUDPositioning.pointerFrame(
-            size: NSSize(width: 260, height: 36),
-            pointer: NSPoint(x: 2, y: 2),
-            visibleFrame: NSRect(x: 0, y: 0, width: 1_440, height: 900)
-        )
-
-        XCTAssertEqual(frame, NSRect(x: 18, y: 18, width: 260, height: 36))
-    }
-
-    func testHUDPointerFrameConstrainsOversizedPillToVisibleBounds() {
-        let frame = HUDPositioning.pointerFrame(
-            size: NSSize(width: 260, height: 100),
-            pointer: NSPoint(x: 100, y: 40),
-            visibleFrame: NSRect(x: 0, y: 0, width: 200, height: 80)
-        )
-
-        XCTAssertEqual(frame, NSRect(x: 8, y: 8, width: 184, height: 64))
-    }
-
-    func testHUDPointerFrameRespectsInsetOnNegativeCoordinateDisplay() {
-        let frame = HUDPositioning.pointerFrame(
-            size: NSSize(width: 260, height: 36),
-            pointer: NSPoint(x: -10, y: 1_070),
-            visibleFrame: NSRect(x: -1_920, y: 0, width: 1_920, height: 1_080)
-        )
-
-        XCTAssertEqual(frame, NSRect(x: -286, y: 1_018, width: 260, height: 36))
     }
 
     func testScreenWindowMatcherChoosesTheUniqueFocusedWindow() {

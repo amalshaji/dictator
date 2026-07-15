@@ -29,7 +29,6 @@ final class AppModel: ObservableObject {
     @Published var cleanupEnabled = false { didSet { defaults.set(cleanupEnabled, forKey: "cleanupEnabled") } }
     @Published var screenAwareEnabled = false { didSet { defaults.set(screenAwareEnabled, forKey: "screenAwareEnabled") } }
     @Published private(set) var offlineFallbackEnabled = false
-    @Published private(set) var hudPositionMode: HUDPositionMode = .notch
     @Published var lastError: String?
     @Published var requestedDestination: String?
     @Published var shortcutsAvailable = false
@@ -119,16 +118,11 @@ final class AppModel: ObservableObject {
         cleanupEnabled = defaults.bool(forKey: "cleanupEnabled")
         screenAwareEnabled = defaults.bool(forKey: "screenAwareEnabled")
         offlineFallbackEnabled = defaults.bool(forKey: "offlineFallbackEnabled")
-        let savedHUDPosition = defaults.string(forKey: "hudPositionMode")
-        hudPositionMode = savedHUDPosition == "pointer"
-            ? .notch
-            : HUDPositionMode(rawValue: savedHUDPosition ?? "") ?? .notch
         selectedStyleID = defaults.string(forKey: "selectedStyleID").flatMap(UUID.init(uuidString:))
         dictateShortcut = loadShortcut(forKey: "shortcut.dictate", fallback: .dictate)
         screenAwareShortcut = loadShortcut(forKey: "shortcut.screenAware", fallback: .screenAware)
         pasteLatestShortcut = loadShortcut(forKey: "shortcut.pasteLatest", fallback: .pasteLatest)
         openClipboardShortcut = loadShortcut(forKey: "shortcut.openClipboard", fallback: .openClipboard)
-        hud.setPositionMode(hudPositionMode)
         defaults.set(selectedSTT.rawValue, forKey: "selectedSTT")
         if selectedSTT != .appleSpeech { defaults.set(selectedSTT.rawValue, forKey: "lastCloudSTT") }
         appleSpeechObservation = appleSpeech.objectWillChange.sink { [weak self] _ in
@@ -698,12 +692,6 @@ final class AppModel: ObservableObject {
     private func setOfflineFallbackEnabled(_ enabled: Bool) {
         offlineFallbackEnabled = enabled
         defaults.set(enabled, forKey: "offlineFallbackEnabled")
-    }
-
-    func setHUDPositionMode(_ mode: HUDPositionMode) {
-        hudPositionMode = mode
-        defaults.set(mode.rawValue, forKey: "hudPositionMode")
-        hud.setPositionMode(mode)
     }
 
     func selectScreenAwareProvider(_ provider: ProviderKind) {

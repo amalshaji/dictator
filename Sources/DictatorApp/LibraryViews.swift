@@ -207,26 +207,6 @@ struct SettingsView: View {
                         .padding(.vertical, 11)
                 }
                 settingsSection("App") {
-                    HStack(spacing: 20) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Status pill").font(.dictatorBody(14, weight: .medium))
-                            Text("Choose where dictation status appears.").font(.dictatorBody(11)).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        DictatorSegmentedSwitcher(
-                            label: "Status pill position",
-                            options: [
-                                .init(title: "Notch", icon: "rectangle.topthird.inset.filled"),
-                                .init(title: "Bottom", icon: "dock.rectangle"),
-                            ],
-                            selection: Binding(
-                                get: { model.hudPositionMode == .notch ? 0 : 1 },
-                                set: { model.setHUDPositionMode($0 == 0 ? .notch : .bottom) }
-                            )
-                        )
-                    }
-                    .padding(.vertical, 10)
-                    .overlay(alignment: .bottom) { Divider() }
                     Toggle("Launch Dictator at login", isOn: Binding(
                         get: { model.launchesAtLogin },
                         set: { model.setLaunchAtLogin($0) }
