@@ -100,9 +100,10 @@ struct HomeView: View {
 enum TranscriptMetadataFormatter {
     static func pipelineSegments(for record: TranscriptRecord) -> [String] {
         var segments = ["STT: \(sttDisplayName(for: record.sttProvider)), \(milliseconds(record.sttLatency))"]
-        if let cleanup = record.cleanup {
-            let providerName = cleanupDisplayName(for: cleanup.provider)
-            segments.append("Cleanup: \(providerName), \(milliseconds(cleanup.latency))")
+        if let execution = record.llmExecution {
+            let providerName = llmDisplayName(for: execution.provider)
+            let label = execution.purpose == .cleanup ? "Cleanup" : "Screen aware"
+            segments.append("\(label): \(providerName), \(milliseconds(execution.latency))")
         }
         segments.append(record.pipelineLatency.map { "Total: \(milliseconds($0))" } ?? "Total: —")
         return segments
@@ -112,7 +113,7 @@ enum TranscriptMetadataFormatter {
         ProviderRegistry.sttMetadata(includeAppleSpeech: true).first { $0.kind == kind }?.displayName ?? kind.rawValue
     }
 
-    private static func cleanupDisplayName(for kind: ProviderKind) -> String {
+    private static func llmDisplayName(for kind: ProviderKind) -> String {
         CleanupProviderRegistry.metadata.first { $0.kind == kind }?.displayName ?? kind.rawValue
     }
 

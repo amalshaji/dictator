@@ -14,7 +14,38 @@ struct TranscriptionRun: Equatable {
 }
 
 @MainActor
-final class TranscriptionCoordinator {
+protocol TranscriptionCoordinating: AnyObject, Sendable {
+    func transcribe(
+        audio: RecordedAudio,
+        selectedProvider: ProviderKind,
+        selectedModel: String?,
+        fallbackEnabled: Bool,
+        vocabulary: [VocabularyEntry],
+        onModeChange: (TranscriptionMode) -> Void
+    ) async throws -> TranscriptionRun
+}
+
+extension TranscriptionCoordinating {
+    func transcribe(
+        audio: RecordedAudio,
+        selectedProvider: ProviderKind,
+        selectedModel: String?,
+        fallbackEnabled: Bool,
+        vocabulary: [VocabularyEntry]
+    ) async throws -> TranscriptionRun {
+        try await transcribe(
+            audio: audio,
+            selectedProvider: selectedProvider,
+            selectedModel: selectedModel,
+            fallbackEnabled: fallbackEnabled,
+            vocabulary: vocabulary,
+            onModeChange: { _ in }
+        )
+    }
+}
+
+@MainActor
+final class TranscriptionCoordinator: TranscriptionCoordinating {
     private let keychain: any CredentialStoring
     private let appleSpeech: AppleSpeechCoordinator
     private let connectivity: any ConnectivityMonitoring

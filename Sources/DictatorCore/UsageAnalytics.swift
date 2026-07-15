@@ -61,7 +61,7 @@ public enum UsageAnalytics {
         rates: [String: ModelTokenRate]
     ) -> UsageReport {
         let sttRecords = records.filter { $0.createdAt >= cutoff }
-        let llmEvents = cleanupEvents(in: records, since: cutoff)
+        let llmEvents = llmEvents(in: records, since: cutoff)
         var report = UsageReport()
 
         report.stt.dictations = sttRecords.count
@@ -111,19 +111,19 @@ public enum UsageAnalytics {
             : sorted[middle]
     }
 
-    private struct CleanupEvent {
+    private struct LLMEvent {
         let date: Date
-        let execution: CleanupExecution
+        let execution: LLMExecution
     }
 
-    private static func cleanupEvents(in records: [TranscriptRecord], since cutoff: Date) -> [CleanupEvent] {
-        var events = records.compactMap { record -> CleanupEvent? in
-            guard record.createdAt >= cutoff, let cleanup = record.cleanup else { return nil }
-            return CleanupEvent(date: record.createdAt, execution: cleanup)
+    private static func llmEvents(in records: [TranscriptRecord], since cutoff: Date) -> [LLMEvent] {
+        var events = records.compactMap { record -> LLMEvent? in
+            guard record.createdAt >= cutoff, let execution = record.llmExecution else { return nil }
+            return LLMEvent(date: record.createdAt, execution: execution)
         }
         events += records.flatMap(\.revisions).compactMap { revision in
             guard revision.createdAt >= cutoff, case .cleanup(let cleanup) = revision.origin else { return nil }
-            return CleanupEvent(date: revision.createdAt, execution: cleanup)
+            return LLMEvent(date: revision.createdAt, execution: cleanup)
         }
         return events
     }
@@ -148,7 +148,7 @@ public enum UsageAnalytics {
     }
 
     private static func llmBreakdowns(
-        _ events: [CleanupEvent],
+        _ events: [LLMEvent],
         rates: [String: ModelTokenRate]
     ) -> [UsageReport.LLMBreakdown] {
         Dictionary(grouping: events) { "\($0.execution.provider.rawValue)/\($0.execution.model)" }

@@ -1,6 +1,6 @@
 import Foundation
 
-public struct OpenAICompatibleCleanupProvider: CleanupLLMProvider {
+public struct OpenAICompatibleScreenAwareProvider: ScreenAwareLLMProvider {
     public let metadata: ProviderMetadata
     private let client: OpenAICompatibleClient
 
@@ -11,7 +11,7 @@ public struct OpenAICompatibleCleanupProvider: CleanupLLMProvider {
         defaultBaseURL: URL,
         transport: any HTTPTransport = URLSessionTransport()
     ) {
-        self.metadata = ProviderMetadata(
+        metadata = ProviderMetadata(
             kind: kind,
             displayName: displayName,
             defaultModel: defaultModel,
@@ -29,21 +29,27 @@ public struct OpenAICompatibleCleanupProvider: CleanupLLMProvider {
         try await client.listModels(credentials: credentials)
     }
 
-    public func clean(request cleanup: CleanupRequest, model: String, credentials: ProviderCredentials) async throws -> CleanupResult {
+    public func generate(
+        request screenAware: ScreenAwareRequest,
+        model: String,
+        credentials: ProviderCredentials
+    ) async throws -> ScreenAwareResult {
+        let imageURL = "data:\(screenAware.imageMIMEType);base64,\(screenAware.imageData.base64EncodedString())"
         let result = try await client.complete(
             model: model,
             messages: [
-                .init(role: "system", content: .text(CleanupPrompt.system(
-                    vocabulary: cleanup.vocabulary,
-                    styleInstruction: cleanup.styleInstruction
-                ))),
-                .init(role: "user", content: .text(try CleanupPrompt.user(request: cleanup)))
+                .init(role: "system", content: .text(ScreenAwarePrompt.system)),
+                .init(role: "user", content: .parts([
+                    .init(type: "text", text: try ScreenAwarePrompt.user(request: screenAware)),
+                    .init(type: "image_url", imageURL: .init(url: imageURL))
+                ]))
             ],
             credentials: credentials
         )
-        let output = try CleanupResponseDecoder.decode(result.content, for: cleanup)
-        return CleanupResult(
-            output: output,
+        let (intent, text) = try ScreenAwareResponseDecoder.decode(result.content, selectedText: screenAware.selectedText)
+        return ScreenAwareResult(
+            intent: intent,
+            text: text,
             provider: metadata.kind,
             model: model,
             inputTokens: result.inputTokens,
@@ -54,9 +60,9 @@ public struct OpenAICompatibleCleanupProvider: CleanupLLMProvider {
     }
 }
 
-public extension OpenAICompatibleCleanupProvider {
+public extension OpenAICompatibleScreenAwareProvider {
     static func groq(transport: any HTTPTransport = URLSessionTransport()) -> Self {
-        .init(kind: .groq, displayName: "Groq", defaultModel: "openai/gpt-oss-20b", defaultBaseURL: URL(string: "https://api.groq.com/openai/v1")!, transport: transport)
+        .init(kind: .groq, displayName: "Groq", defaultModel: "meta-llama/llama-4-scout-17b-16e-instruct", defaultBaseURL: URL(string: "https://api.groq.com/openai/v1")!, transport: transport)
     }
 
     static func xAI(transport: any HTTPTransport = URLSessionTransport()) -> Self {

@@ -2,6 +2,34 @@ import DictatorCore
 import XCTest
 
 final class TranscriptUsageModelsTests: XCTestCase {
+    func testScreenAwareExecutionRoundTripsThroughCanonicalLLMField() throws {
+        let execution = LLMExecution(
+            purpose: .screenAware,
+            provider: .groq,
+            model: "meta-llama/llama-4-scout-17b-16e-instruct",
+            latency: 0.4,
+            usage: .init(inputTokens: 120, outputTokens: 18)
+        )
+        let record = TranscriptRecord(
+            rawText: "Reply to this email",
+            finalText: "Hi Sam,\n\nTuesday works for me.",
+            sttProvider: .groq,
+            sttModel: "whisper-large-v3-turbo",
+            audioDuration: 2,
+            sttLatency: 0.2,
+            llmExecution: execution,
+            insertionOutcome: "typed"
+        )
+
+        let data = try JSONEncoder().encode(record)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let storedExecution = try XCTUnwrap(object["llmExecution"] as? [String: Any])
+        XCTAssertEqual(storedExecution["purpose"] as? String, "screenAware")
+
+        let decoded = try JSONDecoder().decode(TranscriptRecord.self, from: data)
+        XCTAssertEqual(decoded.llmExecution, execution)
+    }
+
     func testAppleFallbackEngineProvenanceRoundTrips() throws {
         let record = TranscriptRecord(
             rawText: "native",
@@ -44,7 +72,9 @@ final class TranscriptUsageModelsTests: XCTestCase {
         )
 
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(record)) as? [String: Any])
-        XCTAssertNotNil(object["cleanup"])
+        let storedExecution = try XCTUnwrap(object["llmExecution"] as? [String: Any])
+        XCTAssertEqual(storedExecution["purpose"] as? String, "cleanup")
+        XCTAssertNil(object["cleanup"])
         XCTAssertNil(object["llmProvider"])
         XCTAssertNil(object["llmModel"])
         XCTAssertNil(object["cleanupLatency"])

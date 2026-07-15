@@ -10,14 +10,14 @@ struct ProvidersView: View {
             VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Providers").font(.dictatorDisplay(30))
-                    Text("Apple transcription stays on your Mac. Cloud audio goes directly to the provider you select, and optional cleanup sends transcript text only.")
+                    Text("Choose speech, cleanup, and screen-aware models independently. Focused-window images are sent only for screen-aware dictation and are never saved.")
                         .font(.dictatorBody(14)).foregroundStyle(DictatorDesign.ink.opacity(0.56))
                 }
                 providerTypeSelector
 
                 if tab == 0 {
                     providerList(model.sttMetadata, purpose: .speechToText)
-                } else {
+                } else if tab == 1 {
                     HStack(spacing: 16) {
                         VStack(alignment: .leading, spacing: 3) {
                             Text("Clean up transcripts").font(.dictatorBody(13, weight: .semibold))
@@ -30,6 +30,9 @@ struct ProvidersView: View {
                     .background(DictatorDesign.control, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).stroke(DictatorDesign.border))
                     providerList(CleanupProviderRegistry.metadata, purpose: .cleanup)
+                } else {
+                    screenAwareControl
+                    providerList(ScreenAwareProviderRegistry.metadata, purpose: .screenAware)
                 }
             }
             .frame(maxWidth: DictatorDesign.contentWidth, alignment: .leading)
@@ -42,10 +45,40 @@ struct ProvidersView: View {
             label: "Provider type",
             options: [
                 .init(title: "Speech to text", icon: "waveform"),
-                .init(title: "LLM cleanup", icon: "sparkles")
+                .init(title: "LLM cleanup", icon: "sparkles"),
+                .init(title: "Screen aware", icon: "viewfinder")
             ],
             selection: $tab
         )
+    }
+
+    private var screenAwareControl: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Screen-aware dictation").font(.dictatorBody(13, weight: .semibold))
+                    Text("Hold Control + Option. Dictator captures only the focused window at release.")
+                        .font(.dictatorBody(11)).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Toggle("", isOn: $model.screenAwareEnabled)
+                    .labelsHidden().toggleStyle(.switch).tint(DictatorDesign.signalInk)
+                    .disabled(!model.screenAwareProviderIsConfigured)
+            }
+            Divider().overlay(DictatorDesign.border)
+            HStack {
+                Text(model.screenCaptureGranted ? "Screen Recording permission granted" : "Screen Recording permission required")
+                    .font(.dictatorBody(11)).foregroundStyle(.secondary)
+                Spacer()
+                if !model.screenCaptureGranted {
+                    Button("Grant permission") { model.requestScreenCapturePermission() }
+                        .dictatorButton(.secondary)
+                }
+            }
+        }
+        .padding(14)
+        .background(DictatorDesign.control, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).stroke(DictatorDesign.border))
     }
 
     private func providerList(_ providers: [ProviderMetadata], purpose: ProviderPurpose) -> some View {
@@ -174,6 +207,7 @@ private struct ProviderSetupRow: View {
         switch purpose {
         case .speechToText: model.selectedSTT == provider.kind
         case .cleanup: model.selectedLLM == provider.kind
+        case .screenAware: model.selectedScreenAwareLLM == provider.kind
         }
     }
 
@@ -236,6 +270,7 @@ private struct ProviderSetupRow: View {
             switch purpose {
             case .speechToText: try model.selectSTT(provider.kind)
             case .cleanup: model.selectedLLM = provider.kind
+            case .screenAware: model.selectScreenAwareProvider(provider.kind)
             }
             status = "Configured"
         } catch { status = error.localizedDescription }
@@ -256,18 +291,12 @@ private struct ProviderSetupRow: View {
         defer { testing = false }
         do {
             let credentials = try enteredCredentials()
-            switch purpose {
-            case .speechToText:
-                guard let implementation = ProviderRegistry.sttProvider(for: provider.kind) else {
-                    throw ProviderError.invalidConfiguration("This speech provider is unavailable.")
-                }
-                try await implementation.validate(credentials: credentials)
-            case .cleanup:
-                guard let implementation = CleanupProviderRegistry.provider(for: provider.kind) else {
-                    throw ProviderError.invalidConfiguration("This cleanup provider is unavailable.")
-                }
-                try await implementation.validate(credentials: credentials)
-            }
+            try await model.testProviderConnection(
+                purpose: purpose,
+                provider: provider.kind,
+                model: selectedModel.trimmed,
+                credentials: credentials
+            )
             status = "Connection verified"
         } catch { status = error.localizedDescription }
     }

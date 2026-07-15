@@ -137,6 +137,114 @@ final class ProviderContractTests: XCTestCase {
             XCTAssertEqual(error as? ProviderError, .missingCredential("base URL"))
         }
     }
+
+    func testOpenAICompatibleScreenAwareSendsImageAndParsesInsertResult() async throws {
+        let response = #"{"choices":[{"message":{"content":"{\"intent\":\"insert\",\"text\":\"Thanks — Tuesday works for me.\"}"}}],"usage":{"prompt_tokens":42,"completion_tokens":8}}"#
+        let transport = MockTransport { request in
+            let body = try XCTUnwrap(request.httpBody)
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            let messages = try XCTUnwrap(json["messages"] as? [[String: Any]])
+            let user = try XCTUnwrap(messages.last)
+            let content = try XCTUnwrap(user["content"] as? [[String: Any]])
+            XCTAssertEqual(content.compactMap { $0["type"] as? String }, ["text", "image_url"])
+            let image = try XCTUnwrap(content.last?["image_url"] as? [String: Any])
+            XCTAssertEqual(image["url"] as? String, "data:image/jpeg;base64,/9g=")
+            return (response.data(using: .utf8)!, 200)
+        }
+        let provider = OpenAICompatibleScreenAwareProvider(
+            kind: .groq,
+            displayName: "Groq",
+            defaultModel: "vision-test",
+            defaultBaseURL: URL(string: "https://example.com/v1")!,
+            transport: transport
+        )
+
+        let result = try await provider.generate(
+            request: ScreenAwareRequest(
+                command: "Reply that Tuesday works",
+                imageData: Data([0xff, 0xd8]),
+                imageMIMEType: "image/jpeg",
+                applicationName: "Mail",
+                bundleIdentifier: "com.apple.mail",
+                windowTitle: "Project update"
+            ),
+            model: "vision-test",
+            credentials: .init(apiKey: "test")
+        )
+
+        XCTAssertEqual(result.intent, .insert)
+        XCTAssertEqual(result.text, "Thanks — Tuesday works for me.")
+        XCTAssertEqual(result.inputTokens, 42)
+    }
+
+    func testGroqScreenAwareDefaultsToDocumentedVisionModel() throws {
+        let provider = try XCTUnwrap(ScreenAwareProviderRegistry.provider(for: .groq))
+
+        XCTAssertEqual(provider.metadata.defaultModel, "meta-llama/llama-4-scout-17b-16e-instruct")
+        XCTAssertEqual(
+            ScreenAwareModelCapabilities.capability(provider: .groq, model: provider.metadata.defaultModel),
+            .supported
+        )
+    }
+
+    func testGeminiScreenAwareSendsInlineImageAndParsesSelectionReplacement() async throws {
+        let response = #"{"candidates":[{"content":{"parts":[{"text":"{\"intent\":\"replaceSelection\",\"text\":\"Concise copy\"}"}]}}],"usageMetadata":{"promptTokenCount":21,"candidatesTokenCount":4}}"#
+        let transport = MockTransport { request in
+            let body = try XCTUnwrap(request.httpBody)
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            let contents = try XCTUnwrap(json["contents"] as? [[String: Any]])
+            let parts = try XCTUnwrap(contents.first?["parts"] as? [[String: Any]])
+            let inlineData = try XCTUnwrap(parts.last?["inlineData"] as? [String: Any])
+            XCTAssertEqual(inlineData["mimeType"] as? String, "image/jpeg")
+            XCTAssertEqual(inlineData["data"] as? String, "/9g=")
+            return (response.data(using: .utf8)!, 200)
+        }
+
+        let result = try await GeminiScreenAwareProvider(transport: transport).generate(
+            request: ScreenAwareRequest(
+                command: "Make this concise",
+                imageData: Data([0xff, 0xd8]),
+                imageMIMEType: "image/jpeg",
+                selectedText: "A long paragraph"
+            ),
+            model: "gemini-2.5-flash-lite",
+            credentials: .init(apiKey: "test")
+        )
+
+        XCTAssertEqual(result.intent, .replaceSelection)
+        XCTAssertEqual(result.text, "Concise copy")
+        XCTAssertEqual(result.outputTokens, 4)
+    }
+
+    func testScreenAwareDecoderRejectsSelectionReplacementWithoutCapturedSelection() throws {
+        XCTAssertThrowsError(
+            try ScreenAwareResponseDecoder.decode(
+                #"{"intent":"replaceSelection","text":"Unsafe"}"#,
+                selectedText: nil
+            )
+        ) { error in
+            XCTAssertEqual(error as? ProviderError, .invalidResponse)
+        }
+    }
+
+    func testScreenAwarePromptRequiresDestinationAppropriateFormatting() {
+        let prompt = ScreenAwarePrompt.system
+
+        XCTAssertTrue(prompt.contains("Match the destination's writing format"))
+        XCTAssertTrue(prompt.contains("email body"))
+        XCTAssertTrue(prompt.contains("single-line field"))
+        XCTAssertTrue(prompt.contains("plain text"))
+    }
+
+    func testScreenAwareDecoderPreservesParagraphBreaks() throws {
+        let result = try ScreenAwareResponseDecoder.decode(
+            #"{"intent":"insert","text":"Hi Sam,\n\nThanks for the update. I will review it today.\n\nBest,\nAmal"}"#,
+            selectedText: nil
+        )
+
+        XCTAssertEqual(result.0, .insert)
+        XCTAssertEqual(result.1, "Hi Sam,\n\nThanks for the update. I will review it today.\n\nBest,\nAmal")
+    }
 }
 
 

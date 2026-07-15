@@ -2,19 +2,13 @@ import AppKit
 import QuartzCore
 import SwiftUI
 
-enum HUDPositionMode: String, CaseIterable, Identifiable {
-    case bottom
-    case pointer
-
-    var id: String { rawValue }
-}
-
 enum HUDPhase: Equatable {
     case idle
     case listening
     case transcribing
     case offline
     case cleaning
+    case understanding
     case success(String)
     case clipboard
     case error(String)
@@ -26,41 +20,22 @@ enum HUDPhase: Equatable {
         case .transcribing: "Transcribing"
         case .offline: "Offline mode"
         case .cleaning: "Cleaning up"
+        case .understanding: "Understanding screen"
         case .success(let value): value
         case .clipboard: "Saved to Dictator clipboard"
         case .error(let value): value
         }
     }
-
-    var tracksPointer: Bool {
-        self != .idle
-    }
 }
 
 enum HUDPositioning {
-    private static let pointerGap: CGFloat = 16
-    private static let screenInset: CGFloat = 8
-
-    static func pointerFrame(size: NSSize, pointer: NSPoint, visibleFrame: NSRect) -> NSRect {
-        let bounds = visibleFrame.insetBy(dx: screenInset, dy: screenInset)
-        let constrainedSize = NSSize(
-            width: min(size.width, max(0, bounds.width)),
-            height: min(size.height, max(0, bounds.height))
+    static func notchFrame(size: NSSize, screenFrame: NSRect, topSafeAreaInset: CGFloat = 0) -> NSRect {
+        NSRect(
+            x: screenFrame.midX - size.width / 2,
+            y: screenFrame.maxY - topSafeAreaInset - size.height,
+            width: size.width,
+            height: size.height
         )
-
-        var x = pointer.x + pointerGap
-        if x + constrainedSize.width > bounds.maxX {
-            x = pointer.x - pointerGap - constrainedSize.width
-        }
-
-        var y = pointer.y + pointerGap
-        if y + constrainedSize.height > bounds.maxY {
-            y = pointer.y - pointerGap - constrainedSize.height
-        }
-
-        x = min(max(x, bounds.minX), max(bounds.minX, bounds.maxX - constrainedSize.width))
-        y = min(max(y, bounds.minY), max(bounds.minY, bounds.maxY - constrainedSize.height))
-        return NSRect(origin: NSPoint(x: x, y: y), size: constrainedSize)
     }
 }
 
@@ -80,22 +55,16 @@ final class FloatingPanelController {
     let model = HUDModel()
     private let panel: NSPanel
     private var hideTask: Task<Void, Never>?
-    private var pointerTrackingTask: Task<Void, Never>?
-    private var positionUpdateTask: Task<Void, Never>?
-    private var positionMode: HUDPositionMode = .bottom
-    private var lastPointerLocation: NSPoint?
     private let transitionDuration = 0.24
-    private let pointerLocation: () -> NSPoint
 
-    init(pointerLocation: @escaping () -> NSPoint = { NSEvent.mouseLocation }) {
-        self.pointerLocation = pointerLocation
+    init() {
         panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 280, height: 58),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
-        panel.level = .floating
+        panel.level = .statusBar
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.isOpaque = false
         panel.backgroundColor = .clear
@@ -105,27 +74,19 @@ final class FloatingPanelController {
         panel.contentView = NSHostingView(rootView: FloatingHUDView(model: model))
     }
 
-    func setPositionMode(_ mode: HUDPositionMode) {
-        guard positionMode != mode else { return }
-        positionMode = mode
-        positionUpdateTask?.cancel()
-        guard panel.isVisible else { return }
-        positionUpdateTask = Task { @MainActor [weak self] in
-            // Avoid resizing the hosting view during a SwiftUI AttributeGraph update.
-            await Task.yield()
-            guard let self, !Task.isCancelled, self.positionMode == mode, self.panel.isVisible else { return }
-            self.resize(for: self.model.phase, animated: true)
-            self.updatePointerTracking(for: self.model.phase)
-        }
+    isolated deinit {
+        hideTask?.cancel()
+        panel.close()
     }
 
     func show(_ phase: HUDPhase) {
         hideTask?.cancel()
         let shouldAnimate = panel.isVisible && model.phase != phase
-        let animation = Animation.timingCurve(0.22, 0.72, 0.22, 1, duration: shouldAnimate ? transitionDuration : 0)
+        let animation: Animation? = shouldAnimate
+            ? .spring(response: 0.3, dampingFraction: 1)
+            : nil
         withAnimation(animation) { model.phase = phase }
         resize(for: phase, animated: shouldAnimate)
-        updatePointerTracking(for: phase)
         panel.orderFrontRegardless()
     }
 
@@ -135,17 +96,16 @@ final class FloatingPanelController {
             do { try await Task.sleep(for: .seconds(1.2)) }
             catch { return }
             guard let self else { return }
-            let animation = Animation.timingCurve(0.22, 0.72, 0.22, 1, duration: self.transitionDuration)
+            let animation = Animation.spring(response: 0.3, dampingFraction: 1)
             withAnimation(animation) { self.model.phase = .idle }
-            self.updatePointerTracking(for: .idle)
             self.resize(for: .idle, animated: true)
         }
     }
 
     private func resize(for phase: HUDPhase, animated: Bool) {
         let size = size(for: phase)
-        guard let target = targetFrame(size: size, phase: phase) else { return }
-        guard animated, positionMode == .bottom else {
+        guard let target = targetFrame(size: size) else { return }
+        guard animated else {
             panel.setFrame(target, display: true)
             return
         }
@@ -159,7 +119,7 @@ final class FloatingPanelController {
     private func size(for phase: HUDPhase) -> NSSize {
         switch phase {
         case .idle: NSSize(width: 54, height: 18)
-        case .listening, .transcribing, .offline, .cleaning:
+        case .listening, .transcribing, .offline, .cleaning, .understanding:
             NSSize(width: 124, height: 32)
         case .success(let message):
             NSSize(width: message.hasPrefix("Offline") ? 174 : 124, height: 32)
@@ -168,60 +128,13 @@ final class FloatingPanelController {
         }
     }
 
-    private func targetFrame(size: NSSize, phase: HUDPhase) -> NSRect? {
-        if positionMode == .pointer, phase.tracksPointer {
-            let pointer = pointerLocation()
-            guard let screen = screen(containing: pointer) else { return nil }
-            return HUDPositioning.pointerFrame(size: size, pointer: pointer, visibleFrame: screen.visibleFrame)
-        }
+    private func targetFrame(size: NSSize) -> NSRect? {
         guard let screen = NSScreen.main ?? NSScreen.screens.first else { return nil }
-        let frame = screen.visibleFrame
-        return NSRect(
-            x: frame.midX - size.width / 2,
-            y: frame.minY + 31 - size.height / 2,
-            width: size.width,
-            height: size.height
+        return HUDPositioning.notchFrame(
+            size: size,
+            screenFrame: screen.frame,
+            topSafeAreaInset: screen.safeAreaInsets.top
         )
-    }
-
-    private func updatePointerTracking(for phase: HUDPhase) {
-        guard positionMode == .pointer, phase.tracksPointer else {
-            pointerTrackingTask?.cancel()
-            pointerTrackingTask = nil
-            lastPointerLocation = nil
-            return
-        }
-        guard pointerTrackingTask == nil else { return }
-        lastPointerLocation = nil
-        pointerTrackingTask = Task { @MainActor [weak self] in
-            while !Task.isCancelled {
-                guard let self else { return }
-                self.updatePointerPosition()
-                do { try await Task.sleep(for: .milliseconds(16)) }
-                catch { return }
-            }
-        }
-    }
-
-    private func updatePointerPosition() {
-        let pointer = pointerLocation()
-        guard pointer != lastPointerLocation else { return }
-        lastPointerLocation = pointer
-        guard let screen = screen(containing: pointer) else { return }
-        let target = HUDPositioning.pointerFrame(
-            size: size(for: model.phase),
-            pointer: pointer,
-            visibleFrame: screen.visibleFrame
-        )
-        if panel.frame.size == target.size {
-            panel.setFrameOrigin(target.origin)
-        } else {
-            panel.setFrame(target, display: true)
-        }
-    }
-
-    private func screen(containing point: NSPoint) -> NSScreen? {
-        NSScreen.screens.first { $0.frame.contains(point) } ?? NSScreen.main ?? NSScreen.screens.first
     }
 }
 
@@ -231,8 +144,10 @@ struct FloatingHUDView: View {
 
     var body: some View {
         ZStack {
-            Capsule().fill(Color(red: 17/255, green: 16/255, blue: 20/255).opacity(0.97))
-            Capsule().stroke(Color.white.opacity(0.075), lineWidth: 0.75)
+            UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 14, bottomTrailingRadius: 14, topTrailingRadius: 0)
+                .fill(Color(red: 17/255, green: 16/255, blue: 20/255).opacity(0.97))
+            UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 14, bottomTrailingRadius: 14, topTrailingRadius: 0)
+                .stroke(Color.white.opacity(0.075), lineWidth: 0.75)
             content
                 .id(phaseKey)
                 .transition(.opacity)
@@ -244,7 +159,7 @@ struct FloatingHUDView: View {
         switch model.phase {
         case .idle: EmptyView()
         case .listening: listeningState
-        case .transcribing, .offline, .cleaning: processingState
+        case .transcribing, .offline, .cleaning, .understanding: processingState
         default: resultState
         }
     }
@@ -325,6 +240,7 @@ struct FloatingHUDView: View {
         case .transcribing: "transcribing"
         case .offline: "offline"
         case .cleaning: "cleaning"
+        case .understanding: "understanding"
         case .success: "success"
         case .clipboard: "clipboard"
         case .error: "error"

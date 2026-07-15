@@ -76,6 +76,7 @@ public struct RecordedAudio: Equatable, Sendable {
 public enum ProviderPurpose: String, Sendable {
     case speechToText = "stt"
     case cleanup = "llm"
+    case screenAware = "vision"
 }
 
 public struct VocabularyEntry: Identifiable, Codable, Equatable, Sendable {
@@ -257,6 +258,70 @@ public struct CleanupResult: Equatable, Sendable {
     public var intent: CleanupIntent { output.intent }
 }
 
+public struct ScreenAwareRequest: Equatable, Sendable {
+    public var command: String
+    public var imageData: Data
+    public var imageMIMEType: String
+    public var applicationName: String?
+    public var bundleIdentifier: String?
+    public var windowTitle: String?
+    public var selectedText: String?
+
+    public init(
+        command: String,
+        imageData: Data,
+        imageMIMEType: String,
+        applicationName: String? = nil,
+        bundleIdentifier: String? = nil,
+        windowTitle: String? = nil,
+        selectedText: String? = nil
+    ) {
+        self.command = command
+        self.imageData = imageData
+        self.imageMIMEType = imageMIMEType
+        self.applicationName = applicationName
+        self.bundleIdentifier = bundleIdentifier
+        self.windowTitle = windowTitle
+        self.selectedText = selectedText
+    }
+}
+
+public enum ScreenAwareIntent: String, Codable, Equatable, Sendable {
+    case insert
+    case replaceSelection
+}
+
+public struct ScreenAwareResult: Equatable, Sendable {
+    public var intent: ScreenAwareIntent
+    public var text: String
+    public var provider: ProviderKind
+    public var model: String
+    public var inputTokens: Int?
+    public var outputTokens: Int?
+    public var providerReportedCostUSD: Decimal?
+    public var latency: TimeInterval
+
+    public init(
+        intent: ScreenAwareIntent,
+        text: String,
+        provider: ProviderKind,
+        model: String,
+        inputTokens: Int? = nil,
+        outputTokens: Int? = nil,
+        providerReportedCostUSD: Decimal? = nil,
+        latency: TimeInterval
+    ) {
+        self.intent = intent
+        self.text = text
+        self.provider = provider
+        self.model = model
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
+        self.providerReportedCostUSD = providerReportedCostUSD
+        self.latency = latency
+    }
+}
+
 public struct STTUsage: Codable, Equatable, Sendable {
     public var audioSeconds: TimeInterval
     public var providerBillableUnits: Decimal?
@@ -274,13 +339,26 @@ public struct LLMUsage: Codable, Equatable, Sendable {
     }
 }
 
-public struct CleanupExecution: Codable, Equatable, Sendable {
+public enum LLMExecutionPurpose: String, Codable, Equatable, Sendable {
+    case cleanup
+    case screenAware
+}
+
+public struct LLMExecution: Codable, Equatable, Sendable {
+    public var purpose: LLMExecutionPurpose
     public var provider: ProviderKind
     public var model: String
     public var latency: TimeInterval
     public var usage: LLMUsage?
 
-    public init(provider: ProviderKind, model: String, latency: TimeInterval, usage: LLMUsage? = nil) {
+    public init(
+        purpose: LLMExecutionPurpose = .cleanup,
+        provider: ProviderKind,
+        model: String,
+        latency: TimeInterval,
+        usage: LLMUsage? = nil
+    ) {
+        self.purpose = purpose
         self.provider = provider
         self.model = model
         self.latency = latency
@@ -289,6 +367,7 @@ public struct CleanupExecution: Codable, Equatable, Sendable {
 
     public init(result: CleanupResult) {
         self.init(
+            purpose: .cleanup,
             provider: result.provider,
             model: result.model,
             latency: result.latency,
@@ -299,7 +378,36 @@ public struct CleanupExecution: Codable, Equatable, Sendable {
             )
         )
     }
+
+    public init(result: ScreenAwareResult) {
+        self.init(
+            purpose: .screenAware,
+            provider: result.provider,
+            model: result.model,
+            latency: result.latency,
+            usage: .init(
+                inputTokens: result.inputTokens,
+                outputTokens: result.outputTokens,
+                providerReportedCostUSD: result.providerReportedCostUSD
+            )
+        )
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case purpose, provider, model, latency, usage
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        purpose = try values.decodeIfPresent(LLMExecutionPurpose.self, forKey: .purpose) ?? .cleanup
+        provider = try values.decode(ProviderKind.self, forKey: .provider)
+        model = try values.decode(String.self, forKey: .model)
+        latency = try values.decode(TimeInterval.self, forKey: .latency)
+        usage = try values.decodeIfPresent(LLMUsage.self, forKey: .usage)
+    }
 }
+
+public typealias CleanupExecution = LLMExecution
 
 public enum TranscriptRevisionOrigin: Equatable, Sendable {
     case manual
@@ -389,7 +497,7 @@ public struct TranscriptRecord: Identifiable, Codable, Equatable, Sendable {
     public var audioDuration: TimeInterval
     public var sttLatency: TimeInterval
     public var pipelineLatency: TimeInterval?
-    public var cleanup: CleanupExecution?
+    public var llmExecution: LLMExecution?
     public var insertionOutcome: String
     public var revisions: [TranscriptRevision]
     public var preferredRevisionID: UUID?
@@ -401,10 +509,16 @@ public struct TranscriptRecord: Identifiable, Codable, Equatable, Sendable {
 
     public var sttUsage: STTUsage { STTUsage(audioSeconds: audioDuration) }
 
+    public var cleanup: CleanupExecution? {
+        get { llmExecution?.purpose == .cleanup ? llmExecution : nil }
+        set { llmExecution = newValue }
+    }
+
     public init(
         id: UUID = UUID(), createdAt: Date = Date(), rawText: String, finalText: String,
         sttProvider: ProviderKind, sttModel: String, sttLocale: String? = nil, sourceBundleID: String? = nil, audioDuration: TimeInterval,
-        sttLatency: TimeInterval, pipelineLatency: TimeInterval? = nil, cleanup: CleanupExecution? = nil, insertionOutcome: String,
+        sttLatency: TimeInterval, pipelineLatency: TimeInterval? = nil, llmExecution: LLMExecution? = nil,
+        cleanup: CleanupExecution? = nil, insertionOutcome: String,
         revisions: [TranscriptRevision] = [], preferredRevisionID: UUID? = nil
     ) {
         self.id = id
@@ -418,7 +532,7 @@ public struct TranscriptRecord: Identifiable, Codable, Equatable, Sendable {
         self.audioDuration = audioDuration
         self.sttLatency = sttLatency
         self.pipelineLatency = pipelineLatency
-        self.cleanup = cleanup
+        self.llmExecution = llmExecution ?? cleanup
         self.insertionOutcome = insertionOutcome
         self.revisions = revisions
         self.preferredRevisionID = preferredRevisionID
@@ -426,7 +540,7 @@ public struct TranscriptRecord: Identifiable, Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case id, createdAt, rawText, finalText, sttProvider, sttModel, sttLocale, sourceBundleID
-        case audioDuration, sttLatency, pipelineLatency, cleanup, insertionOutcome, revisions, preferredRevisionID
+        case audioDuration, sttLatency, pipelineLatency, llmExecution, cleanup, insertionOutcome, revisions, preferredRevisionID
         case llmProvider, llmModel, cleanupLatency, llmUsage
     }
 
@@ -439,18 +553,20 @@ public struct TranscriptRecord: Identifiable, Codable, Equatable, Sendable {
         sourceBundleID = try c.decodeIfPresent(String.self, forKey: .sourceBundleID)
         audioDuration = try c.decode(TimeInterval.self, forKey: .audioDuration); sttLatency = try c.decode(TimeInterval.self, forKey: .sttLatency)
         pipelineLatency = try c.decodeIfPresent(TimeInterval.self, forKey: .pipelineLatency)
-        if let execution = try c.decodeIfPresent(CleanupExecution.self, forKey: .cleanup) {
-            cleanup = execution
+        if let execution = try c.decodeIfPresent(LLMExecution.self, forKey: .llmExecution) {
+            llmExecution = execution
+        } else if let execution = try c.decodeIfPresent(CleanupExecution.self, forKey: .cleanup) {
+            llmExecution = execution
         } else if let provider = try c.decodeIfPresent(ProviderKind.self, forKey: .llmProvider),
                   let model = try c.decodeIfPresent(String.self, forKey: .llmModel) {
-            cleanup = .init(
+            llmExecution = .init(
                 provider: provider,
                 model: model,
                 latency: try c.decodeIfPresent(TimeInterval.self, forKey: .cleanupLatency) ?? 0,
                 usage: try c.decodeIfPresent(LLMUsage.self, forKey: .llmUsage)
             )
         } else {
-            cleanup = nil
+            llmExecution = nil
         }
         insertionOutcome = try c.decode(String.self, forKey: .insertionOutcome)
         revisions = try c.decodeIfPresent([TranscriptRevision].self, forKey: .revisions) ?? []
@@ -466,7 +582,7 @@ public struct TranscriptRecord: Identifiable, Codable, Equatable, Sendable {
         try c.encodeIfPresent(sourceBundleID, forKey: .sourceBundleID)
         try c.encode(audioDuration, forKey: .audioDuration); try c.encode(sttLatency, forKey: .sttLatency)
         try c.encodeIfPresent(pipelineLatency, forKey: .pipelineLatency)
-        try c.encodeIfPresent(cleanup, forKey: .cleanup)
+        try c.encodeIfPresent(llmExecution, forKey: .llmExecution)
         try c.encode(insertionOutcome, forKey: .insertionOutcome)
         try c.encode(revisions, forKey: .revisions)
         try c.encodeIfPresent(preferredRevisionID, forKey: .preferredRevisionID)
