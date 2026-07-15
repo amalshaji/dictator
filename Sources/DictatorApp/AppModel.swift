@@ -39,12 +39,8 @@ final class AppModel: ObservableObject {
     private let keychain: any CredentialStoring
     private let transcriptionCoordinator: TranscriptionCoordinator
     private var appleSpeechObservation: AnyCancellable?
-    private var workspaceObservations = Set<AnyCancellable>()
-    private var hotkeyRecoveryTask: Task<Void, Never>?
-    private let recorder = AudioRecorder()
-    private let hotkey: any HotkeyMonitoring
-    private let workspaceNotificationCenter: NotificationCenter
-    private let hotkeyRetryDelay: Duration
+    private let recorder: any AudioRecording
+    private let hotkeys: HotkeyLifecycleController
     private let inserter = AccessibilityInserter()
     private let transcriptProcessor = TranscriptProcessor()
     private let transcriptRepairService = TranscriptRepairService()
@@ -74,15 +70,13 @@ final class AppModel: ObservableObject {
         appleSpeechProvider: (any LocalSpeechTranscribing)?,
         defaults: UserDefaults,
         connectivity: any ConnectivityMonitoring,
-        hotkey: any HotkeyMonitoring = HotkeyMonitor(),
-        workspaceNotificationCenter: NotificationCenter = NSWorkspace.shared.notificationCenter,
-        hotkeyRetryDelay: Duration = .seconds(1)
+        hotkeys: HotkeyLifecycleController = HotkeyLifecycleController(),
+        recorder: any AudioRecording = AudioRecorder()
     ) {
         self.defaults = defaults
         self.keychain = keychain
-        self.hotkey = hotkey
-        self.workspaceNotificationCenter = workspaceNotificationCenter
-        self.hotkeyRetryDelay = hotkeyRetryDelay
+        self.hotkeys = hotkeys
+        self.recorder = recorder
         let appleSpeech = AppleSpeechCoordinator(
             provider: appleSpeechProvider,
             selectedLocaleIdentifier: defaults.string(forKey: "appleSpeechLocale") ?? Locale.current.identifier,
@@ -118,18 +112,21 @@ final class AppModel: ObservableObject {
         recorder.onLevel = { [weak self] level in
             Task { @MainActor in self?.hud.model.push(level: level) }
         }
-        hotkey.onPress = { [weak self] targetPID in
+        hotkeys.onPress = { [weak self] targetPID in
             Task { @MainActor in await self?.startDictation(targetProcessIdentifier: targetPID) }
         }
-        hotkey.onRelease = { [weak self] in Task { @MainActor in await self?.stopDictation() } }
-        hotkey.onPasteLatest = { [weak self] in Task { @MainActor in await self?.pasteClipboard() } }
-        hotkey.onOpenClipboard = { [weak self] in Task { @MainActor in self?.openClipboard() } }
-        observeWorkspaceLifecycle()
+        hotkeys.onRelease = { [weak self] in Task { @MainActor in await self?.stopDictation() } }
+        hotkeys.onPasteLatest = { [weak self] in Task { @MainActor in await self?.pasteClipboard() } }
+        hotkeys.onOpenClipboard = { [weak self] in self?.openClipboard() }
+        hotkeys.onWillSleep = { [weak self] in
+            guard let self, phase == .listening else { return }
+            cancelDictation()
+        }
+        hotkeys.onStateChange = { [weak self] state in self?.applyHotkeyState(state) }
         let runningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
         if !runningTests {
             if onboardingComplete { requestRequiredPermissions() }
-            startHotkeysIfPossible()
-            if !shortcutsAvailable { scheduleHotkeyRecovery() }
+            hotkeys.start()
         }
         // Defer panel layout until SwiftUI has finished installing this StateObject.
         // Resizing an NSHostingView during AttributeGraph construction aborts on macOS 26.
@@ -416,10 +413,10 @@ final class AppModel: ObservableObject {
     func requestAccessibilityPermission() {
         AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
         _ = CGRequestListenEventAccess()
-        startHotkeysIfPossible()
+        hotkeys.retry()
     }
 
-    func retryShortcuts() { startHotkeysIfPossible() }
+    func retryShortcuts() { hotkeys.retry() }
 
     @discardableResult
     func setShortcut(_ shortcut: GlobalShortcut, for purpose: ShortcutPurpose) -> Bool {
@@ -459,7 +456,7 @@ final class AppModel: ObservableObject {
         accessibilityGranted = AXIsProcessTrusted()
         inputMonitoringGranted = CGPreflightListenEventAccess()
         microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-        startHotkeysIfPossible()
+        hotkeys.retry()
     }
 
     func configureOnboardingProvider(kind: ProviderKind, apiKey: String, accountID: String?) async throws {
@@ -596,65 +593,23 @@ final class AppModel: ObservableObject {
         if !CGPreflightListenEventAccess() { _ = CGRequestListenEventAccess() }
     }
 
-    private func observeWorkspaceLifecycle() {
-        workspaceNotificationCenter.publisher(for: NSWorkspace.willSleepNotification)
-            .sink { [weak self] _ in
-                Task { @MainActor in self?.prepareForSleep() }
-            }
-            .store(in: &workspaceObservations)
-        workspaceNotificationCenter.publisher(for: NSWorkspace.didWakeNotification)
-            .sink { [weak self] _ in
-                Task { @MainActor in self?.recoverAfterWake() }
-            }
-            .store(in: &workspaceObservations)
-    }
-
-    private func prepareForSleep() {
-        hotkeyRecoveryTask?.cancel()
-        hotkeyRecoveryTask = nil
-        if phase == .listening { cancelDictation() }
-        hotkey.stop()
-        shortcutsAvailable = false
-    }
-
-    private func recoverAfterWake() {
-        hotkey.stop()
-        shortcutsAvailable = false
-        startHotkeysIfPossible()
-        if !shortcutsAvailable { scheduleHotkeyRecovery() }
-    }
-
-    private func scheduleHotkeyRecovery() {
-        hotkeyRecoveryTask?.cancel()
-        hotkeyRecoveryTask = Task { @MainActor [weak self] in
-            while let self, !Task.isCancelled, !self.shortcutsAvailable {
-                do { try await Task.sleep(for: self.hotkeyRetryDelay) }
-                catch { return }
-                guard !Task.isCancelled else { return }
-                self.startHotkeysIfPossible()
-            }
-        }
-    }
-
-    private func startHotkeysIfPossible() {
-        guard !hotkey.isRunning else {
+    private func applyHotkeyState(_ state: HotkeyLifecycleState) {
+        switch state {
+        case .stopped:
+            shortcutsAvailable = false
+        case .available:
             shortcutsAvailable = true
             accessibilityGranted = AXIsProcessTrusted()
             inputMonitoringGranted = CGPreflightListenEventAccess()
-            return
-        }
-        do {
-            try hotkey.start()
-            shortcutsAvailable = true
             if lastError == HotkeyError.permissionRequired.localizedDescription { lastError = nil }
-        } catch {
+        case let .unavailable(message):
             shortcutsAvailable = false
-            lastError = error.localizedDescription
+            lastError = message
         }
     }
 
     private func configureHotkeys() {
-        hotkey.configure(
+        hotkeys.configure(
             dictate: dictateShortcut,
             pasteLatest: pasteLatestShortcut,
             openClipboard: openClipboardShortcut

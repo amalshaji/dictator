@@ -1,4 +1,4 @@
-import CoreGraphics
+@preconcurrency import CoreGraphics
 import Foundation
 
 struct GlobalShortcut: Codable, Equatable, Sendable {
@@ -36,11 +36,12 @@ extension CGEventFlags {
     }
 }
 
-protocol HotkeyMonitoring: AnyObject, Sendable {
-    var onPress: (@Sendable (pid_t?) -> Void)? { get set }
-    var onRelease: (@Sendable () -> Void)? { get set }
-    var onPasteLatest: (@Sendable () -> Void)? { get set }
-    var onOpenClipboard: (@Sendable () -> Void)? { get set }
+@MainActor
+protocol HotkeyMonitoring: AnyObject {
+    var onPress: ((pid_t?) -> Void)? { get set }
+    var onRelease: (() -> Void)? { get set }
+    var onPasteLatest: (() -> Void)? { get set }
+    var onOpenClipboard: (() -> Void)? { get set }
     var isRunning: Bool { get }
 
     func configure(dictate: GlobalShortcut, pasteLatest: GlobalShortcut, openClipboard: GlobalShortcut)
@@ -48,11 +49,12 @@ protocol HotkeyMonitoring: AnyObject, Sendable {
     func stop()
 }
 
-final class HotkeyMonitor: HotkeyMonitoring, @unchecked Sendable {
-    var onPress: (@Sendable (pid_t?) -> Void)?
-    var onRelease: (@Sendable () -> Void)?
-    var onPasteLatest: (@Sendable () -> Void)?
-    var onOpenClipboard: (@Sendable () -> Void)?
+@MainActor
+final class HotkeyMonitor: HotkeyMonitoring {
+    var onPress: ((pid_t?) -> Void)?
+    var onRelease: (() -> Void)?
+    var onPasteLatest: (() -> Void)?
+    var onOpenClipboard: (() -> Void)?
     private var dictateShortcut = GlobalShortcut.dictate
     private var pasteShortcut = GlobalShortcut.pasteLatest
     private var clipboardShortcut = GlobalShortcut.openClipboard
@@ -61,7 +63,14 @@ final class HotkeyMonitor: HotkeyMonitoring, @unchecked Sendable {
     private var dictateIsDown = false
     var isRunning: Bool {
         guard let eventTap else { return false }
-        return CFMachPortIsValid(eventTap) && CGEvent.tapIsEnabled(tap: eventTap)
+        return Self.isTapHealthy(
+            isValid: CFMachPortIsValid(eventTap),
+            isEnabled: CGEvent.tapIsEnabled(tap: eventTap)
+        )
+    }
+
+    static func isTapHealthy(isValid: Bool, isEnabled: Bool) -> Bool {
+        isValid && isEnabled
     }
 
     func configure(dictate: GlobalShortcut, pasteLatest: GlobalShortcut, openClipboard: GlobalShortcut) {
@@ -79,12 +88,14 @@ final class HotkeyMonitor: HotkeyMonitoring, @unchecked Sendable {
         let callback: CGEventTapCallBack = { _, type, event, userInfo in
             guard let userInfo else { return Unmanaged.passUnretained(event) }
             let monitor = Unmanaged<HotkeyMonitor>.fromOpaque(userInfo).takeUnretainedValue()
-            if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-                if let tap = monitor.eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
+            return MainActor.assumeIsolated {
+                if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                    if let tap = monitor.eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
+                    return Unmanaged.passUnretained(event)
+                }
+                if monitor.handle(event, type: type) { return nil }
                 return Unmanaged.passUnretained(event)
             }
-            if monitor.handle(event, type: type) { return nil }
-            return Unmanaged.passUnretained(event)
         }
         let pointer = Unmanaged.passUnretained(self).toOpaque()
         guard let tap = CGEvent.tapCreate(
@@ -104,14 +115,17 @@ final class HotkeyMonitor: HotkeyMonitoring, @unchecked Sendable {
 
     func stop() {
         if let runLoopSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes) }
-        if let eventTap { CGEvent.tapEnable(tap: eventTap, enable: false) }
+        if let eventTap {
+            CGEvent.tapEnable(tap: eventTap, enable: false)
+            CFMachPortInvalidate(eventTap)
+        }
         runLoopSource = nil
         eventTap = nil
         dictateIsDown = false
     }
 
     /// Returns true when a Dictator shortcut consumed the event.
-    private func handle(_ event: CGEvent, type: CGEventType) -> Bool {
+    func handle(_ event: CGEvent, type: CGEventType) -> Bool {
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let eventTargetPID = event.getIntegerValueField(.eventTargetUnixProcessID)
         let targetPID = eventTargetPID > 0 ? pid_t(eventTargetPID) : nil
