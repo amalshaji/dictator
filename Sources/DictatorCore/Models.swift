@@ -76,6 +76,7 @@ public struct RecordedAudio: Equatable, Sendable {
 public enum ProviderPurpose: String, Sendable {
     case speechToText = "stt"
     case cleanup = "llm"
+    case screenAware = "vision"
 }
 
 public struct VocabularyEntry: Identifiable, Codable, Equatable, Sendable {
@@ -255,6 +256,70 @@ public struct CleanupResult: Equatable, Sendable {
 
     public var text: String { output.text }
     public var intent: CleanupIntent { output.intent }
+}
+
+public struct ScreenAwareRequest: Equatable, Sendable {
+    public var command: String
+    public var imageData: Data
+    public var imageMIMEType: String
+    public var applicationName: String?
+    public var bundleIdentifier: String?
+    public var windowTitle: String?
+    public var selectedText: String?
+
+    public init(
+        command: String,
+        imageData: Data,
+        imageMIMEType: String,
+        applicationName: String? = nil,
+        bundleIdentifier: String? = nil,
+        windowTitle: String? = nil,
+        selectedText: String? = nil
+    ) {
+        self.command = command
+        self.imageData = imageData
+        self.imageMIMEType = imageMIMEType
+        self.applicationName = applicationName
+        self.bundleIdentifier = bundleIdentifier
+        self.windowTitle = windowTitle
+        self.selectedText = selectedText
+    }
+}
+
+public enum ScreenAwareIntent: String, Codable, Equatable, Sendable {
+    case insert
+    case replaceSelection
+}
+
+public struct ScreenAwareResult: Equatable, Sendable {
+    public var intent: ScreenAwareIntent
+    public var text: String
+    public var provider: ProviderKind
+    public var model: String
+    public var inputTokens: Int?
+    public var outputTokens: Int?
+    public var providerReportedCostUSD: Decimal?
+    public var latency: TimeInterval
+
+    public init(
+        intent: ScreenAwareIntent,
+        text: String,
+        provider: ProviderKind,
+        model: String,
+        inputTokens: Int? = nil,
+        outputTokens: Int? = nil,
+        providerReportedCostUSD: Decimal? = nil,
+        latency: TimeInterval
+    ) {
+        self.intent = intent
+        self.text = text
+        self.provider = provider
+        self.model = model
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
+        self.providerReportedCostUSD = providerReportedCostUSD
+        self.latency = latency
+    }
 }
 
 public struct STTUsage: Codable, Equatable, Sendable {

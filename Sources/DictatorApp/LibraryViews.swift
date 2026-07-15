@@ -125,6 +125,12 @@ struct SettingsView: View {
                             model.setShortcut($0, for: .dictate)
                         }
                     }
+                    shortcutRow("Screen aware", detail: "Hold while speaking about the focused window") {
+                        Text(model.screenAwareShortcut.displayName)
+                            .font(.dictatorUtility(12)).foregroundStyle(DictatorDesign.ink)
+                            .padding(.horizontal, 12).frame(height: 30)
+                            .background(DictatorDesign.control, in: RoundedRectangle(cornerRadius: 8))
+                    }
                     shortcutRow("Paste latest", detail: "Paste the newest saved transcript") {
                         ShortcutRecorder(shortcut: model.pasteLatestShortcut) {
                             model.setShortcut($0, for: .pasteLatest)
@@ -164,6 +170,17 @@ struct SettingsView: View {
                         }
                         .disabled(model.shortcutsAvailable).dictatorButton(.secondary)
                     }.padding(.vertical, 11)
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Screen Recording").font(.dictatorBody(14, weight: .medium))
+                            Text("Required only for focused-window screen-aware dictation.").font(.dictatorBody(12)).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button(model.screenCaptureGranted ? "Granted" : "Grant permission") {
+                            model.requestScreenCapturePermission()
+                        }
+                        .disabled(model.screenCaptureGranted).dictatorButton(.secondary)
+                    }.padding(.vertical, 11)
                 }
                 settingsSection("Data handling") {
                     settingRow("Transcript retention", detail: "30 days")
@@ -199,12 +216,12 @@ struct SettingsView: View {
                         DictatorSegmentedSwitcher(
                             label: "Status pill position",
                             options: [
+                                .init(title: "Notch", icon: "rectangle.topthird.inset.filled"),
                                 .init(title: "Bottom", icon: "dock.rectangle"),
-                                .init(title: "Next to pointer", icon: "cursorarrow")
                             ],
                             selection: Binding(
-                                get: { model.hudPositionMode == .bottom ? 0 : 1 },
-                                set: { model.setHUDPositionMode($0 == 0 ? .bottom : .pointer) }
+                                get: { model.hudPositionMode == .notch ? 0 : 1 },
+                                set: { model.setHUDPositionMode($0 == 0 ? .notch : .bottom) }
                             )
                         )
                     }

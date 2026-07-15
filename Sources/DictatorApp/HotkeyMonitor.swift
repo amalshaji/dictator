@@ -6,12 +6,20 @@ struct GlobalShortcut: Codable, Equatable, Sendable {
     let modifiersRawValue: UInt64
     let keyLabel: String
     let isFunctionModifier: Bool
+    let isModifierOnly: Bool
 
-    init(keyCode: Int64, modifiers: CGEventFlags = [], keyLabel: String, isFunctionModifier: Bool = false) {
+    init(
+        keyCode: Int64,
+        modifiers: CGEventFlags = [],
+        keyLabel: String,
+        isFunctionModifier: Bool = false,
+        isModifierOnly: Bool = false
+    ) {
         self.keyCode = keyCode
         modifiersRawValue = modifiers.shortcutModifiers.rawValue
         self.keyLabel = keyLabel
         self.isFunctionModifier = isFunctionModifier
+        self.isModifierOnly = isModifierOnly
     }
 
     var modifiers: CGEventFlags { CGEventFlags(rawValue: modifiersRawValue).shortcutModifiers }
@@ -25,7 +33,26 @@ struct GlobalShortcut: Codable, Equatable, Sendable {
         return value + keyLabel
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case keyCode, modifiersRawValue, keyLabel, isFunctionModifier, isModifierOnly
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        keyCode = try values.decode(Int64.self, forKey: .keyCode)
+        modifiersRawValue = try values.decode(UInt64.self, forKey: .modifiersRawValue)
+        keyLabel = try values.decode(String.self, forKey: .keyLabel)
+        isFunctionModifier = try values.decodeIfPresent(Bool.self, forKey: .isFunctionModifier) ?? false
+        isModifierOnly = try values.decodeIfPresent(Bool.self, forKey: .isModifierOnly) ?? false
+    }
+
     static let dictate = GlobalShortcut(keyCode: 63, keyLabel: "Fn", isFunctionModifier: true)
+    static let screenAware = GlobalShortcut(
+        keyCode: -1,
+        modifiers: [.maskControl, .maskAlternate],
+        keyLabel: "",
+        isModifierOnly: true
+    )
     static let pasteLatest = GlobalShortcut(keyCode: 9, modifiers: [.maskCommand, .maskAlternate], keyLabel: "V")
     static let openClipboard = GlobalShortcut(keyCode: 9, modifiers: [.maskCommand, .maskAlternate, .maskShift], keyLabel: "V")
 }
@@ -40,11 +67,13 @@ extension CGEventFlags {
 protocol HotkeyMonitoring: AnyObject {
     var onPress: ((pid_t?) -> Void)? { get set }
     var onRelease: (() -> Void)? { get set }
+    var onScreenAwarePress: ((pid_t?) -> Void)? { get set }
+    var onScreenAwareRelease: (() -> Void)? { get set }
     var onPasteLatest: (() -> Void)? { get set }
     var onOpenClipboard: (() -> Void)? { get set }
     var isRunning: Bool { get }
 
-    func configure(dictate: GlobalShortcut, pasteLatest: GlobalShortcut, openClipboard: GlobalShortcut)
+    func configure(dictate: GlobalShortcut, screenAware: GlobalShortcut, pasteLatest: GlobalShortcut, openClipboard: GlobalShortcut)
     func start() throws
     func stop()
 }
@@ -53,14 +82,18 @@ protocol HotkeyMonitoring: AnyObject {
 final class HotkeyMonitor: HotkeyMonitoring {
     var onPress: ((pid_t?) -> Void)?
     var onRelease: (() -> Void)?
+    var onScreenAwarePress: ((pid_t?) -> Void)?
+    var onScreenAwareRelease: (() -> Void)?
     var onPasteLatest: (() -> Void)?
     var onOpenClipboard: (() -> Void)?
     private var dictateShortcut = GlobalShortcut.dictate
+    private var screenAwareShortcut = GlobalShortcut.screenAware
     private var pasteShortcut = GlobalShortcut.pasteLatest
     private var clipboardShortcut = GlobalShortcut.openClipboard
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var dictateIsDown = false
+    private var screenAwareIsDown = false
     var isRunning: Bool {
         guard let eventTap else { return false }
         return Self.isTapHealthy(
@@ -73,8 +106,9 @@ final class HotkeyMonitor: HotkeyMonitoring {
         isValid && isEnabled
     }
 
-    func configure(dictate: GlobalShortcut, pasteLatest: GlobalShortcut, openClipboard: GlobalShortcut) {
+    func configure(dictate: GlobalShortcut, screenAware: GlobalShortcut, pasteLatest: GlobalShortcut, openClipboard: GlobalShortcut) {
         dictateShortcut = dictate
+        screenAwareShortcut = screenAware
         pasteShortcut = pasteLatest
         clipboardShortcut = openClipboard
     }
@@ -122,6 +156,7 @@ final class HotkeyMonitor: HotkeyMonitoring {
         runLoopSource = nil
         eventTap = nil
         dictateIsDown = false
+        screenAwareIsDown = false
     }
 
     /// Returns true when a Dictator shortcut consumed the event.
@@ -130,11 +165,21 @@ final class HotkeyMonitor: HotkeyMonitoring {
         let eventTargetPID = event.getIntegerValueField(.eventTargetUnixProcessID)
         let targetPID = eventTargetPID > 0 ? pid_t(eventTargetPID) : nil
 
-        if dictateShortcut.isFunctionModifier, type == .flagsChanged {
+        if dictateShortcut.isFunctionModifier,
+           type == .flagsChanged,
+           event.flags.contains(.maskSecondaryFn) || dictateIsDown {
             let down = event.flags.contains(.maskSecondaryFn)
             guard down != dictateIsDown else { return false }
             dictateIsDown = down
             if down { onPress?(targetPID) } else { onRelease?() }
+            return false
+        }
+
+        if screenAwareShortcut.isModifierOnly, type == .flagsChanged {
+            let down = ShortcutMatcher.matchesModifiers(screenAwareShortcut, flags: event.flags)
+            guard down != screenAwareIsDown else { return false }
+            screenAwareIsDown = down
+            if down { onScreenAwarePress?(targetPID) } else { onScreenAwareRelease?() }
             return false
         }
 
@@ -167,7 +212,12 @@ final class HotkeyMonitor: HotkeyMonitoring {
 
 enum ShortcutMatcher {
     static func matches(_ shortcut: GlobalShortcut, keyCode: Int64, flags: CGEventFlags) -> Bool {
-        !shortcut.isFunctionModifier && shortcut.keyCode == keyCode && shortcut.modifiers == flags.shortcutModifiers
+        !shortcut.isFunctionModifier && !shortcut.isModifierOnly
+            && shortcut.keyCode == keyCode && shortcut.modifiers == flags.shortcutModifiers
+    }
+
+    static func matchesModifiers(_ shortcut: GlobalShortcut, flags: CGEventFlags) -> Bool {
+        shortcut.isModifierOnly && shortcut.modifiers == flags.shortcutModifiers
     }
 }
 

@@ -4,6 +4,7 @@ import Foundation
 
 struct ApplicationTarget {
     let element: AXUIElement
+    let name: String?
     let bundleIdentifier: String?
     let processIdentifier: pid_t
 }
@@ -82,6 +83,7 @@ struct AccessibilityTargetResolver {
         guard let runningApplication = eventTarget ?? targetApplication() else { return nil }
         let application = ApplicationTarget(
             element: AXUIElementCreateApplication(runningApplication.processIdentifier),
+            name: runningApplication.localizedName,
             bundleIdentifier: runningApplication.bundleIdentifier,
             processIdentifier: runningApplication.processIdentifier
         )
@@ -172,6 +174,46 @@ struct AccessibilityTargetResolver {
         let value = unsafeDowncast(rangeValue, to: AXValue.self)
         guard AXValueGetValue(value, .cfRange, &range) else { return nil }
         return TextSelectionSnapshot(text: text, location: range.location, length: range.length)
+    }
+
+    func focusedWindow(for target: FocusedTarget) -> FocusedWindowSnapshot? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            target.application.element,
+            kAXFocusedWindowAttribute as CFString,
+            &value
+        ) == .success,
+        let window = axElement(value),
+        let frame = windowFrame(window)
+        else { return nil }
+
+        var titleValue: CFTypeRef?
+        _ = AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleValue)
+        return FocusedWindowSnapshot(
+            processIdentifier: target.application.processIdentifier,
+            applicationName: target.application.name,
+            bundleIdentifier: target.application.bundleIdentifier,
+            title: titleValue as? String,
+            frame: frame
+        )
+    }
+
+    private func windowFrame(_ window: AXUIElement) -> CGRect? {
+        var positionValue: CFTypeRef?
+        var sizeValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(window, kAXPositionAttribute as CFString, &positionValue) == .success,
+              AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &sizeValue) == .success,
+              let positionValue, let sizeValue,
+              CFGetTypeID(positionValue) == AXValueGetTypeID(),
+              CFGetTypeID(sizeValue) == AXValueGetTypeID()
+        else { return nil }
+        var point = CGPoint.zero
+        var size = CGSize.zero
+        guard AXValueGetValue(unsafeDowncast(positionValue, to: AXValue.self), .cgPoint, &point),
+              AXValueGetValue(unsafeDowncast(sizeValue, to: AXValue.self), .cgSize, &size),
+              size.width > 0, size.height > 0
+        else { return nil }
+        return CGRect(origin: point, size: size)
     }
 
     private func focusedElement(in root: AXUIElement) -> AXUIElement? {
@@ -271,6 +313,10 @@ final class AccessibilityInserter {
 
     func captureFocusedTarget(processIdentifier: pid_t? = nil) -> FocusedTarget? {
         resolver.captureFocusedTarget(processIdentifier: processIdentifier)
+    }
+
+    func captureFocusedWindow(for target: FocusedTarget) -> FocusedWindowSnapshot? {
+        resolver.focusedWindow(for: target)
     }
 
     func insert(_ insertion: TextInsertion, into target: FocusedTarget?) async -> InsertionResult {

@@ -42,7 +42,7 @@ final class AppBehaviorTests: XCTestCase {
         }
     }
 
-    func testHUDPositionModeDefaultsToBottomAndPersistsPointerSelection() throws {
+    func testHUDPositionModeDefaultsToNotchAndPersistsBottomSelection() throws {
         let suiteName = "ai.dictator.tests.hud-position.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -55,19 +55,19 @@ final class AppBehaviorTests: XCTestCase {
             connectivity: HUDTestConnectivityMonitor()
         )
 
+        XCTAssertEqual(model.hudPositionMode, .notch)
+
+        model.setHUDPositionMode(.bottom)
+
         XCTAssertEqual(model.hudPositionMode, .bottom)
-
-        model.setHUDPositionMode(.pointer)
-
-        XCTAssertEqual(model.hudPositionMode, .pointer)
-        XCTAssertEqual(defaults.string(forKey: "hudPositionMode"), HUDPositionMode.pointer.rawValue)
+        XCTAssertEqual(defaults.string(forKey: "hudPositionMode"), HUDPositionMode.bottom.rawValue)
     }
 
-    func testAppModelRestoresPointerHUDModeWithoutShowingPanel() throws {
+    func testAppModelMigratesPointerHUDModeToNotch() throws {
         let suiteName = "ai.dictator.tests.hud-position-restoration.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        defaults.set(HUDPositionMode.pointer.rawValue, forKey: "hudPositionMode")
+        defaults.set("pointer", forKey: "hudPositionMode")
 
         let model = AppModel(
             keychain: HUDTestCredentialStore(),
@@ -76,7 +76,7 @@ final class AppBehaviorTests: XCTestCase {
             connectivity: HUDTestConnectivityMonitor()
         )
 
-        XCTAssertEqual(model.hudPositionMode, .pointer)
+        XCTAssertEqual(model.hudPositionMode, .notch)
     }
 
     func testSavedProviderCredentialsAreReportedAsConfiguredBeforeExpansion() throws {
@@ -96,29 +96,30 @@ final class AppBehaviorTests: XCTestCase {
     func testChangingVisibleHUDPositionDefersPanelResize() async throws {
         let existingWindows = Set(NSApp.windows.map(ObjectIdentifier.init))
         let screen = try XCTUnwrap(NSScreen.main ?? NSScreen.screens.first)
-        let pointer = NSPoint(x: screen.visibleFrame.midX, y: screen.visibleFrame.midY)
-        let controller = FloatingPanelController(pointerLocation: { pointer })
+        let controller = FloatingPanelController()
         controller.show(.listening)
         let panel = try XCTUnwrap(NSApp.windows.first {
-            !existingWindows.contains(ObjectIdentifier($0)) && $0 is NSPanel
+            !existingWindows.contains(ObjectIdentifier($0)) && $0 is NSPanel && $0.frame.width > 100
         })
         defer { panel.close() }
-        let bottomFrame = panel.frame
-        let pointerFrame = HUDPositioning.pointerFrame(
-            size: bottomFrame.size,
-            pointer: pointer,
-            visibleFrame: screen.visibleFrame
+        let notchFrame = panel.frame
+        let bottomFrame = NSRect(
+            x: screen.visibleFrame.midX - notchFrame.width / 2,
+            y: screen.visibleFrame.minY + 31 - notchFrame.height / 2,
+            width: notchFrame.width,
+            height: notchFrame.height
         )
-        XCTAssertNotEqual(pointerFrame, bottomFrame, "Test pointer must produce a visible frame change")
+        XCTAssertNotEqual(notchFrame, bottomFrame)
         let didMove = expectation(forNotification: NSWindow.didMoveNotification, object: panel)
 
-        controller.setPositionMode(.pointer)
+        controller.setPositionMode(.bottom)
 
-        XCTAssertEqual(panel.frame, bottomFrame)
+        XCTAssertEqual(panel.frame, notchFrame)
         await fulfillment(of: [didMove], timeout: 1)
-        XCTAssertEqual(panel.frame.origin.x, pointerFrame.origin.x, accuracy: 1)
-        XCTAssertEqual(panel.frame.origin.y, pointerFrame.origin.y, accuracy: 1)
-        XCTAssertEqual(panel.frame.size, pointerFrame.size)
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(panel.frame.origin.x, bottomFrame.origin.x, accuracy: 1)
+        XCTAssertEqual(panel.frame.origin.y, bottomFrame.origin.y, accuracy: 1)
+        XCTAssertEqual(panel.frame.size, bottomFrame.size)
     }
 
     func testAudioTapHandlerRunsOutsideMainActor() async throws {
@@ -151,6 +152,7 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertTrue(HUDPhase.transcribing.tracksPointer)
         XCTAssertTrue(HUDPhase.offline.tracksPointer)
         XCTAssertTrue(HUDPhase.cleaning.tracksPointer)
+        XCTAssertTrue(HUDPhase.understanding.tracksPointer)
         XCTAssertTrue(HUDPhase.success("Done").tracksPointer)
         XCTAssertTrue(HUDPhase.clipboard.tracksPointer)
         XCTAssertTrue(HUDPhase.error("Failed").tracksPointer)
@@ -164,6 +166,16 @@ final class AppBehaviorTests: XCTestCase {
         )
 
         XCTAssertEqual(frame, NSRect(x: 416, y: 316, width: 124, height: 32))
+    }
+
+    func testHUDNotchFramePinsToTopCenter() {
+        XCTAssertEqual(
+            HUDPositioning.notchFrame(
+                size: NSSize(width: 124, height: 32),
+                screenFrame: NSRect(x: 0, y: 0, width: 1_440, height: 900)
+            ),
+            NSRect(x: 658, y: 868, width: 124, height: 32)
+        )
     }
 
     func testHUDPointerFrameFlipsAtRightAndTopEdges() {
@@ -218,6 +230,39 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertEqual(frame, NSRect(x: -286, y: 1_018, width: 260, height: 36))
     }
 
+    func testScreenWindowMatcherChoosesTheUniqueFocusedWindow() {
+        let focused = FocusedWindowSnapshot(
+            processIdentifier: 42,
+            applicationName: "Mail",
+            bundleIdentifier: "com.apple.mail",
+            title: "Inbox",
+            frame: CGRect(x: 100, y: 100, width: 900, height: 700)
+        )
+        let candidates = [
+            ScreenWindowDescriptor(id: 1, processIdentifier: 42, title: "Inbox", frame: focused.frame),
+            ScreenWindowDescriptor(id: 2, processIdentifier: 42, title: "Compose", frame: CGRect(x: 180, y: 150, width: 700, height: 500)),
+            ScreenWindowDescriptor(id: 3, processIdentifier: 7, title: "Inbox", frame: focused.frame),
+        ]
+
+        XCTAssertEqual(ScreenWindowMatcher.match(focused: focused, candidates: candidates)?.id, 1)
+    }
+
+    func testScreenWindowMatcherRejectsAnAmbiguousFocusedWindow() {
+        let focused = FocusedWindowSnapshot(
+            processIdentifier: 42,
+            applicationName: "Browser",
+            bundleIdentifier: "com.example.browser",
+            title: nil,
+            frame: CGRect(x: 100, y: 100, width: 900, height: 700)
+        )
+        let candidates = [
+            ScreenWindowDescriptor(id: 1, processIdentifier: 42, title: "One", frame: focused.frame),
+            ScreenWindowDescriptor(id: 2, processIdentifier: 42, title: "Two", frame: focused.frame),
+        ]
+
+        XCTAssertNil(ScreenWindowMatcher.match(focused: focused, candidates: candidates))
+    }
+
     func testTranscriptMetadataLabelsSTTProviderAndLatency() {
         let record = TranscriptRecord(
             rawText: "Hello", finalText: "Hello", sttProvider: .groq, sttModel: "whisper",
@@ -259,6 +304,61 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertFalse(ShortcutMatcher.matches(shortcut, keyCode: 8, flags: [.maskCommand]))
         XCTAssertFalse(ShortcutMatcher.matches(shortcut, keyCode: 9, flags: [.maskCommand, .maskControl]))
         XCTAssertEqual(shortcut.displayName, "⌃⌘C")
+    }
+
+    func testScreenAwareShortcutIsAnExactModifierChord() throws {
+        let shortcut = GlobalShortcut.screenAware
+        XCTAssertEqual(shortcut.displayName, "⌃⌥")
+        XCTAssertTrue(ShortcutMatcher.matchesModifiers(shortcut, flags: [.maskControl, .maskAlternate]))
+        XCTAssertFalse(ShortcutMatcher.matchesModifiers(shortcut, flags: [.maskControl]))
+        XCTAssertFalse(ShortcutMatcher.matchesModifiers(shortcut, flags: [.maskControl, .maskAlternate, .maskShift]))
+
+        let restored = try JSONDecoder().decode(GlobalShortcut.self, from: JSONEncoder().encode(shortcut))
+        XCTAssertEqual(restored, shortcut)
+    }
+
+    func testScreenAwareModifierChordEmitsOnePressAndRelease() throws {
+        let monitor = HotkeyMonitor()
+        var pressCount = 0
+        var releaseCount = 0
+        monitor.onScreenAwarePress = { _ in pressCount += 1 }
+        monitor.onScreenAwareRelease = { releaseCount += 1 }
+
+        let down = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true))
+        down.flags = [.maskControl, .maskAlternate]
+        _ = monitor.handle(down, type: .flagsChanged)
+        _ = monitor.handle(down, type: .flagsChanged)
+        let up = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false))
+        up.flags = [.maskControl]
+        _ = monitor.handle(up, type: .flagsChanged)
+
+        XCTAssertEqual(pressCount, 1)
+        XCTAssertEqual(releaseCount, 1)
+    }
+
+    func testTextOnlyScreenAwareModelFailsBeforeRecordingOrCapture() async throws {
+        let suiteName = "ai.dictator.tests.screen-aware-capability.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(true, forKey: "screenAwareEnabled")
+        defaults.set(ProviderKind.groq.rawValue, forKey: "selectedScreenAwareLLM")
+        let recorder = TestAudioRecorder()
+        let capture = TestScreenContextCapture()
+        let model = AppModel(
+            keychain: ScreenAwareCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor(),
+            recorder: recorder,
+            screenCapture: capture
+        )
+
+        await model.startScreenAwareDictation()
+
+        XCTAssertEqual(model.phase, .idle)
+        XCTAssertEqual(recorder.permissionRequestCount, 0)
+        XCTAssertEqual(capture.captureCount, 0)
+        XCTAssertEqual(model.lastError, "The selected model does not support image input. Choose a vision-capable model.")
     }
 
     func testEachWakeRecreatesHotkeyMonitorEvenWhenItReportsRunning() {
@@ -678,6 +778,8 @@ private struct ConfiguredProviderCredentialStore: CredentialStoring {
 private final class TestHotkeyMonitor: HotkeyMonitoring {
     var onPress: ((pid_t?) -> Void)?
     var onRelease: (() -> Void)?
+    var onScreenAwarePress: ((pid_t?) -> Void)?
+    var onScreenAwareRelease: (() -> Void)?
     var onPasteLatest: (() -> Void)?
     var onOpenClipboard: (() -> Void)?
     private(set) var isRunning: Bool
@@ -692,7 +794,7 @@ private final class TestHotkeyMonitor: HotkeyMonitoring {
         self.dictateIsDown = dictateIsDown
     }
 
-    func configure(dictate: GlobalShortcut, pasteLatest: GlobalShortcut, openClipboard: GlobalShortcut) {}
+    func configure(dictate: GlobalShortcut, screenAware: GlobalShortcut, pasteLatest: GlobalShortcut, openClipboard: GlobalShortcut) {}
 
     func start() throws {
         startCount += 1
@@ -714,11 +816,37 @@ private final class TestHotkeyMonitor: HotkeyMonitoring {
 private final class TestAudioRecorder: AudioRecording {
     var onLevel: (@Sendable (Double) -> Void)?
     private(set) var cancelCount = 0
+    private(set) var permissionRequestCount = 0
 
-    func requestPermission() async -> Bool { true }
+    func requestPermission() async -> Bool {
+        permissionRequestCount += 1
+        return true
+    }
     func start() throws {}
     func stop() -> RecordedAudio { RecordedAudio(wavData: Data(), duration: 0) }
     func cancel() { cancelCount += 1 }
+}
+
+@MainActor
+private final class TestScreenContextCapture: ScreenContextCapturing {
+    var permissionGranted = true
+    private(set) var captureCount = 0
+
+    func requestPermission() -> Bool { true }
+
+    func capture(_ window: FocusedWindowSnapshot) async throws -> CapturedScreenContext {
+        captureCount += 1
+        throw ScreenContextCaptureError.focusedWindowUnavailable
+    }
+}
+
+private struct ScreenAwareCredentialStore: CredentialStoring {
+    func save(_ credentials: ProviderCredentials, for purpose: ProviderPurpose, provider: ProviderKind) throws {}
+
+    func load(for purpose: ProviderPurpose, provider: ProviderKind) throws -> ProviderCredentials? {
+        guard purpose == .screenAware, provider == .groq else { return nil }
+        return ProviderCredentials(apiKey: "test-key")
+    }
 }
 
 private final class AudioLevelRecorder: @unchecked Sendable {
@@ -812,6 +940,7 @@ private final class InsertionFixture {
     init(bundleIdentifier: String = "com.example.editor") {
         application = ApplicationTarget(
             element: applicationElement,
+            name: "Test App",
             bundleIdentifier: bundleIdentifier,
             processIdentifier: targetPID
         )

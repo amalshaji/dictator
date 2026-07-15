@@ -3,8 +3,8 @@ import QuartzCore
 import SwiftUI
 
 enum HUDPositionMode: String, CaseIterable, Identifiable {
+    case notch
     case bottom
-    case pointer
 
     var id: String { rawValue }
 }
@@ -15,6 +15,7 @@ enum HUDPhase: Equatable {
     case transcribing
     case offline
     case cleaning
+    case understanding
     case success(String)
     case clipboard
     case error(String)
@@ -26,6 +27,7 @@ enum HUDPhase: Equatable {
         case .transcribing: "Transcribing"
         case .offline: "Offline mode"
         case .cleaning: "Cleaning up"
+        case .understanding: "Understanding screen"
         case .success(let value): value
         case .clipboard: "Saved to Dictator clipboard"
         case .error(let value): value
@@ -40,6 +42,15 @@ enum HUDPhase: Equatable {
 enum HUDPositioning {
     private static let pointerGap: CGFloat = 16
     private static let screenInset: CGFloat = 8
+
+    static func notchFrame(size: NSSize, screenFrame: NSRect) -> NSRect {
+        NSRect(
+            x: screenFrame.midX - size.width / 2,
+            y: screenFrame.maxY - size.height,
+            width: size.width,
+            height: size.height
+        )
+    }
 
     static func pointerFrame(size: NSSize, pointer: NSPoint, visibleFrame: NSRect) -> NSRect {
         let bounds = visibleFrame.insetBy(dx: screenInset, dy: screenInset)
@@ -79,10 +90,11 @@ final class HUDModel: ObservableObject {
 final class FloatingPanelController {
     let model = HUDModel()
     private let panel: NSPanel
+    private let cursorPanel: NSPanel
     private var hideTask: Task<Void, Never>?
     private var pointerTrackingTask: Task<Void, Never>?
     private var positionUpdateTask: Task<Void, Never>?
-    private var positionMode: HUDPositionMode = .bottom
+    private var positionMode: HUDPositionMode = .notch
     private var lastPointerLocation: NSPoint?
     private let transitionDuration = 0.24
     private let pointerLocation: () -> NSPoint
@@ -95,7 +107,13 @@ final class FloatingPanelController {
             backing: .buffered,
             defer: false
         )
-        panel.level = .floating
+        cursorPanel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 36, height: 24),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.level = .statusBar
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.isOpaque = false
         panel.backgroundColor = .clear
@@ -103,6 +121,22 @@ final class FloatingPanelController {
         panel.hidesOnDeactivate = false
         panel.ignoresMouseEvents = true
         panel.contentView = NSHostingView(rootView: FloatingHUDView(model: model))
+        cursorPanel.level = .floating
+        cursorPanel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        cursorPanel.isOpaque = false
+        cursorPanel.backgroundColor = .clear
+        cursorPanel.hasShadow = false
+        cursorPanel.hidesOnDeactivate = false
+        cursorPanel.ignoresMouseEvents = true
+        cursorPanel.contentView = NSHostingView(rootView: CursorCompanionView(model: model))
+    }
+
+    deinit {
+        hideTask?.cancel()
+        pointerTrackingTask?.cancel()
+        positionUpdateTask?.cancel()
+        panel.close()
+        cursorPanel.close()
     }
 
     func setPositionMode(_ mode: HUDPositionMode) {
@@ -122,11 +156,15 @@ final class FloatingPanelController {
     func show(_ phase: HUDPhase) {
         hideTask?.cancel()
         let shouldAnimate = panel.isVisible && model.phase != phase
-        let animation = Animation.timingCurve(0.22, 0.72, 0.22, 1, duration: shouldAnimate ? transitionDuration : 0)
+        let animation: Animation? = shouldAnimate
+            ? .spring(response: 0.3, dampingFraction: 1)
+            : nil
         withAnimation(animation) { model.phase = phase }
         resize(for: phase, animated: shouldAnimate)
         updatePointerTracking(for: phase)
+        if phase.tracksPointer { updatePointerPosition() }
         panel.orderFrontRegardless()
+        if phase.tracksPointer { cursorPanel.orderFrontRegardless() }
     }
 
     func hideAfterDelay() {
@@ -135,9 +173,10 @@ final class FloatingPanelController {
             do { try await Task.sleep(for: .seconds(1.2)) }
             catch { return }
             guard let self else { return }
-            let animation = Animation.timingCurve(0.22, 0.72, 0.22, 1, duration: self.transitionDuration)
+            let animation = Animation.spring(response: 0.3, dampingFraction: 1)
             withAnimation(animation) { self.model.phase = .idle }
             self.updatePointerTracking(for: .idle)
+            self.cursorPanel.orderOut(nil)
             self.resize(for: .idle, animated: true)
         }
     }
@@ -145,7 +184,7 @@ final class FloatingPanelController {
     private func resize(for phase: HUDPhase, animated: Bool) {
         let size = size(for: phase)
         guard let target = targetFrame(size: size, phase: phase) else { return }
-        guard animated, positionMode == .bottom else {
+        guard animated else {
             panel.setFrame(target, display: true)
             return
         }
@@ -159,7 +198,7 @@ final class FloatingPanelController {
     private func size(for phase: HUDPhase) -> NSSize {
         switch phase {
         case .idle: NSSize(width: 54, height: 18)
-        case .listening, .transcribing, .offline, .cleaning:
+        case .listening, .transcribing, .offline, .cleaning, .understanding:
             NSSize(width: 124, height: 32)
         case .success(let message):
             NSSize(width: message.hasPrefix("Offline") ? 174 : 124, height: 32)
@@ -169,12 +208,10 @@ final class FloatingPanelController {
     }
 
     private func targetFrame(size: NSSize, phase: HUDPhase) -> NSRect? {
-        if positionMode == .pointer, phase.tracksPointer {
-            let pointer = pointerLocation()
-            guard let screen = screen(containing: pointer) else { return nil }
-            return HUDPositioning.pointerFrame(size: size, pointer: pointer, visibleFrame: screen.visibleFrame)
-        }
         guard let screen = NSScreen.main ?? NSScreen.screens.first else { return nil }
+        if positionMode == .notch {
+            return HUDPositioning.notchFrame(size: size, screenFrame: screen.frame)
+        }
         let frame = screen.visibleFrame
         return NSRect(
             x: frame.midX - size.width / 2,
@@ -185,10 +222,11 @@ final class FloatingPanelController {
     }
 
     private func updatePointerTracking(for phase: HUDPhase) {
-        guard positionMode == .pointer, phase.tracksPointer else {
+        guard phase.tracksPointer else {
             pointerTrackingTask?.cancel()
             pointerTrackingTask = nil
             lastPointerLocation = nil
+            cursorPanel.orderOut(nil)
             return
         }
         guard pointerTrackingTask == nil else { return }
@@ -209,14 +247,14 @@ final class FloatingPanelController {
         lastPointerLocation = pointer
         guard let screen = screen(containing: pointer) else { return }
         let target = HUDPositioning.pointerFrame(
-            size: size(for: model.phase),
+            size: NSSize(width: 36, height: 24),
             pointer: pointer,
             visibleFrame: screen.visibleFrame
         )
-        if panel.frame.size == target.size {
-            panel.setFrameOrigin(target.origin)
+        if cursorPanel.frame.size == target.size {
+            cursorPanel.setFrameOrigin(target.origin)
         } else {
-            panel.setFrame(target, display: true)
+            cursorPanel.setFrame(target, display: true)
         }
     }
 
@@ -231,8 +269,10 @@ struct FloatingHUDView: View {
 
     var body: some View {
         ZStack {
-            Capsule().fill(Color(red: 17/255, green: 16/255, blue: 20/255).opacity(0.97))
-            Capsule().stroke(Color.white.opacity(0.075), lineWidth: 0.75)
+            UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 14, bottomTrailingRadius: 14, topTrailingRadius: 0)
+                .fill(Color(red: 17/255, green: 16/255, blue: 20/255).opacity(0.97))
+            UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 14, bottomTrailingRadius: 14, topTrailingRadius: 0)
+                .stroke(Color.white.opacity(0.075), lineWidth: 0.75)
             content
                 .id(phaseKey)
                 .transition(.opacity)
@@ -244,7 +284,7 @@ struct FloatingHUDView: View {
         switch model.phase {
         case .idle: EmptyView()
         case .listening: listeningState
-        case .transcribing, .offline, .cleaning: processingState
+        case .transcribing, .offline, .cleaning, .understanding: processingState
         default: resultState
         }
     }
@@ -325,9 +365,34 @@ struct FloatingHUDView: View {
         case .transcribing: "transcribing"
         case .offline: "offline"
         case .cleaning: "cleaning"
+        case .understanding: "understanding"
         case .success: "success"
         case .clipboard: "clipboard"
         case .error: "error"
+        }
+    }
+}
+
+private struct CursorCompanionView: View {
+    @ObservedObject var model: HUDModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ZStack {
+            Capsule().fill(Color(red: 17/255, green: 16/255, blue: 20/255).opacity(0.94))
+            Capsule().stroke(Color.white.opacity(0.09), lineWidth: 0.7)
+            if model.phase == .listening {
+                HStack(spacing: 1.5) {
+                    ForEach(Array(model.levels.suffix(5).enumerated()), id: \.offset) { _, level in
+                        Capsule()
+                            .fill(DictatorDesign.orchid)
+                            .frame(width: 2, height: 3 + level * 10)
+                            .animation(reduceMotion ? nil : .smooth(duration: 0.08), value: level)
+                    }
+                }
+            } else {
+                ProgressView().controlSize(.mini).tint(DictatorDesign.orchid).scaleEffect(0.65)
+            }
         }
     }
 }
