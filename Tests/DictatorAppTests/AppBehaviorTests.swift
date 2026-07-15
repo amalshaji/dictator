@@ -62,6 +62,22 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertEqual(defaults.string(forKey: "hudPositionMode"), HUDPositionMode.pointer.rawValue)
     }
 
+    func testAppModelRestoresPointerHUDModeWithoutShowingPanel() throws {
+        let suiteName = "ai.dictator.tests.hud-position-restoration.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(HUDPositionMode.pointer.rawValue, forKey: "hudPositionMode")
+
+        let model = AppModel(
+            keychain: HUDTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor()
+        )
+
+        XCTAssertEqual(model.hudPositionMode, .pointer)
+    }
+
     func testHUDOnlyTracksPointerForActivePhases() {
         XCTAssertFalse(HUDPhase.idle.tracksPointer)
         XCTAssertTrue(HUDPhase.listening.tracksPointer)

@@ -105,6 +105,7 @@ final class FloatingPanelController {
     func setPositionMode(_ mode: HUDPositionMode) {
         guard positionMode != mode else { return }
         positionMode = mode
+        guard panel.isVisible else { return }
         resize(for: model.phase, animated: panel.isVisible)
         updatePointerTracking(for: model.phase)
     }
