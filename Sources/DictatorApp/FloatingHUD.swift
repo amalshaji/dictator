@@ -43,10 +43,10 @@ enum HUDPositioning {
     private static let pointerGap: CGFloat = 16
     private static let screenInset: CGFloat = 8
 
-    static func notchFrame(size: NSSize, screenFrame: NSRect) -> NSRect {
+    static func notchFrame(size: NSSize, screenFrame: NSRect, topSafeAreaInset: CGFloat = 0) -> NSRect {
         NSRect(
             x: screenFrame.midX - size.width / 2,
-            y: screenFrame.maxY - size.height,
+            y: screenFrame.maxY - topSafeAreaInset - size.height,
             width: size.width,
             height: size.height
         )
@@ -210,7 +210,11 @@ final class FloatingPanelController {
     private func targetFrame(size: NSSize, phase: HUDPhase) -> NSRect? {
         guard let screen = NSScreen.main ?? NSScreen.screens.first else { return nil }
         if positionMode == .notch {
-            return HUDPositioning.notchFrame(size: size, screenFrame: screen.frame)
+            return HUDPositioning.notchFrame(
+                size: size,
+                screenFrame: screen.frame,
+                topSafeAreaInset: screen.safeAreaInsets.top
+            )
         }
         let frame = screen.visibleFrame
         return NSRect(

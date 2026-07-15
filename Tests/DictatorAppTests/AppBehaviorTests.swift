@@ -178,6 +178,17 @@ final class AppBehaviorTests: XCTestCase {
         )
     }
 
+    func testHUDNotchFrameClearsTopSafeArea() {
+        XCTAssertEqual(
+            HUDPositioning.notchFrame(
+                size: NSSize(width: 124, height: 32),
+                screenFrame: NSRect(x: 0, y: 0, width: 1_512, height: 982),
+                topSafeAreaInset: 32
+            ),
+            NSRect(x: 694, y: 918, width: 124, height: 32)
+        )
+    }
+
     func testHUDPointerFrameFlipsAtRightAndTopEdges() {
         let visibleFrame = NSRect(x: 0, y: 0, width: 1_440, height: 900)
         let size = NSSize(width: 260, height: 36)
