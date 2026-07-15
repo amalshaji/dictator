@@ -194,6 +194,63 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertEqual(shortcut.displayName, "⌃⌘C")
     }
 
+    func testEachWakeRecreatesHotkeyMonitorEvenWhenItReportsRunning() async throws {
+        let notifications = NotificationCenter()
+        let hotkey = TestHotkeyMonitor(isRunning: true)
+        let (model, defaults, suiteName) = try makeLifecycleModel(
+            hotkey: hotkey,
+            notifications: notifications
+        )
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        for _ in 0..<2 {
+            notifications.post(name: NSWorkspace.didWakeNotification, object: NSWorkspace.shared)
+            await Task.yield()
+        }
+
+        XCTAssertEqual(hotkey.stopCount, 2)
+        XCTAssertEqual(hotkey.startCount, 2)
+        XCTAssertTrue(model.shortcutsAvailable)
+    }
+
+    func testSleepStopsHotkeysAndCancelsActiveDictation() async throws {
+        let notifications = NotificationCenter()
+        let hotkey = TestHotkeyMonitor(isRunning: true)
+        let (model, defaults, suiteName) = try makeLifecycleModel(
+            hotkey: hotkey,
+            notifications: notifications
+        )
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        model.phase = .listening
+
+        notifications.post(name: NSWorkspace.willSleepNotification, object: NSWorkspace.shared)
+        await Task.yield()
+
+        XCTAssertEqual(model.phase, .idle)
+        XCTAssertEqual(hotkey.stopCount, 1)
+        XCTAssertFalse(model.shortcutsAvailable)
+    }
+
+    func testWakeRetriesHotkeyStartAfterTransientFailure() async throws {
+        let notifications = NotificationCenter()
+        let hotkey = TestHotkeyMonitor(isRunning: true, startFailuresRemaining: 1)
+        let (model, defaults, suiteName) = try makeLifecycleModel(
+            hotkey: hotkey,
+            notifications: notifications,
+            retryDelay: .milliseconds(1)
+        )
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        notifications.post(name: NSWorkspace.didWakeNotification, object: NSWorkspace.shared)
+        await Task.yield()
+        XCTAssertFalse(model.shortcutsAvailable)
+
+        try await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertEqual(hotkey.startCount, 2)
+        XCTAssertTrue(model.shortcutsAvailable)
+    }
+
     func testDisabledStyleCannotBeSelected() {
         let model = AppModel()
         let disabled = WritingStyle(name: "Disabled", instruction: "Do not use", isEnabled: false)
@@ -441,6 +498,25 @@ final class AppBehaviorTests: XCTestCase {
         return try XCTUnwrap(Bundle(url: root))
     }
 
+    private func makeLifecycleModel(
+        hotkey: any HotkeyMonitoring,
+        notifications: NotificationCenter,
+        retryDelay: Duration = .seconds(1)
+    ) throws -> (AppModel, UserDefaults, String) {
+        let suiteName = "ai.dictator.tests.lifecycle.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let model = AppModel(
+            keychain: LifecycleCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: LifecycleConnectivityMonitor(),
+            hotkey: hotkey,
+            workspaceNotificationCenter: notifications,
+            hotkeyRetryDelay: retryDelay
+        )
+        return (model, defaults, suiteName)
+    }
+
     private func assertColor(
         _ color: NSColor?,
         red: CGFloat,
@@ -469,7 +545,48 @@ private struct HUDTestCredentialStore: CredentialStoring {
     func load(for purpose: ProviderPurpose, provider: ProviderKind) throws -> ProviderCredentials? { nil }
 }
 
+private final class TestHotkeyMonitor: HotkeyMonitoring, @unchecked Sendable {
+    var onPress: (@Sendable (pid_t?) -> Void)?
+    var onRelease: (@Sendable () -> Void)?
+    var onPasteLatest: (@Sendable () -> Void)?
+    var onOpenClipboard: (@Sendable () -> Void)?
+    private(set) var isRunning: Bool
+    private(set) var startCount = 0
+    private(set) var stopCount = 0
+    private var startFailuresRemaining: Int
+
+    init(isRunning: Bool, startFailuresRemaining: Int = 0) {
+        self.isRunning = isRunning
+        self.startFailuresRemaining = startFailuresRemaining
+    }
+
+    func configure(dictate: GlobalShortcut, pasteLatest: GlobalShortcut, openClipboard: GlobalShortcut) {}
+
+    func start() throws {
+        startCount += 1
+        if startFailuresRemaining > 0 {
+            startFailuresRemaining -= 1
+            throw HotkeyError.permissionRequired
+        }
+        isRunning = true
+    }
+
+    func stop() {
+        stopCount += 1
+        isRunning = false
+    }
+}
+
+private struct LifecycleCredentialStore: CredentialStoring {
+    func save(_ credentials: ProviderCredentials, for purpose: ProviderPurpose, provider: ProviderKind) throws {}
+    func load(for purpose: ProviderPurpose, provider: ProviderKind) throws -> ProviderCredentials? { nil }
+}
+
 private struct HUDTestConnectivityMonitor: ConnectivityMonitoring {
+    let state: ConnectivityState = .online
+}
+
+private struct LifecycleConnectivityMonitor: ConnectivityMonitoring {
     let state: ConnectivityState = .online
 }
 

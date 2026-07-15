@@ -39,8 +39,12 @@ final class AppModel: ObservableObject {
     private let keychain: any CredentialStoring
     private let transcriptionCoordinator: TranscriptionCoordinator
     private var appleSpeechObservation: AnyCancellable?
+    private var workspaceObservations = Set<AnyCancellable>()
+    private var hotkeyRecoveryTask: Task<Void, Never>?
     private let recorder = AudioRecorder()
-    private let hotkey = HotkeyMonitor()
+    private let hotkey: any HotkeyMonitoring
+    private let workspaceNotificationCenter: NotificationCenter
+    private let hotkeyRetryDelay: Duration
     private let inserter = AccessibilityInserter()
     private let transcriptProcessor = TranscriptProcessor()
     private let transcriptRepairService = TranscriptRepairService()
@@ -69,10 +73,16 @@ final class AppModel: ObservableObject {
         keychain: any CredentialStoring,
         appleSpeechProvider: (any LocalSpeechTranscribing)?,
         defaults: UserDefaults,
-        connectivity: any ConnectivityMonitoring
+        connectivity: any ConnectivityMonitoring,
+        hotkey: any HotkeyMonitoring = HotkeyMonitor(),
+        workspaceNotificationCenter: NotificationCenter = NSWorkspace.shared.notificationCenter,
+        hotkeyRetryDelay: Duration = .seconds(1)
     ) {
         self.defaults = defaults
         self.keychain = keychain
+        self.hotkey = hotkey
+        self.workspaceNotificationCenter = workspaceNotificationCenter
+        self.hotkeyRetryDelay = hotkeyRetryDelay
         let appleSpeech = AppleSpeechCoordinator(
             provider: appleSpeechProvider,
             selectedLocaleIdentifier: defaults.string(forKey: "appleSpeechLocale") ?? Locale.current.identifier,
@@ -114,10 +124,12 @@ final class AppModel: ObservableObject {
         hotkey.onRelease = { [weak self] in Task { @MainActor in await self?.stopDictation() } }
         hotkey.onPasteLatest = { [weak self] in Task { @MainActor in await self?.pasteClipboard() } }
         hotkey.onOpenClipboard = { [weak self] in Task { @MainActor in self?.openClipboard() } }
+        observeWorkspaceLifecycle()
         let runningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
         if !runningTests {
             if onboardingComplete { requestRequiredPermissions() }
             startHotkeysIfPossible()
+            if !shortcutsAvailable { scheduleHotkeyRecovery() }
         }
         // Defer panel layout until SwiftUI has finished installing this StateObject.
         // Resizing an NSHostingView during AttributeGraph construction aborts on macOS 26.
@@ -127,14 +139,6 @@ final class AppModel: ObservableObject {
             await load()
             if selectedSTT == .appleSpeech { await appleSpeech.refresh() }
         }
-        if !runningTests { Task { @MainActor [weak self] in
-            // TCC permission changes do not restart the process. Retry until the
-            // event tap becomes available so Fn starts working immediately.
-            while let self, !self.shortcutsAvailable {
-                try? await Task.sleep(for: .seconds(1))
-                self.startHotkeysIfPossible()
-            }
-        } }
     }
 
     private static func defaultAppleSpeechProvider() -> (any LocalSpeechTranscribing)? {
@@ -590,6 +594,46 @@ final class AppModel: ObservableObject {
             AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
         }
         if !CGPreflightListenEventAccess() { _ = CGRequestListenEventAccess() }
+    }
+
+    private func observeWorkspaceLifecycle() {
+        workspaceNotificationCenter.publisher(for: NSWorkspace.willSleepNotification)
+            .sink { [weak self] _ in
+                Task { @MainActor in self?.prepareForSleep() }
+            }
+            .store(in: &workspaceObservations)
+        workspaceNotificationCenter.publisher(for: NSWorkspace.didWakeNotification)
+            .sink { [weak self] _ in
+                Task { @MainActor in self?.recoverAfterWake() }
+            }
+            .store(in: &workspaceObservations)
+    }
+
+    private func prepareForSleep() {
+        hotkeyRecoveryTask?.cancel()
+        hotkeyRecoveryTask = nil
+        if phase == .listening { cancelDictation() }
+        hotkey.stop()
+        shortcutsAvailable = false
+    }
+
+    private func recoverAfterWake() {
+        hotkey.stop()
+        shortcutsAvailable = false
+        startHotkeysIfPossible()
+        if !shortcutsAvailable { scheduleHotkeyRecovery() }
+    }
+
+    private func scheduleHotkeyRecovery() {
+        hotkeyRecoveryTask?.cancel()
+        hotkeyRecoveryTask = Task { @MainActor [weak self] in
+            while let self, !Task.isCancelled, !self.shortcutsAvailable {
+                do { try await Task.sleep(for: self.hotkeyRetryDelay) }
+                catch { return }
+                guard !Task.isCancelled else { return }
+                self.startHotkeysIfPossible()
+            }
+        }
     }
 
     private func startHotkeysIfPossible() {

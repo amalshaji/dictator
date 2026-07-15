@@ -36,7 +36,19 @@ extension CGEventFlags {
     }
 }
 
-final class HotkeyMonitor: @unchecked Sendable {
+protocol HotkeyMonitoring: AnyObject, Sendable {
+    var onPress: (@Sendable (pid_t?) -> Void)? { get set }
+    var onRelease: (@Sendable () -> Void)? { get set }
+    var onPasteLatest: (@Sendable () -> Void)? { get set }
+    var onOpenClipboard: (@Sendable () -> Void)? { get set }
+    var isRunning: Bool { get }
+
+    func configure(dictate: GlobalShortcut, pasteLatest: GlobalShortcut, openClipboard: GlobalShortcut)
+    func start() throws
+    func stop()
+}
+
+final class HotkeyMonitor: HotkeyMonitoring, @unchecked Sendable {
     var onPress: (@Sendable (pid_t?) -> Void)?
     var onRelease: (@Sendable () -> Void)?
     var onPasteLatest: (@Sendable () -> Void)?
@@ -47,7 +59,10 @@ final class HotkeyMonitor: @unchecked Sendable {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var dictateIsDown = false
-    var isRunning: Bool { eventTap != nil }
+    var isRunning: Bool {
+        guard let eventTap else { return false }
+        return CFMachPortIsValid(eventTap) && CGEvent.tapIsEnabled(tap: eventTap)
+    }
 
     func configure(dictate: GlobalShortcut, pasteLatest: GlobalShortcut, openClipboard: GlobalShortcut) {
         dictateShortcut = dictate
@@ -56,7 +71,8 @@ final class HotkeyMonitor: @unchecked Sendable {
     }
 
     func start() throws {
-        guard eventTap == nil else { return }
+        guard !isRunning else { return }
+        stop()
         let mask = CGEventMask(1 << CGEventType.flagsChanged.rawValue)
             | CGEventMask(1 << CGEventType.keyDown.rawValue)
             | CGEventMask(1 << CGEventType.keyUp.rawValue)
