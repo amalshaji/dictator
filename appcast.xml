@@ -6,6 +6,20 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>Dictator</title>
         <item>
+            <title>0.4.1</title>
+            <pubDate>Wed, 15 Jul 2026 13:47:33 +0000</pubDate>
+            <link>https://github.com/amalshaji/dictator</link>
+            <sparkle:version>7</sparkle:version>
+            <sparkle:shortVersionString>0.4.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[## What's Changed
+* Fix Fn press crashes by @amalshaji in https://github.com/amalshaji/dictator/pull/22
+
+**Full Changelog**: https://github.com/amalshaji/dictator/compare/v0.4.0...v0.4.1
+]]></description>
+            <enclosure url="https://github.com/amalshaji/dictator/releases/download/v0.4.1/Dictator-0.4.1-universal.dmg" length="5170766" type="application/octet-stream" sparkle:edSignature="OtwwSsDUEd7ytuIebXgJZfcRjFuWzFEzgcEHiwS2ZEZgGOOJ1S1mCTaUVUlryPEB5QOxBYFsPg8UaRCOd6BxDQ=="/>
+        </item>
+        <item>
             <title>0.4.0</title>
             <pubDate>Wed, 15 Jul 2026 09:36:06 +0000</pubDate>
             <link>https://github.com/amalshaji/dictator</link>
@@ -34,25 +48,9 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
 ]]></description>
             <enclosure url="https://github.com/amalshaji/dictator/releases/download/v0.3.0/Dictator-0.3.0-universal.dmg" length="5130987" type="application/octet-stream" sparkle:edSignature="muYerTYWEwsek6dgQwcXymqIL9GWzoksjXY8L0P3BfctnwSvcyfb2cBBrbMZ4IHdujRJkuCC2rioODYWony9DQ=="/>
         </item>
-        <item>
-            <title>0.2.2</title>
-            <pubDate>Sun, 12 Jul 2026 08:27:39 +0000</pubDate>
-            <link>https://github.com/amalshaji/dictator</link>
-            <sparkle:version>4</sparkle:version>
-            <sparkle:shortVersionString>0.2.2</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="markdown"><![CDATA[## What's Changed
-* Fix Xcode 26 release builds by @amalshaji in https://github.com/amalshaji/dictator/pull/15
-* Prepare 0.2.2 release by @amalshaji in https://github.com/amalshaji/dictator/pull/16
-
-
-**Full Changelog**: https://github.com/amalshaji/dictator/compare/v0.2.1...v0.2.2
-]]></description>
-            <enclosure url="https://github.com/amalshaji/dictator/releases/download/v0.2.2/Dictator-0.2.2-universal.dmg" length="5057062" type="application/octet-stream" sparkle:edSignature="qR02Ic6+eyNAJpDaKLN6AMNapcNzKnV4Q21uNaFjW611r3uQIe3r9ofIeSfkk54vfclzvNiRwm/eJjrC7UiCBA=="/>
-        </item>
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: MvZm/J12c5Idu/VyqoNF27Z2UERSJElVBzTIXmLwGgaVx6EJ4YJA9OvCjtg+Uf1f3B3UKWs49NEZWXk5lq89AA==
-length: 3489
+edSignature: rX8AF17PiJOKQw5mljVqzOiIXxvLecQhRwhkSGMny1yq23fSF0AZzSl54R3baNY7fsPFGk7dH/suNZuBCAjlBQ==
+length: 3392
 -->
