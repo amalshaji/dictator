@@ -1,6 +1,6 @@
 # Dictator
 
-Dictator is a native macOS menu-bar dictation app. Hold `Fn` to record, release to transcribe on-device with Apple Speech or through a user-selected cloud provider, and insert the result into the field that was focused when recording began. If no editable field was focused, the text is stored in Dictator's private clipboard.
+Dictator is a native macOS menu-bar app for dictation and screen-aware writing. Hold `Fn` to dictate, or hold `Control-Option` to speak an instruction that uses the focused window as context. Dictator inserts the result into the field that was focused when recording began; if no editable field was focused, it uses its private clipboard.
 
 > ⚠️ Dictator is still in the early stages of development. Expect rough edges.
 
@@ -9,6 +9,7 @@ Dictator is a native macOS menu-bar dictation app. Hold `Fn` to record, release 
 ## Shortcuts
 
 - Hold `Fn`: record dictation
+- Hold `Control-Option`: compose or transform text using the focused window
 - `Option-Command-V`: paste the latest private-clipboard item
 - `Option-Shift-Command-V`: open the private clipboard
 
@@ -19,6 +20,8 @@ On macOS 26 and later, Apple On-Device is available without an API key and is th
 Cloud speech-to-text adapters remain available: Groq, Cloudflare Workers AI, xAI, Deepgram, AssemblyAI, and Gladia. On macOS 14 and 15, these are the available speech providers and Groq remains the new-install default.
 
 Optional cleanup adapters use BYOK credentials: Groq, Cloudflare Workers AI, Gemini, xAI, OpenRouter, and any OpenAI-compatible endpoint. Cleanup sends transcript text, never audio. When speech-to-text and cleanup use the same provider, Dictator reuses that provider credential unless you configure a separate cleanup credential. Keys are stored in macOS Keychain. Transcript history, vocabulary, styles, snippets, and private-clipboard data stay in local Application Support storage. Cloud recordings are sent to the selected speech provider and are not stored by Dictator after processing; the provider's own data-handling policy applies.
+
+Screen Aware is a separate, disabled-by-default mode for composing or transforming text from the focused window. Hold `Control-Option`, speak an instruction, and release; Dictator transcribes the audio, captures only the focused window, and sends the image, spoken instruction, app and window details, and selected text when available to your selected vision-capable provider. Screen Aware supports Groq, Gemini, xAI, OpenRouter, and OpenAI-compatible endpoints. Focused-window images are never saved by Dictator; the selected provider's own data-handling policy applies.
 
 ## Install
 
@@ -68,7 +71,7 @@ GEMINI_API_KEY=
 OPENROUTER_API_KEY=
 ```
 
-The app needs Microphone and Accessibility/Input Monitoring permission for recording, global shortcuts, focus detection, and insertion.
+The app needs Microphone and Accessibility/Input Monitoring permission for recording, global shortcuts, focus detection, and insertion. Screen Recording permission is required only for Screen Aware.
 
 ## Release process
 
