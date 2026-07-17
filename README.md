@@ -4,6 +4,8 @@ Dictator is a native macOS menu-bar dictation app. Hold `Fn` to record, release 
 
 > ⚠️ Dictator is still in the early stages of development. Expect rough edges.
 
+![Dictator's Providers screen on macOS](docs/images/dictator-providers.jpg)
+
 ## Shortcuts
 
 - Hold `Fn`: record dictation
