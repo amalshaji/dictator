@@ -616,11 +616,11 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				A5F6CAFC230E24CA42891A7F /* DictatorCore */,
 				96AC1D4F694CDFBBE3CD9C56 /* Dictator */,
+				8EA99FE7CACD48C447CBBA6C /* DictatorAppTests */,
+				A5F6CAFC230E24CA42891A7F /* DictatorCore */,
 				BA85DAE196DD84151FC71CA2 /* DictatorCoreTests */,
 				4BC9B83A873EB22C31DE004E /* DictatorIntegrationTests */,
-				8EA99FE7CACD48C447CBBA6C /* DictatorAppTests */,
 			);
 		};
 /* End PBXProject section */
