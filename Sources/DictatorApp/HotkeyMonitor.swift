@@ -106,7 +106,7 @@ struct GlobalShortcut: Codable, Equatable, Sendable {
 }
 
 extension CGEventFlags {
-    fileprivate var shortcutModifiers: CGEventFlags {
+    var shortcutModifiers: CGEventFlags {
         intersection([.maskCommand, .maskAlternate, .maskShift, .maskControl])
     }
 }
@@ -239,11 +239,6 @@ enum ShortcutMatcher {
     static func matchesModifiers(_ shortcut: GlobalShortcut, flags: CGEventFlags) -> Bool {
         guard case .modifierChord(let modifiersRawValue) = shortcut.trigger else { return false }
         return CGEventFlags(rawValue: modifiersRawValue).shortcutModifiers == flags.shortcutModifiers
-    }
-
-    static func matchesMouseButton(_ shortcut: GlobalShortcut, buttonNumber: Int64) -> Bool {
-        guard case .mouseButton(let configuredButtonNumber) = shortcut.trigger else { return false }
-        return configuredButtonNumber == buttonNumber
     }
 }
 
