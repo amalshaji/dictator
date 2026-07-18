@@ -15,7 +15,14 @@ final class AppBehaviorTests: XCTestCase {
     private final class FakeUpdateEngine: UpdateEngine {
         let canCheckSubject = CurrentValueSubject<Bool, Never>(false)
         var automaticallyChecksForUpdates = true
+        var receivesCanaryUpdates = false {
+            didSet {
+                guard receivesCanaryUpdates != oldValue else { return }
+                updateCycleResetCount += 1
+            }
+        }
         private(set) var checkCount = 0
+        private(set) var updateCycleResetCount = 0
 
         var canCheckForUpdatesPublisher: AnyPublisher<Bool, Never> {
             canCheckSubject.eraseToAnyPublisher()
@@ -786,6 +793,52 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertTrue(updater.automaticallyChecksForUpdates)
         updater.automaticallyChecksForUpdates = false
         XCTAssertFalse(engine.automaticallyChecksForUpdates)
+    }
+
+    func testUpdaterPersistsCanaryPreferenceAndResetsUpdateCycle() throws {
+        let suiteName = "AppBehaviorTests.canary.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let engine = FakeUpdateEngine()
+        let updater = AppUpdater(
+            engine: engine,
+            bundle: try updaterTestBundle(),
+            defaults: defaults
+        )
+
+        XCTAssertFalse(updater.receivesCanaryUpdates)
+        XCTAssertFalse(engine.receivesCanaryUpdates)
+
+        updater.receivesCanaryUpdates = true
+
+        XCTAssertTrue(engine.receivesCanaryUpdates)
+        XCTAssertTrue(defaults.bool(forKey: "receiveCanaryUpdates"))
+        XCTAssertEqual(engine.updateCycleResetCount, 1)
+    }
+
+    func testUpdaterRestoresCanaryPreferenceBeforeUse() throws {
+        let suiteName = "AppBehaviorTests.canary.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(true, forKey: "receiveCanaryUpdates")
+        let engine = FakeUpdateEngine()
+
+        let updater = AppUpdater(
+            engine: engine,
+            bundle: try updaterTestBundle(),
+            defaults: defaults
+        )
+
+        XCTAssertTrue(updater.receivesCanaryUpdates)
+        XCTAssertTrue(engine.receivesCanaryUpdates)
+    }
+
+    func testSparkleDelegateAllowsOnlyOptedInCanaryChannel() {
+        let delegate = SparkleUpdateDelegate(receivesCanaryUpdates: false)
+        XCTAssertEqual(delegate.allowedChannels, [])
+
+        delegate.receivesCanaryUpdates = true
+        XCTAssertEqual(delegate.allowedChannels, ["canary"])
     }
 
     private func updaterTestBundle() throws -> Bundle {

@@ -6,19 +6,40 @@ import Sparkle
 protocol UpdateEngine: AnyObject {
     var canCheckForUpdatesPublisher: AnyPublisher<Bool, Never> { get }
     var automaticallyChecksForUpdates: Bool { get set }
+    var receivesCanaryUpdates: Bool { get set }
     func checkForUpdates()
 }
 
 @MainActor
+final class SparkleUpdateDelegate: NSObject, SPUUpdaterDelegate {
+    var receivesCanaryUpdates: Bool
+
+    init(receivesCanaryUpdates: Bool) {
+        self.receivesCanaryUpdates = receivesCanaryUpdates
+    }
+
+    var allowedChannels: Set<String> {
+        receivesCanaryUpdates ? ["canary"] : []
+    }
+
+    func allowedChannels(for updater: SPUUpdater) -> Set<String> {
+        allowedChannels
+    }
+}
+
+@MainActor
 private final class SparkleUpdateEngine: UpdateEngine {
+    private let updateDelegate: SparkleUpdateDelegate
     private let controller: SPUStandardUpdaterController
 
-    init() {
+    init(receivesCanaryUpdates: Bool) {
+        updateDelegate = SparkleUpdateDelegate(receivesCanaryUpdates: receivesCanaryUpdates)
         controller = SPUStandardUpdaterController(
-            startingUpdater: true,
-            updaterDelegate: nil,
+            startingUpdater: false,
+            updaterDelegate: updateDelegate,
             userDriverDelegate: nil
         )
+        controller.startUpdater()
     }
 
     var canCheckForUpdatesPublisher: AnyPublisher<Bool, Never> {
@@ -31,6 +52,15 @@ private final class SparkleUpdateEngine: UpdateEngine {
         set { controller.updater.automaticallyChecksForUpdates = newValue }
     }
 
+    var receivesCanaryUpdates: Bool {
+        get { updateDelegate.receivesCanaryUpdates }
+        set {
+            guard newValue != updateDelegate.receivesCanaryUpdates else { return }
+            updateDelegate.receivesCanaryUpdates = newValue
+            controller.updater.resetUpdateCycleAfterShortDelay()
+        }
+    }
+
     func checkForUpdates() {
         controller.checkForUpdates(nil)
     }
@@ -38,6 +68,8 @@ private final class SparkleUpdateEngine: UpdateEngine {
 
 @MainActor
 final class AppUpdater: ObservableObject {
+    private static let receivesCanaryUpdatesKey = "receiveCanaryUpdates"
+
     @Published private(set) var canCheckForUpdates = false
     @Published var automaticallyChecksForUpdates: Bool {
         didSet {
@@ -45,22 +77,45 @@ final class AppUpdater: ObservableObject {
             engine.automaticallyChecksForUpdates = automaticallyChecksForUpdates
         }
     }
+    @Published var receivesCanaryUpdates: Bool {
+        didSet {
+            guard receivesCanaryUpdates != oldValue else { return }
+            defaults.set(receivesCanaryUpdates, forKey: Self.receivesCanaryUpdatesKey)
+            engine.receivesCanaryUpdates = receivesCanaryUpdates
+        }
+    }
 
     let version: String
     let build: String
 
     private let engine: any UpdateEngine
+    private let defaults: UserDefaults
     private var canCheckForUpdatesSubscription: AnyCancellable?
 
     convenience init() {
-        self.init(engine: SparkleUpdateEngine(), bundle: .main)
+        let defaults = UserDefaults.standard
+        let receivesCanaryUpdates = defaults.bool(forKey: Self.receivesCanaryUpdatesKey)
+        self.init(
+            engine: SparkleUpdateEngine(receivesCanaryUpdates: receivesCanaryUpdates),
+            bundle: .main,
+            defaults: defaults
+        )
     }
 
-    init(engine: any UpdateEngine, bundle: Bundle) {
+    init(
+        engine: any UpdateEngine,
+        bundle: Bundle,
+        defaults: UserDefaults = .standard
+    ) {
         self.engine = engine
+        self.defaults = defaults
         automaticallyChecksForUpdates = engine.automaticallyChecksForUpdates
+        receivesCanaryUpdates = defaults.bool(forKey: Self.receivesCanaryUpdatesKey)
         version = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown"
         build = bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "Unknown"
+        if engine.receivesCanaryUpdates != receivesCanaryUpdates {
+            engine.receivesCanaryUpdates = receivesCanaryUpdates
+        }
         canCheckForUpdatesSubscription = engine.canCheckForUpdatesPublisher
             .sink { [weak self] canCheckForUpdates in
                 self?.canCheckForUpdates = canCheckForUpdates
