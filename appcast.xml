@@ -6,6 +6,25 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>Dictator</title>
         <item>
+            <title>0.6.0</title>
+            <pubDate>Sat, 18 Jul 2026 17:55:34 +0000</pubDate>
+            <link>https://github.com/amalshaji/dictator</link>
+            <sparkle:version>69</sparkle:version>
+            <sparkle:shortVersionString>0.6.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[## What's Changed
+* Add app screenshot to README by @amalshaji in https://github.com/amalshaji/dictator/pull/29
+* Document Screen Aware in README by @amalshaji in https://github.com/amalshaji/dictator/pull/30
+* Fix crash when input device changes by @amalshaji in https://github.com/amalshaji/dictator/pull/31
+* Publish canary builds from main by @amalshaji in https://github.com/amalshaji/dictator/pull/32
+* Prepare 0.6.0 release by @amalshaji in https://github.com/amalshaji/dictator/pull/34
+
+
+**Full Changelog**: https://github.com/amalshaji/dictator/compare/v0.5.0...v0.6.0
+]]></description>
+            <enclosure url="https://github.com/amalshaji/dictator/releases/download/v0.6.0/Dictator-0.6.0-universal.dmg" length="5456668" type="application/octet-stream" sparkle:edSignature="+Kn6IvjpTCCCeip4h8YLAniGAJyHXN+i0o3DoMxVAPeoiHf17NGj5zxyp7H3clofBotjcPfaIdV5C4mjCxJTAg=="/>
+        </item>
+        <item>
             <title>0.6.0-canary.68</title>
             <pubDate>Sat, 18 Jul 2026 16:56:55 +0000</pubDate>
             <link>https://github.com/amalshaji/dictator</link>
@@ -20,25 +39,6 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
 **Full Changelog**: https://github.com/amalshaji/dictator/compare/canary-0.5.0-b66-aaeee2e2...canary-0.6.0-b68-e443362d
 ]]></description>
             <enclosure url="https://github.com/amalshaji/dictator/releases/download/canary-0.6.0-b68-e443362d/Dictator-0.6.0-canary.68-universal.dmg" length="5456761" type="application/octet-stream" sparkle:edSignature="m2NjykGZm1h1d7holqvNKBRe/S06c3rXd3AKHLUoguhnolg2dtjNf2Eitruu0EwCVrE2HPc7RveFvjgA4mjVCA=="/>
-        </item>
-        <item>
-            <title>0.5.0-canary.66</title>
-            <pubDate>Sat, 18 Jul 2026 14:18:00 +0000</pubDate>
-            <link>https://github.com/amalshaji/dictator</link>
-            <sparkle:channel>canary</sparkle:channel>
-            <sparkle:version>66</sparkle:version>
-            <sparkle:shortVersionString>0.5.0-canary.66</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="markdown"><![CDATA[## What's Changed
-* Add app screenshot to README by @amalshaji in https://github.com/amalshaji/dictator/pull/29
-* Document Screen Aware in README by @amalshaji in https://github.com/amalshaji/dictator/pull/30
-* Fix crash when input device changes by @amalshaji in https://github.com/amalshaji/dictator/pull/31
-* Publish canary builds from main by @amalshaji in https://github.com/amalshaji/dictator/pull/32
-
-
-**Full Changelog**: https://github.com/amalshaji/dictator/compare/v0.5.0...canary-0.5.0-b66-aaeee2e2
-]]></description>
-            <enclosure url="https://github.com/amalshaji/dictator/releases/download/canary-0.5.0-b66-aaeee2e2/Dictator-0.5.0-canary.66-universal.dmg" length="5456732" type="application/octet-stream" sparkle:edSignature="awhyUnwTTFniF3PSMIpn1BH6lq+MO31BQ7cDGPHHv4DhR3c7w4x66cC/TfMqj7W6hZHXx1LR/vIS/qKasG2EBA=="/>
         </item>
         <item>
             <title>0.5.0</title>
@@ -73,24 +73,9 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
 ]]></description>
             <enclosure url="https://github.com/amalshaji/dictator/releases/download/v0.4.1/Dictator-0.4.1-universal.dmg" length="5170766" type="application/octet-stream" sparkle:edSignature="OtwwSsDUEd7ytuIebXgJZfcRjFuWzFEzgcEHiwS2ZEZgGOOJ1S1mCTaUVUlryPEB5QOxBYFsPg8UaRCOd6BxDQ=="/>
         </item>
-        <item>
-            <title>0.4.0</title>
-            <pubDate>Wed, 15 Jul 2026 09:36:06 +0000</pubDate>
-            <link>https://github.com/amalshaji/dictator</link>
-            <sparkle:version>6</sparkle:version>
-            <sparkle:shortVersionString>0.4.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="markdown"><![CDATA[## What's Changed
-* Add cursor-following status pill by @amalshaji in https://github.com/amalshaji/dictator/pull/19
-* Restore shortcuts after system wake by @amalshaji in https://github.com/amalshaji/dictator/pull/20
-
-**Full Changelog**: https://github.com/amalshaji/dictator/compare/v0.3.0...v0.4.0
-]]></description>
-            <enclosure url="https://github.com/amalshaji/dictator/releases/download/v0.4.0/Dictator-0.4.0-universal.dmg" length="5168587" type="application/octet-stream" sparkle:edSignature="Sgfp6LkZ3BBpXCw/oJm3x3VNJjXYwTLhVbqqLoDJz+YDXzLef1ayUvXV+yttMIwNeyjKN37bUDInngmvntAuDQ=="/>
-        </item>
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: Mi+NMD916srdnPdHi5W+RfIxy5z3MuJZOajsjxfk6EzGlUap5zb7KJZLKF/fmZjS08l0CjO1b3pnDHDAN2PuAA==
-length: 6231
+edSignature: +WU+aZf9DTit4ckuK/DesTYl7YxPAm51YZe57WBjE84KFwRrS4eAmLJ6+yFVcyoLZUk+EazIJXDG/iYJ9Fb5Cg==
+length: 5147
 -->
