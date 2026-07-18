@@ -5,6 +5,7 @@ import SwiftUI
 struct ShortcutRecorder: View {
     let shortcut: GlobalShortcut
     var allowsFunctionModifier = false
+    var allowsMouseButton = false
     let onChange: (GlobalShortcut) -> Bool
 
     @State private var isRecording = false
@@ -13,7 +14,7 @@ struct ShortcutRecorder: View {
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 4) {
-            Button(isRecording ? "Type shortcut…" : shortcut.displayName) {
+            Button(recordingPrompt) {
                 isRecording ? stopRecording() : startRecording()
             }
             .dictatorButton(isRecording ? .primary : .secondary)
@@ -31,7 +32,18 @@ struct ShortcutRecorder: View {
         stopRecording()
         hint = "Press Esc to cancel"
         isRecording = true
-        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
+        var eventMask: NSEvent.EventTypeMask = [.keyDown, .flagsChanged]
+        if allowsMouseButton {
+            eventMask.insert(.otherMouseDown)
+        }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: eventMask) { event in
+            if event.type == .otherMouseDown {
+                let buttonNumber = Int64(event.buttonNumber)
+                guard buttonNumber >= 2 else { return event }
+                accept(GlobalShortcut(mouseButtonNumber: buttonNumber))
+                return nil
+            }
+
             if event.type == .flagsChanged {
                 if allowsFunctionModifier, event.keyCode == 63, event.modifierFlags.contains(.function) {
                     accept(.dictate)
@@ -58,6 +70,11 @@ struct ShortcutRecorder: View {
             accept(captured)
             return nil
         }
+    }
+
+    private var recordingPrompt: String {
+        guard isRecording else { return shortcut.displayName }
+        return allowsMouseButton ? "Press key or mouse button…" : "Type shortcut…"
     }
 
     private func accept(_ captured: GlobalShortcut) {

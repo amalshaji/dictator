@@ -1,6 +1,6 @@
 # Dictator
 
-Dictator is a native macOS menu-bar app for dictation and screen-aware writing. Hold `Fn` to dictate, or hold `Control-Option` to speak an instruction that uses the focused window as context. Dictator inserts the result into the field that was focused when recording began; if no editable field was focused, it uses its private clipboard.
+Dictator is a native macOS menu-bar app for dictation and screen-aware writing. Hold `Fn` or a configured extra mouse button to dictate, or hold `Control-Option` to speak an instruction that uses the focused window as context. Dictator inserts the result into the field that was focused when recording began; if no editable field was focused, it uses its private clipboard.
 
 > ⚠️ Dictator is still in the early stages of development. Expect rough edges.
 
@@ -8,10 +8,12 @@ Dictator is a native macOS menu-bar app for dictation and screen-aware writing. 
 
 ## Shortcuts
 
-- Hold `Fn`: record dictation
+- Hold `Fn` (or a configured extra mouse button): record dictation
 - Hold `Control-Option`: compose or transform text using the focused window
 - `Option-Command-V`: paste the latest private-clipboard item
 - `Option-Shift-Command-V`: open the private clipboard
+
+Set the dictation trigger under Settings → Shortcuts by pressing a key combination, F-key, or extra mouse button. Mouse buttons remain hold-to-talk: press to record and release to transcribe.
 
 ## Providers
 

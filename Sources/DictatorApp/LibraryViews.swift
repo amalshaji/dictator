@@ -121,7 +121,11 @@ struct SettingsView: View {
                 Text("Settings").font(.dictatorDisplay(30))
                 settingsSection("Shortcuts") {
                     shortcutRow("Dictate", detail: "Hold while speaking") {
-                        ShortcutRecorder(shortcut: model.dictateShortcut, allowsFunctionModifier: true) {
+                        ShortcutRecorder(
+                            shortcut: model.dictateShortcut,
+                            allowsFunctionModifier: true,
+                            allowsMouseButton: true
+                        ) {
                             model.setShortcut($0, for: .dictate)
                         }
                     }
@@ -142,7 +146,7 @@ struct SettingsView: View {
                         }
                     }
                     HStack {
-                        Text("Click a shortcut, then press a new key combination.")
+                        Text("Dictate accepts key combinations, F-keys, or extra mouse buttons.")
                             .font(.dictatorBody(11)).foregroundStyle(.secondary)
                         Spacer()
                         Button("Restore defaults") { model.resetShortcuts() }.dictatorButton(.ghost)

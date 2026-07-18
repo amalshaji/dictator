@@ -58,6 +58,26 @@ final class HotkeyEventTapContext {
     }
 
     func process(_ event: CGEvent, type: CGEventType) -> HotkeyEventOutcome {
+        if case .mouseButton = dictateShortcut.trigger {
+            let buttonNumber = event.getIntegerValueField(.mouseEventButtonNumber)
+            if ShortcutMatcher.matchesMouseButton(dictateShortcut, buttonNumber: buttonNumber) {
+                if type == .otherMouseDown {
+                    guard !dictateIsDown else {
+                        return HotkeyEventOutcome(action: nil, consumesEvent: true)
+                    }
+                    dictateIsDown = true
+                    return HotkeyEventOutcome(action: .press(nil), consumesEvent: true)
+                }
+                if type == .otherMouseUp {
+                    guard dictateIsDown else {
+                        return HotkeyEventOutcome(action: nil, consumesEvent: true)
+                    }
+                    dictateIsDown = false
+                    return HotkeyEventOutcome(action: .release, consumesEvent: true)
+                }
+            }
+        }
+
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let eventTargetPID = event.getIntegerValueField(.eventTargetUnixProcessID)
         let targetPID = eventTargetPID > 0 ? pid_t(eventTargetPID) : nil

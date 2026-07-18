@@ -6,6 +6,7 @@ struct GlobalShortcut: Codable, Equatable, Sendable {
         case key(keyCode: Int64, modifiersRawValue: UInt64, label: String)
         case functionModifier
         case modifierChord(modifiersRawValue: UInt64)
+        case mouseButton(buttonNumber: Int64)
     }
 
     let trigger: Trigger
@@ -22,6 +23,10 @@ struct GlobalShortcut: Codable, Equatable, Sendable {
         )
     }
 
+    init(mouseButtonNumber: Int64) {
+        trigger = .mouseButton(buttonNumber: mouseButtonNumber)
+    }
+
     private init(trigger: Trigger) {
         self.trigger = trigger
     }
@@ -29,13 +34,16 @@ struct GlobalShortcut: Codable, Equatable, Sendable {
     var modifiers: CGEventFlags {
         let rawValue = switch trigger {
         case .key(_, let modifiersRawValue, _), .modifierChord(let modifiersRawValue): modifiersRawValue
-        case .functionModifier: UInt64(0)
+        case .functionModifier, .mouseButton: UInt64(0)
         }
         return CGEventFlags(rawValue: rawValue).shortcutModifiers
     }
 
     var displayName: String {
         if case .functionModifier = trigger { return "Fn" }
+        if case .mouseButton(let buttonNumber) = trigger {
+            return "Mouse Button \(buttonNumber + 1)"
+        }
         var value = ""
         if modifiers.contains(.maskControl) { value += "⌃" }
         if modifiers.contains(.maskAlternate) { value += "⌥" }
@@ -146,6 +154,8 @@ final class HotkeyMonitor: HotkeyMonitoring {
         let mask = CGEventMask(1 << CGEventType.flagsChanged.rawValue)
             | CGEventMask(1 << CGEventType.keyDown.rawValue)
             | CGEventMask(1 << CGEventType.keyUp.rawValue)
+            | CGEventMask(1 << CGEventType.otherMouseDown.rawValue)
+            | CGEventMask(1 << CGEventType.otherMouseUp.rawValue)
         let context = HotkeyEventTapContext(
             dictate: dictateShortcut,
             pasteLatest: pasteShortcut,
@@ -214,6 +224,11 @@ enum ShortcutMatcher {
     static func matchesModifiers(_ shortcut: GlobalShortcut, flags: CGEventFlags) -> Bool {
         guard case .modifierChord(let modifiersRawValue) = shortcut.trigger else { return false }
         return CGEventFlags(rawValue: modifiersRawValue).shortcutModifiers == flags.shortcutModifiers
+    }
+
+    static func matchesMouseButton(_ shortcut: GlobalShortcut, buttonNumber: Int64) -> Bool {
+        guard case .mouseButton(let configuredButtonNumber) = shortcut.trigger else { return false }
+        return configuredButtonNumber == buttonNumber
     }
 }
 
