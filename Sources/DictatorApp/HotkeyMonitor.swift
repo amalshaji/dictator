@@ -23,7 +23,8 @@ struct GlobalShortcut: Codable, Equatable, Sendable {
         )
     }
 
-    init(mouseButtonNumber: Int64) {
+    init?(mouseButtonNumber: Int64) {
+        guard Self.supportedMouseButtons.contains(mouseButtonNumber) else { return nil }
         trigger = .mouseButton(buttonNumber: mouseButtonNumber)
     }
 
@@ -61,6 +62,13 @@ struct GlobalShortcut: Codable, Equatable, Sendable {
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         if let trigger = try values.decodeIfPresent(Trigger.self, forKey: .trigger) {
+            guard Self.isSupported(trigger) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .trigger,
+                    in: values,
+                    debugDescription: "Mouse button number must be between 2 and 31."
+                )
+            }
             self.trigger = trigger
             return
         }
@@ -79,6 +87,13 @@ struct GlobalShortcut: Codable, Equatable, Sendable {
     func encode(to encoder: Encoder) throws {
         var values = encoder.container(keyedBy: CodingKeys.self)
         try values.encode(trigger, forKey: .trigger)
+    }
+
+    private static let supportedMouseButtons: ClosedRange<Int64> = 2...31
+
+    private static func isSupported(_ trigger: Trigger) -> Bool {
+        guard case .mouseButton(let buttonNumber) = trigger else { return true }
+        return supportedMouseButtons.contains(buttonNumber)
     }
 
     private static let screenAwareModifiers: CGEventFlags = [.maskControl, .maskAlternate]

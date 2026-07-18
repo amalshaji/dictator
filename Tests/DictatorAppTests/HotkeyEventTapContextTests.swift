@@ -85,30 +85,37 @@ final class HotkeyEventTapContextTests: XCTestCase {
     }
 
     func testMouseButtonShortcutConsumesHoldAndReleaseWithoutUsingPointerTarget() throws {
-        let dictate = GlobalShortcut(mouseButtonNumber: 3)
+        let dictate = try XCTUnwrap(GlobalShortcut(mouseButtonNumber: 3))
         let context = makeContext(dictate: dictate)
-        let assignedButton = try makeMouseEvent(buttonNumber: 3, targetProcessIdentifier: 21)
+        let down = try makeMouseEvent(
+            type: .otherMouseDown,
+            buttonNumber: 3,
+            targetProcessIdentifier: 21
+        )
+        let up = try makeMouseEvent(type: .otherMouseUp, buttonNumber: 3)
 
         XCTAssertEqual(
-            context.process(assignedButton, type: .otherMouseDown),
+            context.process(down, type: .otherMouseDown),
             HotkeyEventOutcome(action: .press(nil), consumesEvent: true)
         )
         XCTAssertEqual(
-            context.process(assignedButton, type: .otherMouseDown),
+            context.process(down, type: .otherMouseDown),
             HotkeyEventOutcome(action: nil, consumesEvent: true)
         )
         XCTAssertEqual(
-            context.process(assignedButton, type: .otherMouseUp),
+            context.process(up, type: .otherMouseUp),
             HotkeyEventOutcome(action: .release, consumesEvent: true)
         )
     }
 
     func testMouseButtonShortcutLeavesOtherButtonsUntouched() throws {
-        let context = makeContext(dictate: GlobalShortcut(mouseButtonNumber: 3))
-        let otherButton = try makeMouseEvent(buttonNumber: 4)
+        let dictate = try XCTUnwrap(GlobalShortcut(mouseButtonNumber: 3))
+        let context = makeContext(dictate: dictate)
+        let otherButtonDown = try makeMouseEvent(type: .otherMouseDown, buttonNumber: 4)
+        let otherButtonUp = try makeMouseEvent(type: .otherMouseUp, buttonNumber: 4)
 
-        XCTAssertEqual(context.process(otherButton, type: .otherMouseDown), .ignored)
-        XCTAssertEqual(context.process(otherButton, type: .otherMouseUp), .ignored)
+        XCTAssertEqual(context.process(otherButtonDown, type: .otherMouseDown), .ignored)
+        XCTAssertEqual(context.process(otherButtonUp, type: .otherMouseUp), .ignored)
     }
 
     func testClipboardShortcutsEmitActionsAndConsumeKeyDown() throws {
@@ -161,6 +168,7 @@ final class HotkeyEventTapContextTests: XCTestCase {
     }
 
     private func makeMouseEvent(
+        type: CGEventType,
         buttonNumber: Int64,
         targetProcessIdentifier: pid_t? = nil
     ) throws -> CGEvent {
@@ -168,7 +176,7 @@ final class HotkeyEventTapContextTests: XCTestCase {
         let event = try XCTUnwrap(
             CGEvent(
                 mouseEventSource: nil,
-                mouseType: .otherMouseDown,
+                mouseType: type,
                 mouseCursorPosition: .zero,
                 mouseButton: mouseButton
             )

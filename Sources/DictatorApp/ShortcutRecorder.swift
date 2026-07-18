@@ -39,8 +39,10 @@ struct ShortcutRecorder: View {
         monitor = NSEvent.addLocalMonitorForEvents(matching: eventMask) { event in
             if event.type == .otherMouseDown {
                 let buttonNumber = Int64(event.buttonNumber)
-                guard buttonNumber >= 2 else { return event }
-                accept(GlobalShortcut(mouseButtonNumber: buttonNumber))
+                guard let shortcut = GlobalShortcut(mouseButtonNumber: buttonNumber) else {
+                    return event
+                }
+                accept(shortcut)
                 return nil
             }
 

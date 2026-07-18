@@ -90,7 +90,7 @@ final class HotkeyMonitorTests: XCTestCase {
     }
 
     func testMouseButtonShortcutRoundTripsWithUserFacingLabel() throws {
-        let shortcut = GlobalShortcut(mouseButtonNumber: 3)
+        let shortcut = try XCTUnwrap(GlobalShortcut(mouseButtonNumber: 3))
 
         XCTAssertEqual(shortcut.displayName, "Mouse Button 4")
 
@@ -101,12 +101,19 @@ final class HotkeyMonitorTests: XCTestCase {
         XCTAssertEqual(restored, shortcut)
     }
 
-    func testMouseButtonShortcutMatchesOnlyItsConfiguredButton() {
-        let shortcut = GlobalShortcut(mouseButtonNumber: 3)
+    func testMouseButtonShortcutAcceptsOnlyQuartzSupportedButtons() {
+        XCTAssertNil(GlobalShortcut(mouseButtonNumber: 1))
+        XCTAssertNotNil(GlobalShortcut(mouseButtonNumber: 2))
+        XCTAssertNotNil(GlobalShortcut(mouseButtonNumber: 31))
+        XCTAssertNil(GlobalShortcut(mouseButtonNumber: 32))
+    }
 
-        XCTAssertTrue(ShortcutMatcher.matchesMouseButton(shortcut, buttonNumber: 3))
-        XCTAssertFalse(ShortcutMatcher.matchesMouseButton(shortcut, buttonNumber: 4))
-        XCTAssertFalse(ShortcutMatcher.matchesMouseButton(.dictate, buttonNumber: 3))
+    func testInvalidPersistedMouseButtonIsRejected() {
+        let invalid = #"{"trigger":{"mouseButton":{"buttonNumber":32}}}"#
+
+        XCTAssertThrowsError(
+            try JSONDecoder().decode(GlobalShortcut.self, from: Data(invalid.utf8))
+        )
     }
 
     func testHotkeyHealthRequiresValidEnabledTap() {
