@@ -1,0 +1,173 @@
+name: Build canary release
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Main commit to build
+        required: true
+        default: main
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: canary-release
+  queue: max
+
+jobs:
+  canary:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main'
+      )
+    runs-on: macos-26
+    environment: release
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || inputs.ref }}
+          fetch-depth: 0
+
+      - name: Resolve canary identity
+        id: meta
+        env:
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          sha=$(git rev-parse HEAD)
+          if [[ -n "$EXPECTED_SHA" && "$sha" != "$EXPECTED_SHA" ]]; then
+            echo "Checked out $sha instead of upstream CI commit $EXPECTED_SHA" >&2
+            exit 1
+          fi
+
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$sha" origin/main; then
+            echo "Canary commit is not reachable from origin/main: $sha" >&2
+            exit 1
+          fi
+
+          metadata=$(scripts/release/release-metadata.sh from-ref canary "$sha")
+          IFS=$'\t' read -r channel base_version version build_number _ tag <<<"$metadata"
+          [[ "$channel" == canary ]]
+
+          {
+            echo "sha=$sha"
+            echo "base_version=$base_version"
+            echo "build_number=$build_number"
+            echo "version=$version"
+            echo "tag=$tag"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create or verify canary tag
+        env:
+          SHA: ${{ steps.meta.outputs.sha }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+            tagged_sha=$(git rev-list -n 1 "$TAG")
+            if [[ "$tagged_sha" != "$SHA" ]]; then
+              echo "Tag $TAG points to $tagged_sha instead of $SHA" >&2
+              exit 1
+            fi
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$TAG" -m "Canary $TAG" "$SHA"
+            git push origin "$TAG"
+          fi
+
+      - name: Check for an existing canary release
+        id: existing
+        env:
+          BUILD_NUMBER: ${{ steps.meta.outputs.build_number }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          if ! release=$(gh release view "$TAG" --json assets,isDraft,isPrerelease 2>/dev/null); then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          [[ $(jq -r .isDraft <<<"$release") == false ]]
+          [[ $(jq -r .isPrerelease <<<"$release") == true ]]
+          expected_assets=$(printf '%s\n%s\n' "Dictator-${VERSION}-universal.dmg" SHA256SUMS.txt | sort)
+          actual_assets=$(jq -r '.assets[].name' <<<"$release" | sort)
+          if [[ "$actual_assets" != "$expected_assets" ]]; then
+            echo "Existing release assets do not match the expected canary assets" >&2
+            exit 1
+          fi
+
+          assets="$RUNNER_TEMP/existing-release"
+          mkdir -p "$assets"
+          gh release download "$TAG" --dir "$assets"
+          scripts/release/verify-release-assets.sh "$assets" "$VERSION" "$BUILD_NUMBER"
+
+          echo "exists=true" >> "$GITHUB_OUTPUT"
+
+      - name: Install XcodeGen
+        if: steps.existing.outputs.exists != 'true'
+        run: |
+          brew install xcodegen
+          xcodegen --version
+
+      - name: Build canary assets
+        if: steps.existing.outputs.exists != 'true'
+        env:
+          BUILD_NUMBER: ${{ steps.meta.outputs.build_number }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: scripts/release/build-release.sh "$VERSION" "$BUILD_NUMBER" release
+
+      - name: Attest canary assets
+        if: steps.existing.outputs.exists != 'true'
+        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
+        with:
+          subject-path: |
+            release/Dictator-${{ steps.meta.outputs.version }}-universal.dmg
+            release/SHA256SUMS.txt
+
+      - name: Publish canary release
+        if: steps.existing.outputs.exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.meta.outputs.sha }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          previous_tag=$(scripts/release/previous-release-tag.sh canary "$SHA")
+          notes_arguments=(--generate-notes)
+          if [[ -n "$previous_tag" ]]; then
+            notes_arguments+=(--notes-start-tag "$previous_tag")
+          fi
+
+          gh release create "$TAG" \
+            "release/Dictator-${VERSION}-universal.dmg" \
+            release/SHA256SUMS.txt \
+            --verify-tag \
+            --prerelease \
+            --title "Canary $VERSION" \
+            "${notes_arguments[@]}"
+
+  publish:
+    needs: canary
+    permissions:
+      contents: write
+      id-token: write
+      pages: write
+    uses: ./.github/workflows/release-published.yml
+    with:
+      tag: ${{ needs.canary.outputs.tag }}
+    secrets: inherit

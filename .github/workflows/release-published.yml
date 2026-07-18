@@ -3,31 +3,41 @@ name: Publish update channels
 on:
   release:
     types: [published]
+  workflow_call:
+    inputs:
+      tag:
+        description: Published release tag
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       tag:
-        description: Published stable release tag to repair
+        description: Published release tag to repair
         required: true
         type: string
 
 permissions: {}
 
 concurrency:
-  group: published-release-${{ github.event.release.tag_name || inputs.tag }}
-  cancel-in-progress: false
+  group: published-update-channels
+  queue: max
 
 jobs:
-  appcast:
-    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
-    runs-on: macos-15
-    environment: release
+  metadata:
+    runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
+    outputs:
+      channel: ${{ steps.release.outputs.channel }}
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
 
       - name: Resolve published release
-        id: meta
+        id: release
         env:
           GH_TOKEN: ${{ github.token }}
           EVENT_TAG: ${{ github.event.release.tag_name }}
@@ -36,31 +46,48 @@ jobs:
           tag=${EVENT_TAG:-$DISPATCH_TAG}
           release=$(gh release view "$tag" --json isDraft,isPrerelease,tagName)
           [[ $(jq -r .isDraft <<<"$release") == false ]]
-          [[ $(jq -r .isPrerelease <<<"$release") == false ]]
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          is_prerelease=$(jq -r .isPrerelease <<<"$release")
+          IFS=$'\t' read -r channel _ version _ expected_short_sha resolved_tag < <(
+            scripts/release/release-metadata.sh from-tag "$tag" "$is_prerelease"
+          )
+          [[ "$resolved_tag" == "$tag" ]]
+
+          if [[ "$channel" == canary ]]; then
+            tagged_sha=$(git rev-list -n 1 "$tag")
+            actual_short_sha=${tagged_sha:0:8}
+            [[ "$actual_short_sha" == "$expected_short_sha" ]]
+          fi
+
+          {
+            echo "channel=$channel"
+            echo "tag=$tag"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+
+  appcast:
+    needs: metadata
+    runs-on: macos-15
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Download and verify release assets
         id: asset
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.meta.outputs.tag }}
-          VERSION: ${{ steps.meta.outputs.version }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+          VERSION: ${{ needs.metadata.outputs.version }}
         run: |
           mkdir -p "$RUNNER_TEMP/update-assets"
           gh release download "$TAG" \
             --pattern "Dictator-${VERSION}-universal.dmg" \
             --pattern SHA256SUMS.txt \
             --dir "$RUNNER_TEMP/update-assets"
-          (cd "$RUNNER_TEMP/update-assets" && shasum -a 256 -c SHA256SUMS.txt)
-
-          dmg="$RUNNER_TEMP/update-assets/Dictator-${VERSION}-universal.dmg"
-          mountpoint=$(mktemp -d)
-          hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mountpoint"
-          build=$(plutil -extract CFBundleVersion raw "$mountpoint/Dictator.app/Contents/Info.plist")
-          short=$(plutil -extract CFBundleShortVersionString raw "$mountpoint/Dictator.app/Contents/Info.plist")
-          hdiutil detach "$mountpoint"
-          [[ "$short" == "$VERSION" ]]
+          IFS=$'\t' read -r dmg build < <(
+            scripts/release/verify-release-assets.sh "$RUNNER_TEMP/update-assets" "$VERSION"
+          )
           echo "dmg=$dmg" >> "$GITHUB_OUTPUT"
           echo "build=$build" >> "$GITHUB_OUTPUT"
 
@@ -71,8 +98,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
-          TAG: ${{ steps.meta.outputs.tag }}
-          VERSION: ${{ steps.meta.outputs.version }}
+          CHANNEL: ${{ needs.metadata.outputs.channel }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+          VERSION: ${{ needs.metadata.outputs.version }}
           BUILD_NUMBER: ${{ steps.asset.outputs.build }}
           DMG: ${{ steps.asset.outputs.dmg }}
         run: |
@@ -101,7 +129,8 @@ jobs:
             "$expected_url" \
             "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/" \
             "https://github.com/${GITHUB_REPOSITORY}" \
-            "$notes"
+            "$notes" \
+            "$CHANNEL"
 
           touch "$feed/.nojekyll"
           git -C "$feed" add appcast.xml .nojekyll
@@ -136,7 +165,8 @@ jobs:
         uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
 
   homebrew:
-    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
+    needs: metadata
+    if: needs.metadata.outputs.channel == 'stable'
     runs-on: macos-15
     environment: release
     permissions:
@@ -144,27 +174,13 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Resolve published release
-        id: meta
-        env:
-          GH_TOKEN: ${{ github.token }}
-          EVENT_TAG: ${{ github.event.release.tag_name }}
-          DISPATCH_TAG: ${{ inputs.tag }}
-        run: |
-          tag=${EVENT_TAG:-$DISPATCH_TAG}
-          release=$(gh release view "$tag" --json isDraft,isPrerelease,tagName)
-          [[ $(jq -r .isDraft <<<"$release") == false ]]
-          [[ $(jq -r .isPrerelease <<<"$release") == false ]]
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
-
       - name: Bootstrap or bump cask
         env:
           GH_TOKEN: ${{ github.token }}
           HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          TAG: ${{ steps.meta.outputs.tag }}
-          VERSION: ${{ steps.meta.outputs.version }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+          VERSION: ${{ needs.metadata.outputs.version }}
         run: |
           test -n "$TAP_TOKEN"
           mkdir -p "$RUNNER_TEMP/release-assets"
@@ -201,3 +217,25 @@ jobs:
 
           git -C "$tap_dir" remote set-url origin "https://x-access-token:${TAP_TOKEN}@github.com/amalshaji/homebrew-taps.git"
           git -C "$tap_dir" push origin HEAD:main
+
+  cleanup-canaries:
+    needs: [metadata, pages]
+    if: needs.metadata.outputs.channel == 'canary'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Retain the latest ten canary releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release list \
+            --limit 1000 \
+            --json isPrerelease,tagName \
+            --jq '.[] | select(.isPrerelease == true and (.tagName | startswith("canary-"))) | .tagName' |
+            scripts/release/select-expired-canaries.sh 10 |
+            while IFS= read -r tag; do
+              gh release delete "$tag" --cleanup-tag --yes
+            done

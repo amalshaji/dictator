@@ -205,6 +205,15 @@ struct SettingsView: View {
                         .toggleStyle(.switch).tint(DictatorDesign.signalInk)
                         .font(.dictatorBody(14, weight: .medium))
                         .padding(.vertical, 11)
+                        .overlay(alignment: .bottom) { Divider() }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Toggle("Receive canary updates", isOn: $updater.receivesCanaryUpdates)
+                            .toggleStyle(.switch).tint(DictatorDesign.signalInk)
+                            .font(.dictatorBody(14, weight: .medium))
+                        Text("Early builds from successful main merges may be unstable. Turning this off does not downgrade the installed app.")
+                            .font(.dictatorBody(11)).foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 11)
                 }
                 settingsSection("App") {
                     HStack(spacing: 20) {

@@ -14,13 +14,13 @@ derived_data=$(mktemp -d)
 trap 'rm -rf "$derived_data"' EXIT
 
 cd "$repo_root"
-expected_version=$(scripts/release/version.sh)
-if [[ $version != "$expected_version" ]]; then
-  echo "Tag version $version does not match MARKETING_VERSION $expected_version" >&2
-  exit 1
-fi
+project_version=$(scripts/release/version.sh)
 if [[ ! $build_number =~ ^[1-9][0-9]*$ ]]; then
   echo "Build number must be a positive integer: $build_number" >&2
+  exit 1
+fi
+if [[ $version != "$project_version" && $version != "$project_version-canary.$build_number" ]]; then
+  echo "Release version must be $project_version or $project_version-canary.$build_number: $version" >&2
   exit 1
 fi
 
