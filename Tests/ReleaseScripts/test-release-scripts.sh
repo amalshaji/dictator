@@ -87,6 +87,14 @@ assert_fails scripts/release/update-appcast.sh \
   "$sparkle_bin" "$workspace" "$dmg" 1.2.3 45 "$url" \
   https://example.com/ https://example.com "$notes" stable < "$key"
 
+write_appcast "$feed" https://example.com/newer.dmg 14.0 "$signature" stable
+"$sparkle_bin/sign_update" --ed-key-file "$key" "$feed"
+feed_checksum=$(shasum -a 256 "$feed")
+scripts/release/update-appcast.sh \
+  "$sparkle_bin" "$workspace" "$dmg" 1.2.2 44 "$url" \
+  https://example.com/ https://example.com "$notes" stable < "$key"
+test "$(shasum -a 256 "$feed")" = "$feed_checksum"
+
 fake_sparkle_bin="$workspace/fake-sparkle"
 mkdir -p "$fake_sparkle_bin"
 cat > "$fake_sparkle_bin/generate_appcast" <<'SCRIPT'

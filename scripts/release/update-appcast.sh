@@ -74,7 +74,12 @@ if [[ -f $appcast ]]; then
       latest_build=$existing_build
     fi
   done
-  if (( 10#$build_number <= 10#$latest_build )); then
+  if (( 10#$build_number < 10#$latest_build )); then
+    "$sparkle_bin/sign_update" --verify --ed-key-file "$key_file" "$appcast"
+    echo "Skipping older $channel appcast build: $build_number < $latest_build"
+    exit 0
+  fi
+  if (( 10#$build_number == 10#$latest_build )); then
     echo "Appcast build must increase: $latest_build -> $build_number" >&2
     exit 1
   fi
