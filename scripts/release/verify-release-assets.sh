@@ -23,8 +23,8 @@ trap cleanup EXIT
 
 test -f "$dmg"
 test -f "$checksums"
-(cd "$asset_dir" && shasum -a 256 -c SHA256SUMS.txt)
-hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mountpoint"
+(cd "$asset_dir" && shasum -a 256 -c SHA256SUMS.txt) >&2
+hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mountpoint" >&2
 attached=true
 
 plist="$mountpoint/Dictator.app/Contents/Info.plist"
@@ -39,6 +39,6 @@ if [[ -n $expected_build && $actual_build != "$expected_build" ]]; then
   exit 1
 fi
 
-hdiutil detach "$mountpoint"
+hdiutil detach "$mountpoint" >&2
 attached=false
 printf '%s\t%s\n' "$dmg" "$actual_build"
