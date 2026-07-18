@@ -29,8 +29,9 @@ jobs:
       )
     runs-on: macos-26
     environment: release
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
     permissions:
-      actions: write
       attestations: write
       contents: write
       id-token: write
@@ -57,11 +58,9 @@ jobs:
             exit 1
           fi
 
-          base_version=$(scripts/release/version.sh)
-          build_number=$(scripts/release/build-number.sh canary "$sha")
-          short_sha=${sha:0:8}
-          version="$base_version-canary.$build_number"
-          tag="canary-$base_version-b$build_number-$short_sha"
+          metadata=$(scripts/release/release-metadata.sh from-ref canary "$sha")
+          IFS=$'\t' read -r channel base_version version build_number _ tag <<<"$metadata"
+          [[ "$channel" == canary ]]
 
           {
             echo "sha=$sha"
@@ -115,18 +114,7 @@ jobs:
           assets="$RUNNER_TEMP/existing-release"
           mkdir -p "$assets"
           gh release download "$TAG" --dir "$assets"
-          (cd "$assets" && shasum -a 256 -c SHA256SUMS.txt)
-
-          dmg="$assets/Dictator-${VERSION}-universal.dmg"
-          mountpoint=$(mktemp -d)
-          hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mountpoint"
-          trap 'hdiutil detach "$mountpoint" >/dev/null 2>&1 || true' EXIT
-          actual_version=$(plutil -extract CFBundleShortVersionString raw "$mountpoint/Dictator.app/Contents/Info.plist")
-          actual_build=$(plutil -extract CFBundleVersion raw "$mountpoint/Dictator.app/Contents/Info.plist")
-          [[ "$actual_version" == "$VERSION" ]]
-          [[ "$actual_build" == "$BUILD_NUMBER" ]]
-          hdiutil detach "$mountpoint"
-          trap - EXIT
+          scripts/release/verify-release-assets.sh "$assets" "$VERSION" "$BUILD_NUMBER"
 
           echo "exists=true" >> "$GITHUB_OUTPUT"
 
@@ -139,10 +127,9 @@ jobs:
       - name: Build canary assets
         if: steps.existing.outputs.exists != 'true'
         env:
-          BASE_VERSION: ${{ steps.meta.outputs.base_version }}
           BUILD_NUMBER: ${{ steps.meta.outputs.build_number }}
           VERSION: ${{ steps.meta.outputs.version }}
-        run: scripts/release/build-release.sh "$VERSION" "$BUILD_NUMBER" release "$BASE_VERSION"
+        run: scripts/release/build-release.sh "$VERSION" "$BUILD_NUMBER" release
 
       - name: Attest canary assets
         if: steps.existing.outputs.exists != 'true'
@@ -156,19 +143,11 @@ jobs:
         if: steps.existing.outputs.exists != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.meta.outputs.sha }}
           TAG: ${{ steps.meta.outputs.tag }}
           VERSION: ${{ steps.meta.outputs.version }}
         run: |
-          releases=$(gh release list --limit 100 --json isDraft,isPrerelease,tagName)
-          previous_tag=$(jq -r \
-            '[.[] | select(.isDraft == false and .isPrerelease == true and (.tagName | startswith("canary-")))] | first | .tagName // empty' \
-            <<<"$releases")
-          if [[ -z "$previous_tag" ]]; then
-            previous_tag=$(jq -r \
-              '[.[] | select(.isDraft == false and .isPrerelease == false)] | first | .tagName // empty' \
-              <<<"$releases")
-          fi
-
+          previous_tag=$(scripts/release/previous-release-tag.sh canary "$SHA")
           notes_arguments=(--generate-notes)
           if [[ -n "$previous_tag" ]]; then
             notes_arguments+=(--notes-start-tag "$previous_tag")
@@ -182,8 +161,13 @@ jobs:
             --title "Canary $VERSION" \
             "${notes_arguments[@]}"
 
-      - name: Publish canary update channel
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.meta.outputs.tag }}
-        run: gh workflow run release-published.yml --ref main -f tag="$TAG"
+  publish:
+    needs: canary
+    permissions:
+      contents: write
+      id-token: write
+      pages: write
+    uses: ./.github/workflows/release-published.yml
+    with:
+      tag: ${{ needs.canary.outputs.tag }}
+    secrets: inherit

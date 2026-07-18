@@ -3,6 +3,12 @@ name: Publish update channels
 on:
   release:
     types: [published]
+  workflow_call:
+    inputs:
+      tag:
+        description: Published release tag
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       tag:
@@ -41,9 +47,10 @@ jobs:
           release=$(gh release view "$tag" --json isDraft,isPrerelease,tagName)
           [[ $(jq -r .isDraft <<<"$release") == false ]]
           is_prerelease=$(jq -r .isPrerelease <<<"$release")
-          IFS=$'\t' read -r channel version expected_short_sha < <(
-            scripts/release/release-metadata.sh "$tag" "$is_prerelease"
+          IFS=$'\t' read -r channel _ version _ expected_short_sha resolved_tag < <(
+            scripts/release/release-metadata.sh from-tag "$tag" "$is_prerelease"
           )
+          [[ "$resolved_tag" == "$tag" ]]
 
           if [[ "$channel" == canary ]]; then
             tagged_sha=$(git rev-list -n 1 "$tag")
@@ -78,15 +85,9 @@ jobs:
             --pattern "Dictator-${VERSION}-universal.dmg" \
             --pattern SHA256SUMS.txt \
             --dir "$RUNNER_TEMP/update-assets"
-          (cd "$RUNNER_TEMP/update-assets" && shasum -a 256 -c SHA256SUMS.txt)
-
-          dmg="$RUNNER_TEMP/update-assets/Dictator-${VERSION}-universal.dmg"
-          mountpoint=$(mktemp -d)
-          hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mountpoint"
-          build=$(plutil -extract CFBundleVersion raw "$mountpoint/Dictator.app/Contents/Info.plist")
-          short=$(plutil -extract CFBundleShortVersionString raw "$mountpoint/Dictator.app/Contents/Info.plist")
-          hdiutil detach "$mountpoint"
-          [[ "$short" == "$VERSION" ]]
+          IFS=$'\t' read -r dmg build < <(
+            scripts/release/verify-release-assets.sh "$RUNNER_TEMP/update-assets" "$VERSION"
+          )
           echo "dmg=$dmg" >> "$GITHUB_OUTPUT"
           echo "build=$build" >> "$GITHUB_OUTPUT"
 
@@ -224,14 +225,17 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
       - name: Retain the latest ten canary releases
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          releases=$(gh release list --limit 1000 --json isPrerelease,publishedAt,tagName)
-          jq -r \
-            '[.[] | select(.isPrerelease == true and (.tagName | startswith("canary-")))] | sort_by(.publishedAt) | reverse | .[10:][]?.tagName' \
-            <<<"$releases" |
+          gh release list \
+            --limit 1000 \
+            --json isPrerelease,tagName \
+            --jq '.[] | select(.isPrerelease == true and (.tagName | startswith("canary-"))) | .tagName' |
+            scripts/release/select-expired-canaries.sh 10 |
             while IFS= read -r tag; do
               gh release delete "$tag" --cleanup-tag --yes
             done

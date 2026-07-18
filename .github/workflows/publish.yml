@@ -63,9 +63,14 @@ jobs:
 
       - name: Build release assets
         env:
+          TAG: ${{ steps.meta.outputs.tag }}
           VERSION: ${{ steps.meta.outputs.version }}
         run: |
-          build_number=$(scripts/release/build-number.sh stable HEAD)
+          metadata=$(scripts/release/release-metadata.sh from-ref stable HEAD)
+          IFS=$'\t' read -r channel _ resolved_version build_number _ resolved_tag <<<"$metadata"
+          [[ "$channel" == stable ]]
+          [[ "$resolved_tag" == "$TAG" ]]
+          [[ "$resolved_version" == "$VERSION" ]]
           scripts/release/build-release.sh "$VERSION" "$build_number" release
 
       - name: Attest release assets
@@ -81,10 +86,7 @@ jobs:
           TAG: ${{ steps.meta.outputs.tag }}
           VERSION: ${{ steps.meta.outputs.version }}
         run: |
-          releases=$(gh release list --limit 100 --json isDraft,isPrerelease,tagName)
-          previous_tag=$(jq -r --arg tag "$TAG" \
-            '[.[] | select(.isDraft == false and .isPrerelease == false and .tagName != $tag)] | first | .tagName // empty' \
-            <<<"$releases")
+          previous_tag=$(scripts/release/previous-release-tag.sh stable HEAD)
           notes_arguments=(--generate-notes)
           if [[ -n "$previous_tag" ]]; then
             notes_arguments+=(--notes-start-tag "$previous_tag")

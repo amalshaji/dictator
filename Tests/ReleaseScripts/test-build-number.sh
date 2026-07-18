@@ -90,11 +90,13 @@ printf third > "$test_repo/file"
 git -C "$test_repo" commit -qam third
 
 test "$(cd "$test_repo" &&
-  "$repo_root/scripts/release/previous-release-tag.sh" HEAD)" = "$canary_tag"
+  "$repo_root/scripts/release/previous-release-tag.sh" canary HEAD)" = "$canary_tag"
 test "$(cd "$test_repo" &&
-  "$repo_root/scripts/release/previous-release-tag.sh" "$second_commit")" = v1.0.0
+  "$repo_root/scripts/release/previous-release-tag.sh" canary "$second_commit")" = v1.0.0
+test "$(cd "$test_repo" &&
+  "$repo_root/scripts/release/previous-release-tag.sh" stable HEAD)" = v1.0.0
 test -z "$(cd "$test_repo" &&
-  "$repo_root/scripts/release/previous-release-tag.sh" "$first_commit")"
+  "$repo_root/scripts/release/previous-release-tag.sh" stable "$first_commit")"
 
 expired=$(printf '%s\n' \
   canary-1.0.0-b8-11111111 \
