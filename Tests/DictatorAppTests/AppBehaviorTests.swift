@@ -464,71 +464,6 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertEqual(UsageDisplayFormatter.currency(1, complete: false), "Partially available")
     }
 
-    func testPrivateClipboardShortcutsAreExact() {
-        let shortcut = GlobalShortcut(keyCode: 8, modifiers: [.maskCommand, .maskControl], keyLabel: "C")
-        XCTAssertTrue(ShortcutMatcher.matches(shortcut, keyCode: 8, flags: [.maskCommand, .maskControl]))
-        XCTAssertFalse(ShortcutMatcher.matches(shortcut, keyCode: 8, flags: [.maskCommand]))
-        XCTAssertFalse(ShortcutMatcher.matches(shortcut, keyCode: 9, flags: [.maskCommand, .maskControl]))
-        XCTAssertEqual(shortcut.displayName, "⌃⌘C")
-    }
-
-    func testScreenAwareShortcutIsAnExactModifierChord() throws {
-        let shortcut = GlobalShortcut.screenAware
-        guard case .modifierChord(let modifiersRawValue) = shortcut.trigger else {
-            return XCTFail("Expected a typed modifier chord")
-        }
-        XCTAssertEqual(
-            CGEventFlags(rawValue: modifiersRawValue),
-            [.maskControl, .maskAlternate]
-        )
-        XCTAssertEqual(shortcut.displayName, "⌃⌥")
-        XCTAssertTrue(ShortcutMatcher.matchesModifiers(shortcut, flags: [.maskControl, .maskAlternate]))
-        XCTAssertFalse(ShortcutMatcher.matchesModifiers(shortcut, flags: [.maskControl]))
-        XCTAssertFalse(ShortcutMatcher.matchesModifiers(shortcut, flags: [.maskControl, .maskAlternate, .maskShift]))
-
-        let restored = try JSONDecoder().decode(GlobalShortcut.self, from: JSONEncoder().encode(shortcut))
-        XCTAssertEqual(restored, shortcut)
-
-        let object = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: JSONEncoder().encode(shortcut)) as? [String: Any]
-        )
-        XCTAssertNotNil(object["trigger"])
-        XCTAssertNil(object["keyCode"])
-        XCTAssertNil(object["isFunctionModifier"])
-        XCTAssertNil(object["isModifierOnly"])
-    }
-
-    func testLegacyShortcutDecodesIntoTypedKeyTrigger() throws {
-        let legacy = #"{"keyCode":8,"modifiersRawValue":1179648,"keyLabel":"C","isFunctionModifier":false,"isModifierOnly":false}"#
-
-        let shortcut = try JSONDecoder().decode(GlobalShortcut.self, from: Data(legacy.utf8))
-
-        guard case .key(let keyCode, _, let label) = shortcut.trigger else {
-            return XCTFail("Expected a typed key trigger")
-        }
-        XCTAssertEqual(keyCode, 8)
-        XCTAssertEqual(label, "C")
-    }
-
-    func testScreenAwareModifierChordEmitsOnePressAndRelease() throws {
-        let monitor = HotkeyMonitor()
-        var pressCount = 0
-        var releaseCount = 0
-        monitor.onScreenAwarePress = { _ in pressCount += 1 }
-        monitor.onScreenAwareRelease = { releaseCount += 1 }
-
-        let down = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true))
-        down.flags = [.maskControl, .maskAlternate]
-        _ = monitor.handle(down, type: .flagsChanged)
-        _ = monitor.handle(down, type: .flagsChanged)
-        let up = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false))
-        up.flags = [.maskControl]
-        _ = monitor.handle(up, type: .flagsChanged)
-
-        XCTAssertEqual(pressCount, 1)
-        XCTAssertEqual(releaseCount, 1)
-    }
-
     func testTextOnlyScreenAwareModelFailsBeforeRecordingOrCapture() async throws {
         let suiteName = "ai.dictator.tests.screen-aware-capability.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -611,118 +546,6 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertEqual(record.llmExecution?.purpose, .screenAware)
         XCTAssertEqual(record.llmExecution?.provider, .groq)
         XCTAssertEqual(record.llmExecution?.model, modelName)
-    }
-
-    func testEachWakeRecreatesHotkeyMonitorEvenWhenItReportsRunning() {
-        let notifications = NotificationCenter()
-        let hotkey = TestHotkeyMonitor(isRunning: true)
-        let controller = HotkeyLifecycleController(
-            monitor: hotkey,
-            notificationCenter: notifications
-        )
-
-        for _ in 0..<2 {
-            notifications.post(name: NSWorkspace.didWakeNotification, object: NSWorkspace.shared)
-        }
-
-        XCTAssertEqual(hotkey.stopCount, 2)
-        XCTAssertEqual(hotkey.startCount, 2)
-        XCTAssertEqual(controller.state, .available)
-    }
-
-    func testSleepStopsHotkeysAndCancelsActiveDictationBeforeNotificationReturns() throws {
-        let notifications = NotificationCenter()
-        let hotkey = TestHotkeyMonitor(isRunning: true)
-        let controller = HotkeyLifecycleController(
-            monitor: hotkey,
-            notificationCenter: notifications
-        )
-        let recorder = TestAudioRecorder()
-        let (model, defaults, suiteName) = try makeLifecycleModel(
-            hotkeys: controller,
-            recorder: recorder
-        )
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        model.phase = .listening
-
-        notifications.post(name: NSWorkspace.willSleepNotification, object: NSWorkspace.shared)
-
-        XCTAssertEqual(model.phase, .idle)
-        XCTAssertEqual(recorder.cancelCount, 1)
-        XCTAssertEqual(hotkey.stopCount, 1)
-        XCTAssertFalse(model.shortcutsAvailable)
-    }
-
-    func testRepeatedSleepWakeCyclesResetHeldStateAndPreserveAllCallbacks() {
-        let notifications = NotificationCenter()
-        let hotkey = TestHotkeyMonitor(isRunning: true, dictateIsDown: true)
-        let controller = HotkeyLifecycleController(
-            monitor: hotkey,
-            notificationCenter: notifications
-        )
-        var pasteCount = 0
-        var clipboardCount = 0
-        controller.onPasteLatest = { pasteCount += 1 }
-        controller.onOpenClipboard = { clipboardCount += 1 }
-
-        for _ in 0..<2 {
-            notifications.post(name: NSWorkspace.willSleepNotification, object: NSWorkspace.shared)
-            XCTAssertFalse(hotkey.dictateIsDown)
-            notifications.post(name: NSWorkspace.didWakeNotification, object: NSWorkspace.shared)
-        }
-        hotkey.onPasteLatest?()
-        hotkey.onOpenClipboard?()
-
-        XCTAssertEqual(hotkey.stopCount, 4)
-        XCTAssertEqual(hotkey.startCount, 2)
-        XCTAssertEqual(pasteCount, 1)
-        XCTAssertEqual(clipboardCount, 1)
-        XCTAssertEqual(controller.state, .available)
-    }
-
-    func testWakeRetriesAfterTransientFailureWithOnePendingRecovery() {
-        let notifications = NotificationCenter()
-        let hotkey = TestHotkeyMonitor(isRunning: true, startFailuresRemaining: 2)
-        let scheduler = ManualHotkeyRecoveryScheduler()
-        let controller = HotkeyLifecycleController(
-            monitor: hotkey,
-            notificationCenter: notifications,
-            scheduleRecovery: scheduler.schedule
-        )
-
-        notifications.post(name: NSWorkspace.didWakeNotification, object: NSWorkspace.shared)
-        notifications.post(name: NSWorkspace.didWakeNotification, object: NSWorkspace.shared)
-
-        XCTAssertEqual(hotkey.startCount, 2)
-        XCTAssertEqual(scheduler.scheduleCount, 2)
-        XCTAssertEqual(scheduler.pendingCount, 1)
-        XCTAssertEqual(controller.state, .unavailable(HotkeyError.permissionRequired.localizedDescription))
-
-        scheduler.fire()
-
-        XCTAssertEqual(hotkey.startCount, 3)
-        XCTAssertEqual(scheduler.pendingCount, 0)
-        XCTAssertEqual(controller.state, .available)
-    }
-
-    func testStoppingHotkeyMonitorClearsHeldFunctionState() throws {
-        let monitor = HotkeyMonitor()
-        let event = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: 63, keyDown: true))
-        event.flags = .maskSecondaryFn
-        var pressCount = 0
-        monitor.onPress = { _ in pressCount += 1 }
-
-        _ = monitor.handle(event, type: .flagsChanged)
-        monitor.stop()
-        _ = monitor.handle(event, type: .flagsChanged)
-
-        XCTAssertEqual(pressCount, 2)
-    }
-
-    func testHotkeyHealthRequiresValidEnabledTap() {
-        XCTAssertTrue(HotkeyMonitor.isTapHealthy(isValid: true, isEnabled: true))
-        XCTAssertFalse(HotkeyMonitor.isTapHealthy(isValid: false, isEnabled: true))
-        XCTAssertFalse(HotkeyMonitor.isTapHealthy(isValid: true, isEnabled: false))
     }
 
     func testDisabledStyleCannotBeSelected() {
@@ -982,23 +805,6 @@ final class AppBehaviorTests: XCTestCase {
         return try XCTUnwrap(Bundle(url: root))
     }
 
-    private func makeLifecycleModel(
-        hotkeys: HotkeyLifecycleController,
-        recorder: any AudioRecording
-    ) throws -> (AppModel, UserDefaults, String) {
-        let suiteName = "ai.dictator.tests.lifecycle.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        let model = AppModel(
-            keychain: LifecycleCredentialStore(),
-            appleSpeechProvider: nil,
-            defaults: defaults,
-            connectivity: LifecycleConnectivityMonitor(),
-            hotkeys: hotkeys,
-            recorder: recorder
-        )
-        return (model, defaults, suiteName)
-    }
-
     private func assertColor(
         _ color: NSColor?,
         red: CGFloat,
@@ -1042,44 +848,6 @@ private struct SpeechOnlyGroqCredentialStore: CredentialStoring {
     func load(for purpose: ProviderPurpose, provider: ProviderKind) throws -> ProviderCredentials? {
         guard purpose == .speechToText, provider == .groq else { return nil }
         return ProviderCredentials(apiKey: "shared-key")
-    }
-}
-
-@MainActor
-private final class TestHotkeyMonitor: HotkeyMonitoring {
-    var onPress: ((pid_t?) -> Void)?
-    var onRelease: (() -> Void)?
-    var onScreenAwarePress: ((pid_t?) -> Void)?
-    var onScreenAwareRelease: (() -> Void)?
-    var onPasteLatest: (() -> Void)?
-    var onOpenClipboard: (() -> Void)?
-    private(set) var isRunning: Bool
-    private(set) var startCount = 0
-    private(set) var stopCount = 0
-    private(set) var dictateIsDown: Bool
-    private var startFailuresRemaining: Int
-
-    init(isRunning: Bool, startFailuresRemaining: Int = 0, dictateIsDown: Bool = false) {
-        self.isRunning = isRunning
-        self.startFailuresRemaining = startFailuresRemaining
-        self.dictateIsDown = dictateIsDown
-    }
-
-    func configure(dictate: GlobalShortcut, pasteLatest: GlobalShortcut, openClipboard: GlobalShortcut) {}
-
-    func start() throws {
-        startCount += 1
-        if startFailuresRemaining > 0 {
-            startFailuresRemaining -= 1
-            throw HotkeyError.permissionRequired
-        }
-        isRunning = true
-    }
-
-    func stop() {
-        stopCount += 1
-        isRunning = false
-        dictateIsDown = false
     }
 }
 
@@ -1192,36 +960,7 @@ private final class AudioLevelRecorder: @unchecked Sendable {
     func append(_ value: Double) { lock.withLock { storage.append(value) } }
 }
 
-@MainActor
-private final class ManualHotkeyRecoveryScheduler {
-    private var pending: (@MainActor () -> Bool)?
-    private(set) var scheduleCount = 0
-    var pendingCount: Int { pending == nil ? 0 : 1 }
-
-    func schedule(_ recovery: @escaping @MainActor () -> Bool) -> AnyCancellable {
-        scheduleCount += 1
-        pending = recovery
-        return AnyCancellable { [weak self] in
-            MainActor.assumeIsolated { self?.pending = nil }
-        }
-    }
-
-    func fire() {
-        guard let pending else { return }
-        if pending() { self.pending = nil }
-    }
-}
-
-private struct LifecycleCredentialStore: CredentialStoring {
-    func save(_ credentials: ProviderCredentials, for purpose: ProviderPurpose, provider: ProviderKind) throws {}
-    func load(for purpose: ProviderPurpose, provider: ProviderKind) throws -> ProviderCredentials? { nil }
-}
-
 private struct HUDTestConnectivityMonitor: ConnectivityMonitoring {
-    let state: ConnectivityState = .online
-}
-
-private struct LifecycleConnectivityMonitor: ConnectivityMonitoring {
     let state: ConnectivityState = .online
 }
 

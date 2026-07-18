@@ -116,8 +116,7 @@ final class HotkeyMonitor: HotkeyMonitoring {
     private var clipboardShortcut = GlobalShortcut.openClipboard
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
-    private var dictateIsDown = false
-    private var screenAwareIsDown = false
+    private var eventTapContext: HotkeyEventTapContext?
     var isRunning: Bool {
         guard let eventTap else { return false }
         return Self.isTapHealthy(
@@ -134,6 +133,11 @@ final class HotkeyMonitor: HotkeyMonitoring {
         dictateShortcut = dictate
         pasteShortcut = pasteLatest
         clipboardShortcut = openClipboard
+        eventTapContext?.configure(
+            dictate: dictate,
+            pasteLatest: pasteLatest,
+            openClipboard: openClipboard
+        )
     }
 
     func start() throws {
@@ -142,27 +146,26 @@ final class HotkeyMonitor: HotkeyMonitoring {
         let mask = CGEventMask(1 << CGEventType.flagsChanged.rawValue)
             | CGEventMask(1 << CGEventType.keyDown.rawValue)
             | CGEventMask(1 << CGEventType.keyUp.rawValue)
-        let callback: CGEventTapCallBack = { _, type, event, userInfo in
-            guard let userInfo else { return Unmanaged.passUnretained(event) }
-            let monitor = Unmanaged<HotkeyMonitor>.fromOpaque(userInfo).takeUnretainedValue()
-            return MainActor.assumeIsolated {
-                if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-                    if let tap = monitor.eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
-                    return Unmanaged.passUnretained(event)
-                }
-                if monitor.handle(event, type: type) { return nil }
-                return Unmanaged.passUnretained(event)
+        let context = HotkeyEventTapContext(
+            dictate: dictateShortcut,
+            pasteLatest: pasteShortcut,
+            openClipboard: clipboardShortcut
+        ) { [weak self] action in
+            Task { @MainActor [weak self] in
+                self?.dispatch(action)
             }
         }
-        let pointer = Unmanaged.passUnretained(self).toOpaque()
+        let pointer = Unmanaged.passUnretained(context).toOpaque()
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
             options: .defaultTap,
             eventsOfInterest: mask,
-            callback: callback,
+            callback: HotkeyEventTapContext.callback,
             userInfo: pointer
         ) else { throw HotkeyError.permissionRequired }
+        context.attach(eventTap: tap)
+        eventTapContext = context
         eventTap = tap
         let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         runLoopSource = source
@@ -178,59 +181,24 @@ final class HotkeyMonitor: HotkeyMonitoring {
         }
         runLoopSource = nil
         eventTap = nil
-        dictateIsDown = false
-        screenAwareIsDown = false
+        eventTapContext = nil
     }
 
-    /// Returns true when a Dictator shortcut consumed the event.
-    func handle(_ event: CGEvent, type: CGEventType) -> Bool {
-        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-        let eventTargetPID = event.getIntegerValueField(.eventTargetUnixProcessID)
-        let targetPID = eventTargetPID > 0 ? pid_t(eventTargetPID) : nil
-
-        if case .functionModifier = dictateShortcut.trigger,
-           type == .flagsChanged,
-           event.flags.contains(.maskSecondaryFn) || dictateIsDown {
-            let down = event.flags.contains(.maskSecondaryFn)
-            guard down != dictateIsDown else { return false }
-            dictateIsDown = down
-            if down { onPress?(targetPID) } else { onRelease?() }
-            return false
-        }
-
-        if type == .flagsChanged {
-            let down = ShortcutMatcher.matchesModifiers(.screenAware, flags: event.flags)
-            guard down != screenAwareIsDown else { return false }
-            screenAwareIsDown = down
-            if down { onScreenAwarePress?(targetPID) } else { onScreenAwareRelease?() }
-            return false
-        }
-
-        if case .key(let configuredKeyCode, _, _) = dictateShortcut.trigger,
-           keyCode == configuredKeyCode {
-            if type == .keyDown, ShortcutMatcher.matches(dictateShortcut, keyCode: keyCode, flags: event.flags) {
-                guard !dictateIsDown, event.getIntegerValueField(.keyboardEventAutorepeat) == 0 else { return true }
-                dictateIsDown = true
-                onPress?(targetPID)
-                return true
-            }
-            if type == .keyUp, dictateIsDown {
-                dictateIsDown = false
-                onRelease?()
-                return true
-            }
-        }
-
-        guard type == .keyDown else { return false }
-        if ShortcutMatcher.matches(clipboardShortcut, keyCode: keyCode, flags: event.flags) {
-            onOpenClipboard?()
-            return true
-        }
-        if ShortcutMatcher.matches(pasteShortcut, keyCode: keyCode, flags: event.flags) {
+    private func dispatch(_ action: HotkeyAction) {
+        switch action {
+        case .press(let targetPID):
+            onPress?(targetPID)
+        case .release:
+            onRelease?()
+        case .screenAwarePress(let targetPID):
+            onScreenAwarePress?(targetPID)
+        case .screenAwareRelease:
+            onScreenAwareRelease?()
+        case .pasteLatest:
             onPasteLatest?()
-            return true
+        case .openClipboard:
+            onOpenClipboard?()
         }
-        return false
     }
 }
 
