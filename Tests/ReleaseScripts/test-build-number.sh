@@ -22,3 +22,22 @@ test "$((canary_build + 2))" -gt "$stable_build"
 
 assert_fails scripts/release/build-number.sh preview HEAD
 assert_fails scripts/release/build-number.sh canary does-not-exist
+
+IFS=$'\t' read -r channel version short_sha < <(
+  scripts/release/release-metadata.sh canary-1.2.3-b46-a1b2c3d4 true
+)
+test "$channel" = canary
+test "$version" = 1.2.3-canary.46
+test "$short_sha" = a1b2c3d4
+
+IFS=$'\t' read -r channel version short_sha < <(
+  scripts/release/release-metadata.sh v1.2.3 false
+)
+test "$channel" = stable
+test "$version" = 1.2.3
+test -z "$short_sha"
+
+assert_fails scripts/release/release-metadata.sh v1.2.3 true
+assert_fails scripts/release/release-metadata.sh canary-1.2.3-b46-a1b2c3d4 false
+assert_fails scripts/release/release-metadata.sh canary-1.2.3-b0-a1b2c3d4 true
+assert_fails scripts/release/release-metadata.sh preview-1.2.3 false

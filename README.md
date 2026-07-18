@@ -33,6 +33,8 @@ brew install --cask amalshaji/taps/dictator
 
 Dictator checks for updates once a day with [Sparkle](https://sparkle-project.org). It shows the release notes and always asks before installing. Automatic checks can be disabled under **Settings → Updates**, and **Check for Updates…** is also available from the app and menu-bar menus.
 
+Stable updates are the default. Enable **Receive canary updates** under **Settings → Updates** to test early builds published after successful merges to `main`. Canary builds may be unstable. Disabling the setting keeps the installed build until a newer stable version is available; it does not downgrade the app.
+
 ### Manual installation
 
 Download `Dictator-<version>-universal.dmg` and `SHA256SUMS.txt` from the matching [GitHub Release](https://github.com/amalshaji/dictator/releases), then verify the download:
@@ -75,6 +77,10 @@ The app needs Microphone and Accessibility/Input Monitoring permission for recor
 
 ## Release process
 
+Every successful CI run for a push to `main` publishes an immutable GitHub prerelease and adds it to the opt-in `canary` Sparkle channel. The latest ten canary releases and tags are retained. Canary releases never update Homebrew.
+
+Stable releases remain review-gated:
+
 1. Bump `MARKETING_VERSION` in `project.yml`.
 2. Open a PR, apply the `release` label, and merge it into `main` after CI passes.
 3. The merge creates `v<version>` and builds a draft GitHub Release containing the universal DMG, checksum, and provenance attestation.
@@ -85,5 +91,7 @@ Configure a protected GitHub environment named `release` with:
 
 - `SPARKLE_PRIVATE_KEY`: the private Ed25519 key whose public half is committed as `SUPublicEDKey`.
 - `HOMEBREW_TAP_TOKEN`: a fine-grained token with Contents read/write access only to `amalshaji/homebrew-taps`.
+
+Do not add required reviewers to the `release` environment if canaries must remain fully automatic.
 
 Configure GitHub Pages to use **GitHub Actions** as its source. The publishing workflow keeps the signed feed on `gh-pages` for rollback and deploys that exact feed to `https://amalshaji.github.io/dictator/appcast.xml` with GitHub's Pages deployment action. Keep an encrypted offline backup of the Sparkle private key; without Developer ID signing, losing it prevents trusted key rotation for existing installations.

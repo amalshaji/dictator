@@ -64,7 +64,9 @@ jobs:
       - name: Build release assets
         env:
           VERSION: ${{ steps.meta.outputs.version }}
-        run: scripts/release/build-release.sh "$VERSION" "$GITHUB_RUN_NUMBER" release
+        run: |
+          build_number=$(scripts/release/build-number.sh stable HEAD)
+          scripts/release/build-release.sh "$VERSION" "$build_number" release
 
       - name: Attest release assets
         uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
@@ -79,10 +81,19 @@ jobs:
           TAG: ${{ steps.meta.outputs.tag }}
           VERSION: ${{ steps.meta.outputs.version }}
         run: |
+          releases=$(gh release list --limit 100 --json isDraft,isPrerelease,tagName)
+          previous_tag=$(jq -r --arg tag "$TAG" \
+            '[.[] | select(.isDraft == false and .isPrerelease == false and .tagName != $tag)] | first | .tagName // empty' \
+            <<<"$releases")
+          notes_arguments=(--generate-notes)
+          if [[ -n "$previous_tag" ]]; then
+            notes_arguments+=(--notes-start-tag "$previous_tag")
+          fi
+
           gh release create "$TAG" \
             "release/Dictator-${VERSION}-universal.dmg" \
             release/SHA256SUMS.txt \
             --verify-tag \
             --draft \
-            --generate-notes \
-            --title "$TAG"
+            --title "$TAG" \
+            "${notes_arguments[@]}"
