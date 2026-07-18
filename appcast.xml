@@ -6,6 +6,21 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>Dictator</title>
         <item>
+            <title>0.6.1</title>
+            <pubDate>Sat, 18 Jul 2026 18:17:35 +0000</pubDate>
+            <link>https://github.com/amalshaji/dictator</link>
+            <sparkle:version>71</sparkle:version>
+            <sparkle:shortVersionString>0.6.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[## What's Changed
+* Prepare 0.6.1 release by @amalshaji in https://github.com/amalshaji/dictator/pull/35
+
+
+**Full Changelog**: https://github.com/amalshaji/dictator/compare/v0.6.0...v0.6.1
+]]></description>
+            <enclosure url="https://github.com/amalshaji/dictator/releases/download/v0.6.1/Dictator-0.6.1-universal.dmg" length="5456686" type="application/octet-stream" sparkle:edSignature="84JrJz1sEWRidWWNCq1ktm3KSDt4Ec9vmLtfRWyFqUDX6QfAXWU5IsLR/mISF5qREwDKQHCZwYWYgL55dIoJAg=="/>
+        </item>
+        <item>
             <title>0.6.0</title>
             <pubDate>Sat, 18 Jul 2026 17:55:34 +0000</pubDate>
             <link>https://github.com/amalshaji/dictator</link>
@@ -59,23 +74,9 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
 ]]></description>
             <enclosure url="https://github.com/amalshaji/dictator/releases/download/v0.5.0/Dictator-0.5.0-universal.dmg" length="5454227" type="application/octet-stream" sparkle:edSignature="G1LtXuzx+1OLmYJYMSCcIROx7h4QawuuvLOMnaz9p2mlIveN90hhsBl/1mLEVIOMB7ItSdLGdzMuSERcqFcEAw=="/>
         </item>
-        <item>
-            <title>0.4.1</title>
-            <pubDate>Wed, 15 Jul 2026 13:47:33 +0000</pubDate>
-            <link>https://github.com/amalshaji/dictator</link>
-            <sparkle:version>7</sparkle:version>
-            <sparkle:shortVersionString>0.4.1</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="markdown"><![CDATA[## What's Changed
-* Fix Fn press crashes by @amalshaji in https://github.com/amalshaji/dictator/pull/22
-
-**Full Changelog**: https://github.com/amalshaji/dictator/compare/v0.4.0...v0.4.1
-]]></description>
-            <enclosure url="https://github.com/amalshaji/dictator/releases/download/v0.4.1/Dictator-0.4.1-universal.dmg" length="5170766" type="application/octet-stream" sparkle:edSignature="OtwwSsDUEd7ytuIebXgJZfcRjFuWzFEzgcEHiwS2ZEZgGOOJ1S1mCTaUVUlryPEB5QOxBYFsPg8UaRCOd6BxDQ=="/>
-        </item>
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: +WU+aZf9DTit4ckuK/DesTYl7YxPAm51YZe57WBjE84KFwRrS4eAmLJ6+yFVcyoLZUk+EazIJXDG/iYJ9Fb5Cg==
-length: 5147
+edSignature: 1zTqAqTxO7WmjqgrHGeMai/8Zg9dGcEzDZaTf4Atay+to5LSajywbr8L9gF0OXO7BtyfMZ1NmxX7iSHcEZjEAA==
+length: 5151
 -->
