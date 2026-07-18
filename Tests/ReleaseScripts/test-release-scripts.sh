@@ -87,6 +87,57 @@ assert_fails scripts/release/update-appcast.sh \
   "$sparkle_bin" "$workspace" "$dmg" 1.2.3 45 "$url" \
   https://example.com/ https://example.com "$notes" stable < "$key"
 
+fake_sparkle_bin="$workspace/fake-sparkle"
+mkdir -p "$fake_sparkle_bin"
+cat > "$fake_sparkle_bin/generate_appcast" <<'SCRIPT'
+#!/bin/bash
+set -euo pipefail
+channel=
+download_url_prefix=
+output=
+archives=
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --channel)
+      channel=$2
+      shift 2
+      ;;
+    --download-url-prefix)
+      download_url_prefix=$2
+      shift 2
+      ;;
+    -o)
+      output=$2
+      shift 2
+      ;;
+    *)
+      archives=$1
+      shift
+      ;;
+  esac
+done
+dmg=$(find "$archives" -maxdepth 1 -name '*.dmg' -print -quit)
+channel_element=
+if [[ $channel == canary ]]; then
+  channel_element="<sparkle:channel>canary</sparkle:channel>"
+fi
+printf '%s\n' \
+  "<?xml version=\"1.0\"?><rss xmlns:sparkle=\"http://www.andymatuschak.org/xml-namespaces/sparkle\"><channel><item><sparkle:shortVersionString>1.2.3</sparkle:shortVersionString><sparkle:version>45</sparkle:version>${channel_element}<sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion><enclosure url=\"${download_url_prefix}$(basename "$dmg")\" length=\"$(stat -f %z "$dmg")\" sparkle:edSignature=\"test-signature\" /></item></channel></rss>" \
+  > "$output"
+SCRIPT
+cat > "$fake_sparkle_bin/sign_update" <<'SCRIPT'
+#!/bin/bash
+exit 0
+SCRIPT
+chmod +x "$fake_sparkle_bin/generate_appcast" "$fake_sparkle_bin/sign_update"
+
+for channel in stable canary; do
+  generated_feed="$workspace/generated-$channel"
+  scripts/release/update-appcast.sh \
+    "$fake_sparkle_bin" "$generated_feed" "$dmg" 1.2.3 45 "$url" \
+    https://example.com/ https://example.com "$notes" "$channel" < "$key"
+done
+
 scripts/release/version-greater-than.sh 1.2.3 1.2.4
 scripts/release/version-greater-than.sh 1.2.3 1.3.0
 scripts/release/version-greater-than.sh 1.2.3 2.0.0

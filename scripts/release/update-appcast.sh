@@ -34,11 +34,9 @@ fi
 case "$channel" in
   stable)
     channel_items="//*[local-name()='item'][not(*[local-name()='channel'])]"
-    channel_arguments=()
     ;;
   canary)
     channel_items="//*[local-name()='item'][*[local-name()='channel' and text()='canary']]"
-    channel_arguments=(--channel canary)
     ;;
   *)
     echo "Channel must be canary or stable: $channel" >&2
@@ -87,14 +85,20 @@ dmg_name=$(basename "$dmg")
 cp "$dmg" "$updates/$dmg_name"
 cp "$release_notes" "$updates/${dmg_name%.*}.md"
 
+generate_appcast_arguments=(
+  --ed-key-file "$key_file"
+  --download-url-prefix "$download_url_prefix"
+  --link "$link"
+  --embed-release-notes
+  --maximum-deltas 0
+  --maximum-versions 3
+)
+if [[ $channel == canary ]]; then
+  generate_appcast_arguments+=(--channel canary)
+fi
+
 "$sparkle_bin/generate_appcast" \
-  --ed-key-file "$key_file" \
-  --download-url-prefix "$download_url_prefix" \
-  --link "$link" \
-  --embed-release-notes \
-  --maximum-deltas 0 \
-  --maximum-versions 3 \
-  "${channel_arguments[@]}" \
+  "${generate_appcast_arguments[@]}" \
   -o "$updates/appcast.xml" \
   "$updates"
 
