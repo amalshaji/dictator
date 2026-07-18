@@ -1,8 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-if [[ $# -ne 9 ]]; then
-  echo "usage: $0 SPARKLE_BIN FEED_DIR DMG VERSION BUILD_NUMBER EXPECTED_URL DOWNLOAD_URL_PREFIX LINK RELEASE_NOTES" >&2
+if [[ $# -ne 10 ]]; then
+  echo "usage: $0 SPARKLE_BIN FEED_DIR DMG VERSION BUILD_NUMBER EXPECTED_URL DOWNLOAD_URL_PREFIX LINK RELEASE_NOTES CHANNEL" >&2
   exit 2
 fi
 
@@ -15,6 +15,7 @@ expected_url=$6
 download_url_prefix=$7
 link=$8
 release_notes=$9
+channel=${10}
 appcast="$feed_dir/appcast.xml"
 key_file=$(mktemp)
 updates=$(mktemp -d)
@@ -30,6 +31,20 @@ if [[ ! $build_number =~ ^[1-9][0-9]*$ ]]; then
   echo "Build number must be a positive integer: $build_number" >&2
   exit 1
 fi
+case "$channel" in
+  stable)
+    channel_items="//*[local-name()='item'][not(*[local-name()='channel'])]"
+    channel_arguments=()
+    ;;
+  canary)
+    channel_items="//*[local-name()='item'][*[local-name()='channel' and text()='canary']]"
+    channel_arguments=(--channel canary)
+    ;;
+  *)
+    echo "Channel must be canary or stable: $channel" >&2
+    exit 1
+    ;;
+esac
 mkdir -p "$feed_dir"
 
 if [[ -f $appcast ]]; then
@@ -38,7 +53,7 @@ if [[ -f $appcast ]]; then
     "$appcast")
   if [[ $matching_url_count != 0 ]]; then
     signature=$(scripts/release/validate-appcast.sh \
-      "$appcast" "$dmg" "$version" "$build_number" "$expected_url")
+      "$appcast" "$dmg" "$version" "$build_number" "$expected_url" "$channel")
     "$sparkle_bin/sign_update" --verify --ed-key-file "$key_file" "$appcast"
     "$sparkle_bin/sign_update" --verify --ed-key-file "$key_file" "$dmg" "$signature"
     echo "Existing appcast entry is valid"
@@ -46,12 +61,12 @@ if [[ -f $appcast ]]; then
   fi
 
   build_count=$(xmllint --xpath \
-    "count(//*[local-name()='item']/*[local-name()='version'])" \
+    "count($channel_items/*[local-name()='version'])" \
     "$appcast")
   latest_build=0
   for ((index = 1; index <= build_count; index++)); do
     existing_build=$(xmllint --xpath \
-      "string((//*[local-name()='item']/*[local-name()='version'])[$index])" \
+      "string(($channel_items/*[local-name()='version'])[$index])" \
       "$appcast")
     if [[ ! $existing_build =~ ^[1-9][0-9]*$ ]]; then
       echo "Invalid existing appcast build: $existing_build" >&2
@@ -79,11 +94,12 @@ cp "$release_notes" "$updates/${dmg_name%.*}.md"
   --embed-release-notes \
   --maximum-deltas 0 \
   --maximum-versions 3 \
+  "${channel_arguments[@]}" \
   -o "$updates/appcast.xml" \
   "$updates"
 
 signature=$(scripts/release/validate-appcast.sh \
-  "$updates/appcast.xml" "$dmg" "$version" "$build_number" "$expected_url")
+  "$updates/appcast.xml" "$dmg" "$version" "$build_number" "$expected_url" "$channel")
 "$sparkle_bin/sign_update" --verify --ed-key-file "$key_file" "$updates/appcast.xml"
 "$sparkle_bin/sign_update" --verify --ed-key-file "$key_file" "$dmg" "$signature"
 cp "$updates/appcast.xml" "$appcast"

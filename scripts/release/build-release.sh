@@ -1,26 +1,31 @@
 #!/bin/bash
 set -euo pipefail
 
-if [[ $# -ne 3 ]]; then
-  echo "usage: $0 VERSION BUILD_NUMBER OUTPUT_DIR" >&2
+if [[ $# -lt 3 || $# -gt 4 ]]; then
+  echo "usage: $0 VERSION BUILD_NUMBER OUTPUT_DIR [PROJECT_VERSION]" >&2
   exit 2
 fi
 
 version=$1
 build_number=$2
 output_dir=$3
+project_version=${4:-$version}
 repo_root=$(cd "$(dirname "$0")/../.." && pwd)
 derived_data=$(mktemp -d)
 trap 'rm -rf "$derived_data"' EXIT
 
 cd "$repo_root"
 expected_version=$(scripts/release/version.sh)
-if [[ $version != "$expected_version" ]]; then
-  echo "Tag version $version does not match MARKETING_VERSION $expected_version" >&2
+if [[ $project_version != "$expected_version" ]]; then
+  echo "Project version $project_version does not match MARKETING_VERSION $expected_version" >&2
   exit 1
 fi
 if [[ ! $build_number =~ ^[1-9][0-9]*$ ]]; then
   echo "Build number must be a positive integer: $build_number" >&2
+  exit 1
+fi
+if [[ $version != "$project_version" && $version != "$project_version-canary.$build_number" ]]; then
+  echo "Release version must be $project_version or $project_version-canary.$build_number: $version" >&2
   exit 1
 fi
 

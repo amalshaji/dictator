@@ -1,8 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-if [[ $# -ne 5 ]]; then
-  echo "usage: $0 APPCAST DMG VERSION BUILD_NUMBER EXPECTED_URL" >&2
+if [[ $# -ne 6 ]]; then
+  echo "usage: $0 APPCAST DMG VERSION BUILD_NUMBER EXPECTED_URL CHANNEL" >&2
   exit 2
 fi
 
@@ -11,11 +11,26 @@ dmg=$2
 version=$3
 build_number=$4
 expected_url=$5
-item="//*[local-name()='item'][*[local-name()='shortVersionString' and text()='$version']]"
+channel=$6
+
+case "$channel" in
+  stable)
+    channel_predicate="not(*[local-name()='channel'])"
+    ;;
+  canary)
+    channel_predicate="*[local-name()='channel' and text()='canary']"
+    ;;
+  *)
+    echo "Channel must be canary or stable: $channel" >&2
+    exit 1
+    ;;
+esac
+
+item="//*[local-name()='item'][*[local-name()='shortVersionString' and text()='$version'] and $channel_predicate]"
 
 count=$(xmllint --xpath "count($item)" "$appcast")
 if [[ $count != 1 ]]; then
-  echo "Expected exactly one appcast item for version $version; found $count" >&2
+  echo "Expected exactly one $channel appcast item for version $version; found $count" >&2
   exit 1
 fi
 
