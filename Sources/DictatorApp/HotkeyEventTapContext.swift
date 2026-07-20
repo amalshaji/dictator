@@ -58,20 +58,68 @@ final class HotkeyEventTapContext {
     }
 
     func process(_ event: CGEvent, type: CGEventType) -> HotkeyEventOutcome {
-        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let eventTargetPID = event.getIntegerValueField(.eventTargetUnixProcessID)
         let targetPID = eventTargetPID > 0 ? pid_t(eventTargetPID) : nil
 
-        if case .functionModifier = dictateShortcut.trigger,
-           type == .flagsChanged,
-           event.flags.contains(.maskSecondaryFn) || dictateIsDown {
-            let down = event.flags.contains(.maskSecondaryFn)
-            guard down != dictateIsDown else { return .ignored }
-            dictateIsDown = down
-            return HotkeyEventOutcome(
-                action: down ? .press(targetPID) : .release,
-                consumesEvent: false
-            )
+        switch dictateShortcut.trigger {
+        case .functionModifier:
+            if type == .flagsChanged,
+               event.flags.contains(.maskSecondaryFn) || dictateIsDown {
+                let down = event.flags.contains(.maskSecondaryFn)
+                guard down != dictateIsDown else { return .ignored }
+                dictateIsDown = down
+                return HotkeyEventOutcome(
+                    action: down ? .press(targetPID) : .release,
+                    consumesEvent: false
+                )
+            }
+
+        case .key(let configuredKeyCode, let modifiersRawValue, _):
+            if type == .keyDown || type == .keyUp {
+                let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+                guard keyCode == configuredKeyCode else { break }
+
+                let configuredModifiers = CGEventFlags(rawValue: modifiersRawValue)
+                    .shortcutModifiers
+                if type == .keyDown,
+                   configuredModifiers == event.flags.shortcutModifiers {
+                    guard !dictateIsDown,
+                          event.getIntegerValueField(.keyboardEventAutorepeat) == 0
+                    else {
+                        return HotkeyEventOutcome(action: nil, consumesEvent: true)
+                    }
+                    dictateIsDown = true
+                    return HotkeyEventOutcome(action: .press(targetPID), consumesEvent: true)
+                }
+                if type == .keyUp, dictateIsDown {
+                    dictateIsDown = false
+                    return HotkeyEventOutcome(action: .release, consumesEvent: true)
+                }
+            }
+
+        case .mouseButton(let configuredButtonNumber):
+            let buttonNumber = event.getIntegerValueField(.mouseEventButtonNumber)
+            if buttonNumber == configuredButtonNumber {
+                switch type {
+                case .otherMouseDown:
+                    guard !dictateIsDown else {
+                        return HotkeyEventOutcome(action: nil, consumesEvent: true)
+                    }
+                    dictateIsDown = true
+                    return HotkeyEventOutcome(action: .press(nil), consumesEvent: true)
+                case .otherMouseUp:
+                    guard dictateIsDown else {
+                        return HotkeyEventOutcome(action: nil, consumesEvent: true)
+                    }
+                    dictateIsDown = false
+                    return HotkeyEventOutcome(action: .release, consumesEvent: true)
+                default:
+                    break
+                }
+            }
+
+        case .modifierChord:
+            break
         }
 
         if type == .flagsChanged {
@@ -84,25 +132,8 @@ final class HotkeyEventTapContext {
             )
         }
 
-        if case .key(let configuredKeyCode, _, _) = dictateShortcut.trigger,
-           keyCode == configuredKeyCode {
-            if type == .keyDown,
-               ShortcutMatcher.matches(dictateShortcut, keyCode: keyCode, flags: event.flags) {
-                guard !dictateIsDown,
-                      event.getIntegerValueField(.keyboardEventAutorepeat) == 0
-                else {
-                    return HotkeyEventOutcome(action: nil, consumesEvent: true)
-                }
-                dictateIsDown = true
-                return HotkeyEventOutcome(action: .press(targetPID), consumesEvent: true)
-            }
-            if type == .keyUp, dictateIsDown {
-                dictateIsDown = false
-                return HotkeyEventOutcome(action: .release, consumesEvent: true)
-            }
-        }
-
         guard type == .keyDown else { return .ignored }
+        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         if ShortcutMatcher.matches(clipboardShortcut, keyCode: keyCode, flags: event.flags) {
             return HotkeyEventOutcome(action: .openClipboard, consumesEvent: true)
         }
