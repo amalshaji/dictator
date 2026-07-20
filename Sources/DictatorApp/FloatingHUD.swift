@@ -163,6 +163,7 @@ final class FloatingPanelController {
             withAnimation(animation) { self.model.phase = .idle }
             self.updatePointerTracking(for: .idle)
             self.resize(for: .idle, animated: true)
+            self.panel.orderOut(nil)
         }
     }
 
