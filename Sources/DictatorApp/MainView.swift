@@ -50,8 +50,10 @@ struct MainView: View {
             destination = requested
             model.requestedDestination = nil
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            model.refreshScreenCapturePermission()
+        .task { @MainActor in
+            await refreshScreenCapturePermissionOnAppActivation {
+                model.refreshScreenCapturePermission()
+            }
         }
     }
 
@@ -147,6 +149,18 @@ private struct SidebarItemButton: View {
         .animation(.easeOut(duration: 0.12), value: isHovered)
         .accessibilityLabel(item.rawValue)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+@MainActor
+func refreshScreenCapturePermissionOnAppActivation(
+    notificationCenter: NotificationCenter = .default,
+    refresh: @escaping @MainActor () -> Void
+) async {
+    for await _ in notificationCenter.notifications(
+        named: NSApplication.didBecomeActiveNotification
+    ) {
+        refresh()
     }
 }
 

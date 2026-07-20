@@ -13,10 +13,79 @@ protocol AudioRecording: AnyObject {
 }
 
 @MainActor
-final class AudioRecorder: AudioRecording {
+protocol AudioEngineSession: AnyObject {
+    var configurationChangeSource: AnyObject { get }
+
+    func start(
+        tapHandler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
+    ) throws
+    func stop()
+}
+
+@MainActor
+private final class SystemAudioEngineSession: AudioEngineSession {
     private let engine = AVAudioEngine()
+
+    var configurationChangeSource: AnyObject { engine }
+
+    func start(
+        tapHandler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
+    ) throws {
+        let input = engine.inputNode
+        let format = input.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            throw AudioRecorderError.noInput
+        }
+        input.removeTap(onBus: 0)
+        input.installTap(
+            onBus: 0,
+            bufferSize: 1_024,
+            format: format,
+            block: tapHandler
+        )
+        engine.prepare()
+        try engine.start()
+    }
+
+    func stop() {
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+    }
+}
+
+@MainActor
+final class AudioRecorder: AudioRecording {
+    private let session: any AudioEngineSession
+    private let notificationCenter: NotificationCenter
     private let buffer = AudioBuffer()
+    private var configurationChangeObserver: NSObjectProtocol?
+    private var recoveryTask: Task<Void, Never>?
+    private var isRecording = false
     var onLevel: (@Sendable (Double) -> Void)?
+
+    init(
+        session: any AudioEngineSession = SystemAudioEngineSession(),
+        notificationCenter: NotificationCenter = .default
+    ) {
+        self.session = session
+        self.notificationCenter = notificationCenter
+        configurationChangeObserver = notificationCenter.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: session.configurationChangeSource,
+            queue: nil
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.recoverAfterConfigurationChange()
+            }
+        }
+    }
+
+    isolated deinit {
+        recoveryTask?.cancel()
+        if let configurationChangeObserver {
+            notificationCenter.removeObserver(configurationChangeObserver)
+        }
+    }
 
     func requestPermission() async -> Bool {
         await AVCaptureDevice.requestAccess(for: .audio)
@@ -24,13 +93,14 @@ final class AudioRecorder: AudioRecording {
 
     func start() throws {
         buffer.reset()
-        let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)
-        guard format.sampleRate > 0, format.channelCount > 0 else { throw AudioRecorderError.noInput }
-        input.removeTap(onBus: 0)
-        input.installTap(onBus: 0, bufferSize: 1_024, format: format, block: makeTapHandler())
-        engine.prepare()
-        try engine.start()
+        recoveryTask?.cancel()
+        isRecording = true
+        do {
+            try session.start(tapHandler: makeTapHandler())
+        } catch {
+            isRecording = false
+            throw error
+        }
     }
 
     func makeTapHandler() -> @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void {
@@ -59,17 +129,40 @@ final class AudioRecorder: AudioRecording {
     }
 
     func stop() -> RecordedAudio {
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
+        endSession()
         let pcm = buffer.data()
         let duration = Double(pcm.count) / 2 / 16_000
         return RecordedAudio(wavData: WAVEncoder.encodePCM16(pcm), duration: duration)
     }
 
     func cancel() {
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
+        endSession()
         buffer.reset()
+    }
+
+    private func recoverAfterConfigurationChange() {
+        guard isRecording else { return }
+        recoveryTask?.cancel()
+        recoveryTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while isRecording, !Task.isCancelled {
+                do {
+                    try session.start(tapHandler: makeTapHandler())
+                    recoveryTask = nil
+                    return
+                } catch {
+                    do { try await Task.sleep(for: .milliseconds(100)) }
+                    catch { return }
+                }
+            }
+        }
+    }
+
+    private func endSession() {
+        isRecording = false
+        recoveryTask?.cancel()
+        recoveryTask = nil
+        session.stop()
     }
 }
 

@@ -302,6 +302,117 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(levels.values.first), 0.375, accuracy: 0.001)
     }
 
+    func testAudioRecorderRestartsAfterEngineConfigurationChange() async throws {
+        let notificationCenter = NotificationCenter()
+        let session = TestAudioEngineSession()
+        let recorder = AudioRecorder(
+            session: session,
+            notificationCenter: notificationCenter
+        )
+        let restarted = expectation(description: "Audio engine restarted")
+        session.onStart = {
+            if session.startCount == 2 {
+                restarted.fulfill()
+            }
+        }
+
+        try recorder.start()
+        let configurationChangeSource = session.configurationChangeSourceObject
+        await Task.detached {
+            notificationCenter.post(
+                name: .AVAudioEngineConfigurationChange,
+                object: configurationChangeSource
+            )
+        }.value
+
+        await fulfillment(of: [restarted], timeout: 1)
+        XCTAssertEqual(session.startCount, 2)
+        XCTAssertEqual(session.stopCount, 0)
+    }
+
+    func testAudioRecorderRetriesTransientConfigurationRecoveryFailure() async throws {
+        let notificationCenter = NotificationCenter()
+        let session = TestAudioEngineSession()
+        let recorder = AudioRecorder(
+            session: session,
+            notificationCenter: notificationCenter
+        )
+        let restarted = expectation(description: "Audio engine recovered")
+
+        try recorder.start()
+        session.startFailuresRemaining = 1
+        session.onStart = {
+            if session.startCount == 3 {
+                restarted.fulfill()
+            }
+        }
+        notificationCenter.post(
+            name: .AVAudioEngineConfigurationChange,
+            object: session.configurationChangeSource
+        )
+
+        await fulfillment(of: [restarted], timeout: 1)
+        XCTAssertEqual(session.startCount, 3)
+    }
+
+    func testAudioRecorderDoesNotRestartAfterRecordingStops() async throws {
+        let notificationCenter = NotificationCenter()
+        let session = TestAudioEngineSession()
+        let recorder = AudioRecorder(
+            session: session,
+            notificationCenter: notificationCenter
+        )
+
+        try recorder.start()
+        _ = recorder.stop()
+        notificationCenter.post(
+            name: .AVAudioEngineConfigurationChange,
+            object: session.configurationChangeSource
+        )
+        await Task.yield()
+
+        XCTAssertEqual(session.startCount, 1)
+        XCTAssertEqual(session.stopCount, 1)
+    }
+
+    func testAppActivationRefreshesPermissionFromOutsideMainActor() async throws {
+        let suiteName = "ai.dictator.tests.app-activation-permission-refresh.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let capture = TestScreenContextCapture()
+        capture.permissionGranted = false
+        let model = AppModel(
+            keychain: HUDTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor(),
+            screenCapture: capture
+        )
+        let notificationCenter = NotificationCenter()
+        let refreshed = expectation(description: "Permission refreshed")
+        let observation = Task { @MainActor in
+            await refreshScreenCapturePermissionOnAppActivation(
+                notificationCenter: notificationCenter
+            ) {
+                model.refreshScreenCapturePermission()
+                refreshed.fulfill()
+            }
+        }
+        defer { observation.cancel() }
+        await Task.yield()
+        capture.permissionGranted = true
+
+        await Task.detached {
+            notificationCenter.post(
+                name: NSApplication.didBecomeActiveNotification,
+                object: nil
+            )
+        }.value
+
+        await fulfillment(of: [refreshed], timeout: 1)
+        XCTAssertTrue(model.screenCaptureGranted)
+    }
+
     func testHUDNotchFramePinsToTopCenter() {
         XCTAssertEqual(
             HUDPositioning.notchFrame(
@@ -828,6 +939,33 @@ private final class TestAudioRecorder: AudioRecording {
     func stop() -> RecordedAudio { recordedAudio }
     func cancel() { cancelCount += 1 }
 }
+
+@MainActor
+private final class TestAudioEngineSession: AudioEngineSession {
+    let configurationChangeSourceObject = TestAudioConfigurationSource()
+    var configurationChangeSource: AnyObject { configurationChangeSourceObject }
+    var onStart: (() -> Void)?
+    var startFailuresRemaining = 0
+    private(set) var startCount = 0
+    private(set) var stopCount = 0
+
+    func start(
+        tapHandler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
+    ) throws {
+        startCount += 1
+        if startFailuresRemaining > 0 {
+            startFailuresRemaining -= 1
+            throw AudioRecorderError.noInput
+        }
+        onStart?()
+    }
+
+    func stop() {
+        stopCount += 1
+    }
+}
+
+private final class TestAudioConfigurationSource: NSObject, @unchecked Sendable {}
 
 @MainActor
 private final class TestScreenContextCapture: ScreenContextCapturing {
