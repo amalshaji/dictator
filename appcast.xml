@@ -6,6 +6,22 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>Dictator</title>
         <item>
+            <title>0.6.1-canary.74</title>
+            <pubDate>Mon, 20 Jul 2026 11:42:28 +0000</pubDate>
+            <link>https://github.com/amalshaji/dictator</link>
+            <sparkle:channel>canary</sparkle:channel>
+            <sparkle:version>74</sparkle:version>
+            <sparkle:shortVersionString>0.6.1-canary.74</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[## What's Changed
+* Recover recording after audio device changes by @amalshaji in https://github.com/amalshaji/dictator/pull/37
+
+
+**Full Changelog**: https://github.com/amalshaji/dictator/compare/canary-0.6.1-b72-da0131b8...canary-0.6.1-b74-1849e541
+]]></description>
+            <enclosure url="https://github.com/amalshaji/dictator/releases/download/canary-0.6.1-b74-1849e541/Dictator-0.6.1-canary.74-universal.dmg" length="5475811" type="application/octet-stream" sparkle:edSignature="H+ND1bJQuoxTxrElqrY7+UmXrKNxGHVxZHyOnAv3MMu47S3jKDkUQH8CX/h+FT2hW/BGAqbQlxHsXe4zlca3Aw=="/>
+        </item>
+        <item>
             <title>0.6.1-canary.72</title>
             <pubDate>Mon, 20 Jul 2026 08:13:19 +0000</pubDate>
             <link>https://github.com/amalshaji/dictator</link>
@@ -93,6 +109,6 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: HAmJwQ5ZdHNP+iloDmiOqL2+4YlQQIjPZXDCugloHqkVy6DlP8oyVS2fSjCaFqx/dzhMOibUc+nOpGSO+z61DA==
-length: 6242
+edSignature: 2bV2cc5XWdLCdrpsQ0bZIrJenokbYuEhMECnt2wVy9h+hxnkMO0rIbnZZUcY+ISKJHqiEzGrcY7W1n/LL744CA==
+length: 7349
 -->
