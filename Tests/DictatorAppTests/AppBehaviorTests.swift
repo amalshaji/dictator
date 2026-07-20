@@ -234,6 +234,22 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertEqual(panels.filter(\.isVisible).count, 1)
     }
 
+    func testHUDHideAfterDelayOrdersPanelOut() async throws {
+        let existingWindows = Set(NSApp.windows.map(ObjectIdentifier.init))
+        let controller = FloatingPanelController()
+        controller.show(.error("Too short"))
+        let panel = try XCTUnwrap(NSApp.windows.first {
+            !existingWindows.contains(ObjectIdentifier($0)) && $0 is NSPanel
+        })
+        defer { panel.close() }
+
+        controller.hideAfterDelay()
+        try await Task.sleep(for: .milliseconds(1_300))
+
+        XCTAssertFalse(panel.isVisible)
+        XCTAssertEqual(controller.model.phase, .idle)
+    }
+
     func testChangingVisibleHUDPositionDefersPanelResize() async throws {
         let existingWindows = Set(NSApp.windows.map(ObjectIdentifier.init))
         let screen = try XCTUnwrap(NSScreen.main ?? NSScreen.screens.first)
