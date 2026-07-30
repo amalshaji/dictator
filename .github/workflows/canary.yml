@@ -70,30 +70,12 @@ jobs:
             echo "tag=$tag"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Create or verify canary tag
-        env:
-          SHA: ${{ steps.meta.outputs.sha }}
-          TAG: ${{ steps.meta.outputs.tag }}
-        run: |
-          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
-            git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
-            tagged_sha=$(git rev-list -n 1 "$TAG")
-            if [[ "$tagged_sha" != "$SHA" ]]; then
-              echo "Tag $TAG points to $tagged_sha instead of $SHA" >&2
-              exit 1
-            fi
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git tag -a "$TAG" -m "Canary $TAG" "$SHA"
-            git push origin "$TAG"
-          fi
-
       - name: Check for an existing canary release
         id: existing
         env:
           BUILD_NUMBER: ${{ steps.meta.outputs.build_number }}
           GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.meta.outputs.sha }}
           TAG: ${{ steps.meta.outputs.tag }}
           VERSION: ${{ steps.meta.outputs.version }}
         run: |
@@ -104,6 +86,7 @@ jobs:
 
           [[ $(jq -r .isDraft <<<"$release") == false ]]
           [[ $(jq -r .isPrerelease <<<"$release") == true ]]
+          scripts/release/ensure-release-tag.sh "$TAG" "$SHA"
           expected_assets=$(printf '%s\n%s\n' "Dictator-${VERSION}-universal.dmg" SHA256SUMS.txt | sort)
           actual_assets=$(jq -r '.assets[].name' <<<"$release" | sort)
           if [[ "$actual_assets" != "$expected_assets" ]]; then
@@ -129,7 +112,9 @@ jobs:
         env:
           BUILD_NUMBER: ${{ steps.meta.outputs.build_number }}
           VERSION: ${{ steps.meta.outputs.version }}
-        run: scripts/release/build-release.sh "$VERSION" "$BUILD_NUMBER" release
+        run: |
+          scripts/release/build-release.sh "$VERSION" "$BUILD_NUMBER" release
+          scripts/release/verify-release-assets.sh release "$VERSION" "$BUILD_NUMBER"
 
       - name: Attest canary assets
         if: steps.existing.outputs.exists != 'true'
@@ -138,6 +123,13 @@ jobs:
           subject-path: |
             release/Dictator-${{ steps.meta.outputs.version }}-universal.dmg
             release/SHA256SUMS.txt
+
+      - name: Ensure canary tag
+        if: steps.existing.outputs.exists != 'true'
+        env:
+          SHA: ${{ steps.meta.outputs.sha }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: scripts/release/ensure-release-tag.sh "$TAG" "$SHA"
 
       - name: Publish canary release
         if: steps.existing.outputs.exists != 'true'

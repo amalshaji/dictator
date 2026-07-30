@@ -65,5 +65,6 @@ jobs:
           grep -q 'auto_updates true' <<<"$cask"
           grep -q 'com.apple.quarantine' <<<"$cask"
           Tests/ReleaseScripts/test-build-number.sh
+          Tests/ReleaseScripts/test-release-workflows.sh
           scripts/release/download-sparkle-tools.sh "$RUNNER_TEMP/sparkle"
           Tests/ReleaseScripts/test-release-scripts.sh "$RUNNER_TEMP/sparkle/bin"

@@ -11,6 +11,15 @@ assert_fails() {
   fi
 }
 
+assert_fails_in() {
+  local directory=$1
+  shift
+  if (cd "$directory" && "$@") >/dev/null 2>&1; then
+    echo "Expected command to fail in $directory: $*" >&2
+    exit 1
+  fi
+}
+
 commit_count=$(git rev-list --count --first-parent HEAD)
 canary_build=$(scripts/release/build-number.sh canary HEAD)
 stable_build=$(scripts/release/build-number.sh stable HEAD)
@@ -70,7 +79,8 @@ assert_fails scripts/release/release-metadata.sh from-tag preview-1.2.3 false
 assert_fails scripts/release/release-metadata.sh from-ref preview HEAD
 
 test_repo=$(mktemp -d)
-trap 'rm -rf "$test_repo"' EXIT
+tag_remote=$(mktemp -d)
+trap 'rm -rf "$test_repo" "$tag_remote"' EXIT
 git -C "$test_repo" init -q
 git -C "$test_repo" config user.name "Release Tests"
 git -C "$test_repo" config user.email release-tests@example.com
@@ -88,6 +98,7 @@ canary_tag="canary-1.0.0-b4-$second_short_sha"
 git -C "$test_repo" tag "$canary_tag"
 printf third > "$test_repo/file"
 git -C "$test_repo" commit -qam third
+third_commit=$(git -C "$test_repo" rev-parse HEAD)
 
 test "$(cd "$test_repo" &&
   "$repo_root/scripts/release/previous-release-tag.sh" canary HEAD)" = "$canary_tag"
@@ -105,3 +116,26 @@ expired=$(printf '%s\n' \
   scripts/release/select-expired-canaries.sh 2)
 test "$expired" = canary-1.0.0-b8-11111111
 assert_fails scripts/release/select-expired-canaries.sh 0
+
+git -C "$tag_remote" init --bare -q
+git -C "$test_repo" remote add origin "$tag_remote"
+git -C "$test_repo" push -q origin HEAD:main
+
+(cd "$test_repo" &&
+  "$repo_root/scripts/release/ensure-release-tag.sh" v2.0.0 "$third_commit")
+test "$(git -C "$tag_remote" rev-list -n 1 v2.0.0)" = "$third_commit"
+test "$(git -C "$tag_remote" cat-file -t refs/tags/v2.0.0)" = tag
+(cd "$test_repo" &&
+  "$repo_root/scripts/release/ensure-release-tag.sh" v2.0.0 "$third_commit")
+
+git -C "$test_repo" tag v2.0.1 "$first_commit"
+git -C "$test_repo" push -q origin v2.0.1
+assert_fails_in "$test_repo" \
+  "$repo_root/scripts/release/ensure-release-tag.sh" v2.0.1 "$third_commit"
+
+git -C "$test_repo" tag v2.0.2 "$third_commit"
+git -C "$test_repo" push -q origin v2.0.2
+assert_fails_in "$test_repo" \
+  "$repo_root/scripts/release/ensure-release-tag.sh" v2.0.2 "$third_commit"
+assert_fails_in "$test_repo" \
+  "$repo_root/scripts/release/ensure-release-tag.sh" unsupported "$third_commit"
