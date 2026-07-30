@@ -83,7 +83,7 @@ Every successful CI run for a push to `main` publishes an immutable GitHub prere
 
 Stable releases remain review-gated:
 
-1. Manually run **Build stable release** from `main` and choose `patch`, `minor`, `major`, or `explicit`. When choosing `explicit`, also enter the exact semantic version in the explicit-version field.
+1. Manually run **Build stable release** from `main` and choose `patch`, `minor`, `major`, or `explicit`. When choosing `explicit`, also enter the exact semantic version in the `explicit_version` input.
 2. The workflow validates the choice, creates a version-only release PR, and resolves the release identity from its candidate commit. If an earlier run already merged an unfinished version, the workflow safely reuses it instead of applying another bump.
 3. The workflow builds, verifies, and attests the universal DMG and checksum without creating a tag. Approve the generated release PR, review the completed preparation job, then approve its `stable-release` environment deployment.
 4. Finalization squash-merges the approved PR, proves the merged tree, version, and build match the verified artifacts, then creates the annotated `v<version>` tag and public GitHub Release. It subsequently signs and deploys the Sparkle appcast and bootstraps or updates `Casks/dictator.rb` in [`amalshaji/homebrew-taps`](https://github.com/amalshaji/homebrew-taps).
