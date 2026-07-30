@@ -25,6 +25,18 @@ assert_absent() {
   fi
 }
 
+assert_count() {
+  local file=$1
+  local pattern=$2
+  local expected=$3
+  local actual
+  actual=$(grep -cF "$pattern" "$file" || true)
+  if [[ $actual -ne $expected ]]; then
+    echo "Expected $file to contain '$pattern' $expected time(s), found $actual" >&2
+    exit 1
+  fi
+}
+
 assert_before() {
   local file=$1
   local first=$2
@@ -37,6 +49,16 @@ assert_before() {
     echo "Expected '$first' before '$second' in $file" >&2
     exit 1
   fi
+}
+
+job_block() {
+  local file=$1
+  local job=$2
+  awk -v heading="  $job:" '
+    $0 == heading { inside = 1; next }
+    inside && /^  [a-zA-Z0-9_-]+:$/ { exit }
+    inside { print }
+  ' "$file"
 }
 
 if [[ -e .github/workflows/tag-on-merge.yml ]]; then
@@ -54,9 +76,42 @@ assert_contains "$stable" '^    environment: stable-release$'
 assert_contains "$stable" '^  publish:$'
 assert_contains "$stable" '^    needs: finalize$'
 assert_contains "$stable" 'uses: ./\.github/workflows/release-published\.yml'
-assert_before "$stable" 'Build release assets' 'Ensure release tag'
-assert_before "$stable" 'Attest release assets' 'Ensure release tag'
-assert_before "$stable" 'Stage verified release assets' 'Ensure release tag'
+assert_count "$stable" 'scripts/release/validate-stable-candidate.sh' 2
+assert_count "$stable" 'scripts/release/release-tag.sh ensure' 1
+assert_count "$stable" 'scripts/release/publish-github-release.sh' 1
+assert_before "$stable" 'scripts/release/build-release.sh' 'scripts/release/release-tag.sh ensure'
+assert_before "$stable" 'actions/attest-build-provenance@' 'scripts/release/release-tag.sh ensure'
+assert_before "$stable" 'actions/upload-artifact@' 'scripts/release/release-tag.sh ensure'
+prepare_job=$(job_block "$stable" prepare)
+finalize_job=$(job_block "$stable" finalize)
+grep -q '^      contents: read$' <<<"$prepare_job"
+if grep -q 'contents: write\|release-tag\.sh ensure\|gh release' <<<"$prepare_job"; then
+  echo "Stable preparation must not have release mutation capabilities" >&2
+  exit 1
+fi
+grep -q '^    needs: prepare$' <<<"$finalize_job"
+grep -q '^    environment: stable-release$' <<<"$finalize_job"
+grep -q '^      contents: write$' <<<"$finalize_job"
+grep -q 'release-tag\.sh ensure' <<<"$finalize_job"
+grep -q 'publish-github-release\.sh' <<<"$finalize_job"
 
-assert_before "$canary" 'Build canary assets' 'Ensure canary tag'
-assert_before "$canary" 'Attest canary assets' 'Ensure canary tag'
+assert_count "$canary" 'scripts/release/release-tag.sh verify' 1
+assert_count "$canary" 'scripts/release/release-tag.sh ensure' 1
+# shellcheck disable=SC2016
+assert_before "$canary" 'scripts/release/verify-release-assets.sh "$assets"' \
+  'scripts/release/release-tag.sh verify'
+assert_before "$canary" 'scripts/release/build-release.sh' \
+  'scripts/release/release-tag.sh ensure'
+assert_before "$canary" 'actions/attest-build-provenance@' \
+  'scripts/release/release-tag.sh ensure'
+
+for workflow in .github/workflows/ci.yml "$stable" "$canary"; do
+  assert_absent "$workflow" 'brew install xcodegen'
+done
+assert_contains .github/workflows/ci.yml 'scripts/xcodegen.sh --version'
+assert_contains .github/workflows/ci.yml 'scripts/xcodegen.sh generate'
+assert_contains scripts/release/build-release.sh 'scripts/xcodegen.sh generate'
+# shellcheck disable=SC2016
+assert_absent AGENTS.md '`xcodegen generate`'
+# shellcheck disable=SC2016
+assert_contains AGENTS.md '`scripts/xcodegen\.sh generate`'

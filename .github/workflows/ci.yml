@@ -18,10 +18,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install XcodeGen
-        run: |
-          brew install xcodegen
-          xcodegen --version
+      - name: Install pinned XcodeGen
+        run: scripts/xcodegen.sh --version
 
       - name: Validate release version
         env:
@@ -42,7 +40,7 @@ jobs:
 
       - name: Generate project
         run: |
-          xcodegen generate
+          scripts/xcodegen.sh generate
           git diff --exit-code -- Dictator.xcodeproj/project.pbxproj
 
       - name: Build and test
@@ -65,6 +63,10 @@ jobs:
           grep -q 'auto_updates true' <<<"$cask"
           grep -q 'com.apple.quarantine' <<<"$cask"
           Tests/ReleaseScripts/test-build-number.sh
+          Tests/ReleaseScripts/test-release-tags.sh
+          Tests/ReleaseScripts/test-stable-candidate.sh
+          Tests/ReleaseScripts/test-publish-github-release.sh
+          Tests/ReleaseScripts/test-xcodegen-wrapper.sh
           Tests/ReleaseScripts/test-release-workflows.sh
           scripts/release/download-sparkle-tools.sh "$RUNNER_TEMP/sparkle"
           Tests/ReleaseScripts/test-release-scripts.sh "$RUNNER_TEMP/sparkle/bin"

@@ -54,10 +54,12 @@ Only run that command for the checksum-verified artifact downloaded from the off
 ## Build and test
 
 ```sh
-xcodegen generate
+scripts/xcodegen.sh generate
 xcodebuild -project Dictator.xcodeproj -scheme Dictator -configuration Debug -destination 'platform=macOS' build
 xcodebuild -project Dictator.xcodeproj -scheme Dictator -configuration Debug -destination 'platform=macOS' test
 ```
+
+The project wrapper downloads and checksum-verifies the repository-pinned XcodeGen version on first use.
 
 Live integration tests read provider keys from `.env` and skip providers that are not configured. Every configured STT provider receives the same `Tests/Fixtures/reference.wav` input.
 

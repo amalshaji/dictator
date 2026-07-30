@@ -86,7 +86,6 @@ jobs:
 
           [[ $(jq -r .isDraft <<<"$release") == false ]]
           [[ $(jq -r .isPrerelease <<<"$release") == true ]]
-          scripts/release/ensure-release-tag.sh "$TAG" "$SHA"
           expected_assets=$(printf '%s\n%s\n' "Dictator-${VERSION}-universal.dmg" SHA256SUMS.txt | sort)
           actual_assets=$(jq -r '.assets[].name' <<<"$release" | sort)
           if [[ "$actual_assets" != "$expected_assets" ]]; then
@@ -98,14 +97,13 @@ jobs:
           mkdir -p "$assets"
           gh release download "$TAG" --dir "$assets"
           scripts/release/verify-release-assets.sh "$assets" "$VERSION" "$BUILD_NUMBER"
+          scripts/release/release-tag.sh verify "$TAG" "$SHA"
 
           echo "exists=true" >> "$GITHUB_OUTPUT"
 
-      - name: Install XcodeGen
+      - name: Install pinned XcodeGen
         if: steps.existing.outputs.exists != 'true'
-        run: |
-          brew install xcodegen
-          xcodegen --version
+        run: scripts/xcodegen.sh --version
 
       - name: Build canary assets
         if: steps.existing.outputs.exists != 'true'
@@ -129,7 +127,7 @@ jobs:
         env:
           SHA: ${{ steps.meta.outputs.sha }}
           TAG: ${{ steps.meta.outputs.tag }}
-        run: scripts/release/ensure-release-tag.sh "$TAG" "$SHA"
+        run: scripts/release/release-tag.sh ensure "$TAG" "$SHA"
 
       - name: Publish canary release
         if: steps.existing.outputs.exists != 'true'
