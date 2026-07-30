@@ -1,77 +1,75 @@
-name: Build draft release
+name: Build stable release
 
 on:
-  push:
-    tags: ['v*']
   workflow_dispatch:
     inputs:
-      tag:
-        description: Existing release tag to build
+      ref:
+        description: Main commit or ref to release
         required: true
+        default: main
         type: string
 
-permissions:
-  contents: write
-  id-token: write
-  attestations: write
+permissions: {}
 
 concurrency:
-  group: draft-release-${{ github.ref_name || inputs.tag }}
+  group: stable-release
   cancel-in-progress: false
+  queue: max
 
 jobs:
-  publish:
+  prepare:
     runs-on: macos-26
-    environment: release
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+    outputs:
+      artifact: ${{ steps.meta.outputs.artifact }}
+      build: ${{ steps.meta.outputs.build }}
+      sha: ${{ steps.meta.outputs.sha }}
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
     steps:
-      - name: Resolve tag
-        id: meta
-        env:
-          DISPATCH_TAG: ${{ inputs.tag }}
-        run: |
-          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
-            tag="$GITHUB_REF_NAME"
-          else
-            tag="$DISPATCH_TAG"
-          fi
-          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Invalid tag: $tag" >&2
-            exit 1
-          fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
-
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ steps.meta.outputs.tag }}
+          ref: ${{ inputs.ref }}
           fetch-depth: 0
 
-      - name: Reject an existing release
+      - name: Resolve stable release identity
+        id: meta
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.meta.outputs.tag }}
         run: |
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists; refusing to replace its assets" >&2
+          if [[ "$GITHUB_REF" != refs/heads/main ]]; then
+            echo "Stable releases must use the workflow from main: $GITHUB_REF" >&2
             exit 1
           fi
 
-      - name: Install XcodeGen
-        run: |
-          brew install xcodegen
-          xcodegen --version
+          sha=$(git rev-parse HEAD)
+          metadata=$(scripts/release/release-metadata.sh from-ref stable "$sha")
+          IFS=$'\t' read -r channel _ version build _ tag <<<"$metadata"
+          [[ "$channel" == stable ]]
+          scripts/release/validate-stable-candidate.sh "$sha" "$version" "$tag"
+
+          artifact="stable-release-${version}-${sha:0:8}"
+          {
+            echo "artifact=$artifact"
+            echo "build=$build"
+            echo "sha=$sha"
+            echo "tag=$tag"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install pinned XcodeGen
+        run: scripts/xcodegen.sh --version
 
       - name: Build release assets
         env:
-          TAG: ${{ steps.meta.outputs.tag }}
+          BUILD_NUMBER: ${{ steps.meta.outputs.build }}
           VERSION: ${{ steps.meta.outputs.version }}
         run: |
-          metadata=$(scripts/release/release-metadata.sh from-ref stable HEAD)
-          IFS=$'\t' read -r channel _ resolved_version build_number _ resolved_tag <<<"$metadata"
-          [[ "$channel" == stable ]]
-          [[ "$resolved_tag" == "$TAG" ]]
-          [[ "$resolved_version" == "$VERSION" ]]
-          scripts/release/build-release.sh "$VERSION" "$build_number" release
+          scripts/release/build-release.sh "$VERSION" "$BUILD_NUMBER" release
+          scripts/release/verify-release-assets.sh release "$VERSION" "$BUILD_NUMBER"
 
       - name: Attest release assets
         uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
@@ -80,22 +78,77 @@ jobs:
             release/Dictator-${{ steps.meta.outputs.version }}-universal.dmg
             release/SHA256SUMS.txt
 
-      - name: Create draft GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.meta.outputs.tag }}
-          VERSION: ${{ steps.meta.outputs.version }}
-        run: |
-          previous_tag=$(scripts/release/previous-release-tag.sh stable HEAD)
-          notes_arguments=(--generate-notes)
-          if [[ -n "$previous_tag" ]]; then
-            notes_arguments+=(--notes-start-tag "$previous_tag")
-          fi
+      - name: Stage verified release assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.meta.outputs.artifact }}
+          path: |
+            release/Dictator-${{ steps.meta.outputs.version }}-universal.dmg
+            release/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 7
 
-          gh release create "$TAG" \
-            "release/Dictator-${VERSION}-universal.dmg" \
-            release/SHA256SUMS.txt \
-            --verify-tag \
-            --draft \
-            --title "$TAG" \
-            "${notes_arguments[@]}"
+  finalize:
+    needs: prepare
+    runs-on: macos-15
+    environment: stable-release
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ needs.prepare.outputs.tag }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          fetch-depth: 0
+
+      - name: Download verified release assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ needs.prepare.outputs.artifact }}
+          path: release
+
+      - name: Revalidate release candidate
+        env:
+          BUILD_NUMBER: ${{ needs.prepare.outputs.build }}
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ needs.prepare.outputs.sha }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          [[ $(git rev-parse HEAD) == "$SHA" ]]
+          metadata=$(scripts/release/release-metadata.sh from-ref stable HEAD)
+          IFS=$'\t' read -r channel _ version build _ tag <<<"$metadata"
+          [[ "$channel" == stable ]]
+          [[ "$version" == "$VERSION" ]]
+          [[ "$build" == "$BUILD_NUMBER" ]]
+          [[ "$tag" == "$TAG" ]]
+          scripts/release/validate-stable-candidate.sh "$SHA" "$VERSION" "$TAG"
+          scripts/release/verify-release-assets.sh release "$VERSION" "$BUILD_NUMBER"
+
+      - name: Ensure release tag
+        env:
+          SHA: ${{ needs.prepare.outputs.sha }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: scripts/release/release-tag.sh ensure "$TAG" "$SHA"
+
+      - name: Create or finish GitHub Release
+        env:
+          BUILD_NUMBER: ${{ needs.prepare.outputs.build }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: >-
+          scripts/release/publish-github-release.sh
+          release "$VERSION" "$BUILD_NUMBER" "$TAG" HEAD
+
+  publish:
+    needs: finalize
+    permissions:
+      contents: write
+      id-token: write
+      pages: write
+    uses: ./.github/workflows/release-published.yml
+    with:
+      tag: ${{ needs.finalize.outputs.tag }}
+    secrets: inherit

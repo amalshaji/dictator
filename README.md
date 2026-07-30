@@ -54,10 +54,12 @@ Only run that command for the checksum-verified artifact downloaded from the off
 ## Build and test
 
 ```sh
-xcodegen generate
+scripts/xcodegen.sh generate
 xcodebuild -project Dictator.xcodeproj -scheme Dictator -configuration Debug -destination 'platform=macOS' build
 xcodebuild -project Dictator.xcodeproj -scheme Dictator -configuration Debug -destination 'platform=macOS' test
 ```
+
+The project wrapper downloads and checksum-verifies the repository-pinned XcodeGen version on first use.
 
 Live integration tests read provider keys from `.env` and skip providers that are not configured. Every configured STT provider receives the same `Tests/Fixtures/reference.wav` input.
 
@@ -83,9 +85,11 @@ Stable releases remain review-gated:
 
 1. Bump `MARKETING_VERSION` in `project.yml`.
 2. Open a PR, apply the `release` label, and merge it into `main` after CI passes.
-3. The merge creates `v<version>` and builds a draft GitHub Release containing the universal DMG, checksum, and provenance attestation.
-4. Review and publish the draft release.
-5. Publication signs and deploys the Sparkle appcast to the `gh-pages` branch and bootstraps or updates `Casks/dictator.rb` in [`amalshaji/homebrew-taps`](https://github.com/amalshaji/homebrew-taps).
+3. Manually run **Build stable release** from `main`, using `main` or the exact release merge commit as the `ref` input.
+4. The workflow builds, verifies, and attests the universal DMG and checksum without creating a tag. Review the completed preparation job, then approve its `stable-release` environment deployment.
+5. Finalization reverifies the staged assets, creates the annotated `v<version>` tag and public GitHub Release, then signs and deploys the Sparkle appcast and bootstraps or updates `Casks/dictator.rb` in [`amalshaji/homebrew-taps`](https://github.com/amalshaji/homebrew-taps).
+
+Create a protected GitHub environment named `stable-release` with the repository owner as its required reviewer, self-review allowed, deployments restricted to `main`, and no secrets. A failed or expired preparation creates no tag; rerun the stable workflow from the same ref. If only update-channel publication fails after the release is public, repair it with the **Publish update channels** workflow and the same tag.
 
 Configure a protected GitHub environment named `release` with:
 

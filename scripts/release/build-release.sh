@@ -24,7 +24,7 @@ if [[ $version != "$project_version" && $version != "$project_version-canary.$bu
   exit 1
 fi
 
-xcodegen generate
+scripts/xcodegen.sh generate
 xcodebuild -resolvePackageDependencies -project Dictator.xcodeproj -scheme Dictator
 xcodebuild \
   -project Dictator.xcodeproj \

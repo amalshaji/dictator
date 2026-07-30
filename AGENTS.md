@@ -6,12 +6,12 @@ Dictator is a Swift 6 macOS 14+ app generated with XcodeGen. Application and Swi
 
 ## Build, Test, and Development Commands
 
-- `xcodegen generate` regenerates `Dictator.xcodeproj` after editing `project.yml`.
+- `scripts/xcodegen.sh generate` regenerates `Dictator.xcodeproj` with the repository-pinned XcodeGen version after editing `project.yml`.
 - `xcodebuild -project Dictator.xcodeproj -scheme Dictator -configuration Debug -destination 'platform=macOS' build` compiles the app and core framework.
 - `xcodebuild -project Dictator.xcodeproj -scheme Dictator -configuration Debug -destination 'platform=macOS' test` runs all unit and integration test targets.
 - `open Dictator.xcodeproj` opens the generated project for local development and signing.
 
-Run XcodeGen whenever targets, resources, entitlements, or build settings change. Do not hand-edit generated project settings when `project.yml` can express the change.
+Run the pinned XcodeGen wrapper whenever targets, resources, entitlements, or build settings change. Do not hand-edit generated project settings when `project.yml` can express the change.
 
 ## Coding Style & Naming Conventions
 
