@@ -53,6 +53,30 @@ final class HotkeyLifecycleControllerTests: XCTestCase {
         XCTAssertFalse(model.shortcutsAvailable)
     }
 
+    func testWakeResetsAudioRecorderWhenNoDictationIsActive() throws {
+        let notifications = NotificationCenter()
+        let hotkey = TestHotkeyMonitor(isRunning: true)
+        let controller = HotkeyLifecycleController(
+            monitor: hotkey,
+            notificationCenter: notifications
+        )
+        let recorder = LifecycleAudioRecorder()
+        let (model, defaults, suiteName) = try makeModel(
+            hotkeys: controller,
+            recorder: recorder
+        )
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        XCTAssertEqual(model.phase, .idle)
+
+        notifications.post(
+            name: NSWorkspace.didWakeNotification,
+            object: NSWorkspace.shared
+        )
+
+        XCTAssertEqual(recorder.cancelCount, 1)
+        XCTAssertEqual(controller.state, .available)
+    }
+
     func testRepeatedSleepWakeCyclesResetHeldStateAndPreserveAllCallbacks() {
         let notifications = NotificationCenter()
         let hotkey = TestHotkeyMonitor(

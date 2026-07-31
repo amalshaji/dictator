@@ -327,7 +327,50 @@ final class AppBehaviorTests: XCTestCase {
 
         await fulfillment(of: [restarted], timeout: 1)
         XCTAssertEqual(session.startCount, 2)
-        XCTAssertEqual(session.stopCount, 0)
+        XCTAssertEqual(session.stopCount, 1)
+    }
+
+    func testAudioRecorderInvalidatesIdleEngineAfterConfigurationChange() async {
+        let notificationCenter = NotificationCenter()
+        let session = TestAudioEngineSession()
+        let recorder = AudioRecorder(
+            session: session,
+            notificationCenter: notificationCenter
+        )
+
+        notificationCenter.post(
+            name: .AVAudioEngineConfigurationChange,
+            object: session.configurationChangeSourceObject
+        )
+        await Task.yield()
+
+        XCTAssertEqual(session.stopCount, 1)
+        XCTAssertEqual(session.startCount, 0)
+        withExtendedLifetime(recorder) {}
+    }
+
+    func testAudioRecorderObservesConfigurationChangesFromReplacementEngine() async throws {
+        let notificationCenter = NotificationCenter()
+        let session = TestAudioEngineSession()
+        let recorder = AudioRecorder(
+            session: session,
+            notificationCenter: notificationCenter
+        )
+        let restarted = expectation(description: "Replacement audio engine restarted")
+        session.onStart = {
+            if session.startCount == 2 {
+                restarted.fulfill()
+            }
+        }
+
+        try recorder.start()
+        notificationCenter.post(
+            name: .AVAudioEngineConfigurationChange,
+            object: TestAudioConfigurationSource()
+        )
+
+        await fulfillment(of: [restarted], timeout: 1)
+        XCTAssertEqual(session.stopCount, 1)
     }
 
     func testAudioRecorderRetriesTransientConfigurationRecoveryFailure() async throws {
@@ -348,7 +391,7 @@ final class AppBehaviorTests: XCTestCase {
         }
         notificationCenter.post(
             name: .AVAudioEngineConfigurationChange,
-            object: session.configurationChangeSource
+            object: session.configurationChangeSourceObject
         )
 
         await fulfillment(of: [restarted], timeout: 1)
@@ -367,12 +410,12 @@ final class AppBehaviorTests: XCTestCase {
         _ = recorder.stop()
         notificationCenter.post(
             name: .AVAudioEngineConfigurationChange,
-            object: session.configurationChangeSource
+            object: session.configurationChangeSourceObject
         )
         await Task.yield()
 
         XCTAssertEqual(session.startCount, 1)
-        XCTAssertEqual(session.stopCount, 1)
+        XCTAssertEqual(session.stopCount, 2)
     }
 
     func testAppActivationRefreshesPermissionFromOutsideMainActor() async throws {
@@ -943,7 +986,6 @@ private final class TestAudioRecorder: AudioRecording {
 @MainActor
 private final class TestAudioEngineSession: AudioEngineSession {
     let configurationChangeSourceObject = TestAudioConfigurationSource()
-    var configurationChangeSource: AnyObject { configurationChangeSourceObject }
     var onStart: (() -> Void)?
     var startFailuresRemaining = 0
     private(set) var startCount = 0
