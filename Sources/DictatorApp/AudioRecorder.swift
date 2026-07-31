@@ -14,6 +14,8 @@ protocol AudioRecording: AnyObject {
 
 @MainActor
 protocol AudioEngineSession: AnyObject {
+    var configurationChangeSourceIdentifier: ObjectIdentifier { get }
+
     func start(
         tapHandler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
     ) throws
@@ -24,6 +26,10 @@ protocol AudioEngineSession: AnyObject {
 private final class SystemAudioEngineSession: AudioEngineSession {
     private var engine = AVAudioEngine()
     private var hasInstalledTap = false
+
+    var configurationChangeSourceIdentifier: ObjectIdentifier {
+        ObjectIdentifier(engine)
+    }
 
     func start(
         tapHandler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
@@ -84,9 +90,14 @@ final class AudioRecorder: AudioRecording {
             forName: .AVAudioEngineConfigurationChange,
             object: nil,
             queue: nil
-        ) { [weak self] _ in
+        ) { [weak self] notification in
+            guard let source = notification.object else { return }
+            let sourceIdentifier = ObjectIdentifier(source as AnyObject)
             Task { @MainActor [weak self] in
-                self?.recoverAfterConfigurationChange()
+                guard let self,
+                      self.session.configurationChangeSourceIdentifier == sourceIdentifier
+                else { return }
+                self.recoverAfterConfigurationChange()
             }
         }
     }
