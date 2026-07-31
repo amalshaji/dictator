@@ -176,6 +176,14 @@ final class AppModel: ObservableObject {
             guard let self, phase == .listening else { return }
             cancelDictation()
         }
+        hotkeys.onDidWake = { [weak self] in
+            guard let self else { return }
+            if phase == .listening {
+                cancelDictation()
+            } else {
+                recorder.cancel()
+            }
+        }
         hotkeys.onStateChange = { [weak self] state in self?.applyHotkeyState(state) }
         if !runningTests {
             if onboardingComplete { requestRequiredPermissions() }

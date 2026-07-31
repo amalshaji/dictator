@@ -37,6 +37,7 @@ final class HotkeyLifecycleController {
         set { monitor.onOpenClipboard = newValue }
     }
     var onWillSleep: (() -> Void)?
+    var onDidWake: (() -> Void)?
     var onStateChange: ((HotkeyLifecycleState) -> Void)? {
         didSet { onStateChange?(state) }
     }
@@ -116,6 +117,7 @@ final class HotkeyLifecycleController {
 
     private func recoverAfterWake() {
         cancelRecovery()
+        onDidWake?()
         monitor.stop()
         state = .stopped
         recoverIfNeeded()

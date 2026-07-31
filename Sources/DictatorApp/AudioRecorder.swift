@@ -14,7 +14,7 @@ protocol AudioRecording: AnyObject {
 
 @MainActor
 protocol AudioEngineSession: AnyObject {
-    var configurationChangeSource: AnyObject { get }
+    var configurationChangeSourceIdentifier: ObjectIdentifier { get }
 
     func start(
         tapHandler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
@@ -24,32 +24,49 @@ protocol AudioEngineSession: AnyObject {
 
 @MainActor
 private final class SystemAudioEngineSession: AudioEngineSession {
-    private let engine = AVAudioEngine()
+    private var engine = AVAudioEngine()
+    private var hasInstalledTap = false
 
-    var configurationChangeSource: AnyObject { engine }
+    var configurationChangeSourceIdentifier: ObjectIdentifier {
+        ObjectIdentifier(engine)
+    }
 
     func start(
         tapHandler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
     ) throws {
+        replaceEngine()
         let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)
-        guard format.sampleRate > 0, format.channelCount > 0 else {
+        let hardwareFormat = input.inputFormat(forBus: 0)
+        guard hardwareFormat.sampleRate > 0, hardwareFormat.channelCount > 0 else {
             throw AudioRecorderError.noInput
         }
-        input.removeTap(onBus: 0)
         input.installTap(
             onBus: 0,
             bufferSize: 1_024,
-            format: format,
+            format: nil,
             block: tapHandler
         )
+        hasInstalledTap = true
         engine.prepare()
-        try engine.start()
+        do {
+            try engine.start()
+        } catch {
+            replaceEngine()
+            throw error
+        }
     }
 
     func stop() {
-        engine.inputNode.removeTap(onBus: 0)
+        replaceEngine()
+    }
+
+    private func replaceEngine() {
+        if hasInstalledTap {
+            engine.inputNode.removeTap(onBus: 0)
+            hasInstalledTap = false
+        }
         engine.stop()
+        engine = AVAudioEngine()
     }
 }
 
@@ -71,11 +88,16 @@ final class AudioRecorder: AudioRecording {
         self.notificationCenter = notificationCenter
         configurationChangeObserver = notificationCenter.addObserver(
             forName: .AVAudioEngineConfigurationChange,
-            object: session.configurationChangeSource,
+            object: nil,
             queue: nil
-        ) { [weak self] _ in
+        ) { [weak self] notification in
+            guard let source = notification.object else { return }
+            let sourceIdentifier = ObjectIdentifier(source as AnyObject)
             Task { @MainActor [weak self] in
-                self?.recoverAfterConfigurationChange()
+                guard let self,
+                      self.session.configurationChangeSourceIdentifier == sourceIdentifier
+                else { return }
+                self.recoverAfterConfigurationChange()
             }
         }
     }
@@ -141,6 +163,7 @@ final class AudioRecorder: AudioRecording {
     }
 
     private func recoverAfterConfigurationChange() {
+        session.stop()
         guard isRecording else { return }
         recoveryTask?.cancel()
         recoveryTask = Task { @MainActor [weak self] in
