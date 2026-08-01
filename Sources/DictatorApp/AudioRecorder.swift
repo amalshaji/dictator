@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreMedia
 import DictatorCore
 import Foundation
 
@@ -7,87 +8,203 @@ protocol AudioRecording: AnyObject {
     var onLevel: (@Sendable (Double) -> Void)? { get set }
 
     func requestPermission() async -> Bool
-    func start() throws
-    func stop() -> RecordedAudio
+    func start() async throws
+    func stop() async -> RecordedAudio
     func cancel()
 }
 
-@MainActor
-protocol AudioEngineSession: AnyObject {
-    var configurationChangeSourceIdentifier: ObjectIdentifier { get }
+protocol AudioCaptureSession: AnyObject, Sendable {
+    var recoveryNotification: Notification.Name { get }
+    var recoverySourceIdentifier: ObjectIdentifier? { get }
 
     func start(
         tapHandler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
-    ) throws
-    func stop()
+    ) async throws
+    func stop() async
+    func cancel()
 }
 
-@MainActor
-private final class SystemAudioEngineSession: AudioEngineSession {
-    private var engine = AVAudioEngine()
-    private var hasInstalledTap = false
+final class SystemAudioCaptureSession: AudioCaptureSession, @unchecked Sendable {
+    static var audioSettings: [String: Any] {
+        [
+            AVFormatIDKey: Int(kAudioFormatLinearPCM),
+            AVLinearPCMBitDepthKey: 32,
+            AVLinearPCMIsFloatKey: true,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsNonInterleaved: true
+        ]
+    }
 
-    var configurationChangeSourceIdentifier: ObjectIdentifier {
-        ObjectIdentifier(engine)
+    // AVCaptureSession and its attachments are accessed only on this queue.
+    private let lifecycleQueue = DispatchQueue(label: "ai.dictator.audio-capture.lifecycle")
+    private let recoverySourceLock = NSLock()
+    private var session: AVCaptureSession?
+    private var output: AVCaptureAudioDataOutput?
+    private var outputDelegate: AudioSampleBufferDelegate?
+    private var currentRecoverySourceIdentifier: ObjectIdentifier?
+    private let sampleQueue = DispatchQueue(label: "ai.dictator.audio-capture.samples")
+
+    var recoveryNotification: Notification.Name {
+        AVCaptureSession.runtimeErrorNotification
+    }
+
+    var recoverySourceIdentifier: ObjectIdentifier? {
+        recoverySourceLock.withLock { currentRecoverySourceIdentifier }
     }
 
     func start(
         tapHandler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
-    ) throws {
-        replaceEngine()
-        let input = engine.inputNode
-        let hardwareFormat = input.inputFormat(forBus: 0)
-        guard hardwareFormat.sampleRate > 0, hardwareFormat.channelCount > 0 else {
-            throw AudioRecorderError.noInput
+    ) async throws {
+        try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<Void, Error>) in
+            lifecycleQueue.async { [self] in
+                do {
+                    try startOnLifecycleQueue(tapHandler: tapHandler)
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
         }
-        input.installTap(
-            onBus: 0,
-            bufferSize: 1_024,
-            format: nil,
-            block: tapHandler
-        )
-        hasInstalledTap = true
-        engine.prepare()
+    }
+
+    func stop() async {
+        setRecoverySourceIdentifier(nil)
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            lifecycleQueue.async { [self] in
+                replaceSessionOnLifecycleQueue()
+                sampleQueue.async { continuation.resume() }
+            }
+        }
+    }
+
+    func cancel() {
+        setRecoverySourceIdentifier(nil)
+        lifecycleQueue.async { [self] in replaceSessionOnLifecycleQueue() }
+    }
+
+    private func startOnLifecycleQueue(
+        tapHandler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
+    ) throws {
+        replaceSessionOnLifecycleQueue()
+        let session = AVCaptureSession()
+        self.session = session
+        setRecoverySourceIdentifier(ObjectIdentifier(session))
         do {
-            try engine.start()
+            try configureAndStart(session, tapHandler: tapHandler)
         } catch {
-            replaceEngine()
+            replaceSessionOnLifecycleQueue()
             throw error
         }
     }
 
-    func stop() {
-        replaceEngine()
+    private func configureAndStart(
+        _ session: AVCaptureSession,
+        tapHandler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
+    ) throws {
+        guard let device = AVCaptureDevice.default(for: .audio) else {
+            throw AudioRecorderError.noInput
+        }
+        let input = try AVCaptureDeviceInput(device: device)
+        let output = AVCaptureAudioDataOutput()
+        output.audioSettings = Self.audioSettings
+        let outputDelegate = AudioSampleBufferDelegate(tapHandler: tapHandler)
+        output.setSampleBufferDelegate(outputDelegate, queue: sampleQueue)
+
+        session.beginConfiguration()
+        guard session.canAddInput(input) else {
+            session.commitConfiguration()
+            throw AudioRecorderError.captureConfigurationFailed
+        }
+        session.addInput(input)
+        guard session.canAddOutput(output) else {
+            session.commitConfiguration()
+            throw AudioRecorderError.captureConfigurationFailed
+        }
+        session.addOutput(output)
+        session.commitConfiguration()
+        self.output = output
+        self.outputDelegate = outputDelegate
+        session.startRunning()
+        guard session.isRunning else {
+            throw AudioRecorderError.captureStartFailed
+        }
     }
 
-    private func replaceEngine() {
-        if hasInstalledTap {
-            engine.inputNode.removeTap(onBus: 0)
-            hasInstalledTap = false
-        }
-        engine.stop()
-        engine = AVAudioEngine()
+    private func replaceSessionOnLifecycleQueue() {
+        output?.setSampleBufferDelegate(nil, queue: nil)
+        if session?.isRunning == true { session?.stopRunning() }
+        output = nil
+        outputDelegate = nil
+        session = nil
+        setRecoverySourceIdentifier(nil)
+    }
+
+    private func setRecoverySourceIdentifier(_ identifier: ObjectIdentifier?) {
+        recoverySourceLock.withLock { currentRecoverySourceIdentifier = identifier }
+    }
+}
+
+private final class AudioSampleBufferDelegate: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate,
+    @unchecked Sendable
+{
+    private let tapHandler: @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
+
+    init(tapHandler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void) {
+        self.tapHandler = tapHandler
+    }
+
+    func captureOutput(
+        _ output: AVCaptureOutput,
+        didOutput sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection
+    ) {
+        guard let pcm = Self.pcmBuffer(from: sampleBuffer) else { return }
+        tapHandler(pcm, AVAudioTime(sampleTime: 0, atRate: pcm.format.sampleRate))
+    }
+
+    private static func pcmBuffer(from sampleBuffer: CMSampleBuffer) -> AVAudioPCMBuffer? {
+        let frameCount = CMSampleBufferGetNumSamples(sampleBuffer)
+        guard frameCount > 0, frameCount <= Int32.max,
+              let description = CMSampleBufferGetFormatDescription(sampleBuffer),
+              let streamDescription = CMAudioFormatDescriptionGetStreamBasicDescription(description),
+              let format = AVAudioFormat(streamDescription: streamDescription),
+              format.commonFormat == .pcmFormatFloat32,
+              let pcm = AVAudioPCMBuffer(
+                pcmFormat: format,
+                frameCapacity: AVAudioFrameCount(frameCount)
+              )
+        else { return nil }
+        let status = CMSampleBufferCopyPCMDataIntoAudioBufferList(
+            sampleBuffer,
+            at: 0,
+            frameCount: Int32(frameCount),
+            into: pcm.mutableAudioBufferList
+        )
+        guard status == noErr else { return nil }
+        pcm.frameLength = AVAudioFrameCount(frameCount)
+        return pcm
     }
 }
 
 @MainActor
 final class AudioRecorder: AudioRecording {
-    private let session: any AudioEngineSession
+    private let session: any AudioCaptureSession
     private let notificationCenter: NotificationCenter
     private let buffer = AudioBuffer()
-    private var configurationChangeObserver: NSObjectProtocol?
+    private var recoveryObserver: NSObjectProtocol?
     private var recoveryTask: Task<Void, Never>?
-    private var isRecording = false
+    private var activeRecordingID: UUID?
     var onLevel: (@Sendable (Double) -> Void)?
 
     init(
-        session: any AudioEngineSession = SystemAudioEngineSession(),
+        session: any AudioCaptureSession = SystemAudioCaptureSession(),
         notificationCenter: NotificationCenter = .default
     ) {
         self.session = session
         self.notificationCenter = notificationCenter
-        configurationChangeObserver = notificationCenter.addObserver(
-            forName: .AVAudioEngineConfigurationChange,
+        recoveryObserver = notificationCenter.addObserver(
+            forName: session.recoveryNotification,
             object: nil,
             queue: nil
         ) { [weak self] notification in
@@ -95,17 +212,17 @@ final class AudioRecorder: AudioRecording {
             let sourceIdentifier = ObjectIdentifier(source as AnyObject)
             Task { @MainActor [weak self] in
                 guard let self,
-                      self.session.configurationChangeSourceIdentifier == sourceIdentifier
+                      self.session.recoverySourceIdentifier == sourceIdentifier
                 else { return }
-                self.recoverAfterConfigurationChange()
+                self.recoverAfterRuntimeError()
             }
         }
     }
 
     isolated deinit {
         recoveryTask?.cancel()
-        if let configurationChangeObserver {
-            notificationCenter.removeObserver(configurationChangeObserver)
+        if let recoveryObserver {
+            notificationCenter.removeObserver(recoveryObserver)
         }
     }
 
@@ -113,23 +230,33 @@ final class AudioRecorder: AudioRecording {
         await AVCaptureDevice.requestAccess(for: .audio)
     }
 
-    func start() throws {
-        buffer.reset()
+    func start() async throws {
+        let recordingID = UUID()
+        buffer.begin(recordingID)
         recoveryTask?.cancel()
-        isRecording = true
+        activeRecordingID = recordingID
         do {
-            try session.start(tapHandler: makeTapHandler())
+            try await session.start(tapHandler: makeTapHandler(recordingID: recordingID))
         } catch {
-            isRecording = false
+            if activeRecordingID == recordingID {
+                activeRecordingID = nil
+                buffer.cancel(recordingID)
+            }
             throw error
         }
     }
 
-    func makeTapHandler() -> @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void {
+    func makeTapHandler(
+        recordingID: UUID? = nil
+    ) -> @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void {
         { [buffer, onLevel] pcm, _ in
             guard let processed = AudioRecorder.process(pcm) else { return }
+            guard buffer.appendResampled(
+                processed.samples,
+                sourceRate: pcm.format.sampleRate,
+                recordingID: recordingID
+            ) else { return }
             onLevel?(processed.normalizedLevel)
-            buffer.appendResampled(processed.samples, sourceRate: pcm.format.sampleRate)
         }
     }
 
@@ -150,27 +277,35 @@ final class AudioRecorder: AudioRecording {
         return (mono, normalizedLevel)
     }
 
-    func stop() -> RecordedAudio {
-        endSession()
-        let pcm = buffer.data()
+    func stop() async -> RecordedAudio {
+        let recordingID = endSession()
+        await session.stop()
+        let pcm = recordingID.map(buffer.finish) ?? Data()
         let duration = Double(pcm.count) / 2 / 16_000
         return RecordedAudio(wavData: WAVEncoder.encodePCM16(pcm), duration: duration)
     }
 
     func cancel() {
-        endSession()
-        buffer.reset()
+        let recordingID = endSession()
+        session.cancel()
+        if let recordingID {
+            buffer.cancel(recordingID)
+        }
     }
 
-    private func recoverAfterConfigurationChange() {
-        session.stop()
-        guard isRecording else { return }
+    private func recoverAfterRuntimeError() {
+        guard let recordingID = activeRecordingID else {
+            session.cancel()
+            return
+        }
         recoveryTask?.cancel()
         recoveryTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            while isRecording, !Task.isCancelled {
+            await session.stop()
+            while activeRecordingID == recordingID, !Task.isCancelled {
                 do {
-                    try session.start(tapHandler: makeTapHandler())
+                    try await session.start(tapHandler: makeTapHandler(recordingID: recordingID))
+                    guard activeRecordingID == recordingID else { return }
                     recoveryTask = nil
                     return
                 } catch {
@@ -181,22 +316,48 @@ final class AudioRecorder: AudioRecording {
         }
     }
 
-    private func endSession() {
-        isRecording = false
+    private func endSession() -> UUID? {
+        let recordingID = activeRecordingID
+        activeRecordingID = nil
         recoveryTask?.cancel()
         recoveryTask = nil
-        session.stop()
+        return recordingID
     }
 }
 
 private final class AudioBuffer: @unchecked Sendable {
     private let lock = NSLock()
     private var bytes = Data()
+    private var activeRecordingID: UUID?
 
-    func reset() { lock.withLock { bytes.removeAll(keepingCapacity: true) } }
-    func data() -> Data { lock.withLock { bytes } }
+    func begin(_ recordingID: UUID) {
+        lock.withLock {
+            activeRecordingID = recordingID
+            bytes.removeAll(keepingCapacity: true)
+        }
+    }
 
-    func appendResampled(_ samples: [Float], sourceRate: Double) {
+    func finish(_ recordingID: UUID) -> Data {
+        lock.withLock {
+            guard activeRecordingID == recordingID else { return Data() }
+            activeRecordingID = nil
+            return bytes
+        }
+    }
+
+    func cancel(_ recordingID: UUID) {
+        lock.withLock {
+            guard activeRecordingID == recordingID else { return }
+            activeRecordingID = nil
+            bytes.removeAll(keepingCapacity: true)
+        }
+    }
+
+    func appendResampled(
+        _ samples: [Float],
+        sourceRate: Double,
+        recordingID: UUID?
+    ) -> Bool {
         let ratio = sourceRate / 16_000
         let outputCount = max(1, Int(Double(samples.count) / ratio))
         var output = Data(capacity: outputCount * 2)
@@ -209,11 +370,24 @@ private final class AudioBuffer: @unchecked Sendable {
             var value = Int16(max(-1, min(1, sample)) * Float(Int16.max)).littleEndian
             output.append(Data(bytes: &value, count: 2))
         }
-        lock.withLock { bytes.append(output) }
+        return lock.withLock {
+            guard recordingID == nil || activeRecordingID == recordingID else { return false }
+            bytes.append(output)
+            return true
+        }
     }
 }
 
 enum AudioRecorderError: LocalizedError {
     case noInput
-    var errorDescription: String? { "No microphone input is available." }
+    case captureConfigurationFailed
+    case captureStartFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .noInput: "No microphone input is available."
+        case .captureConfigurationFailed: "The microphone could not be configured."
+        case .captureStartFailed: "The microphone could not be started."
+        }
+    }
 }

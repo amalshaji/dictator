@@ -71,6 +71,7 @@ final class AppModel: ObservableObject {
     private let transcriptRepairService = TranscriptRepairService()
     private let hud = FloatingPanelController()
     private var activeRun: ActiveDictationRun?
+    private var activeRunID: UUID?
     private var initialLoadTask: Task<Void, Never>?
 
     convenience init() {
@@ -220,12 +221,22 @@ final class AppModel: ObservableObject {
             return
         }
         let target = inserter.captureFocusedTarget(processIdentifier: targetProcessIdentifier)
+        let runID = UUID()
+        activeRun = .standard(target: target)
+        activeRunID = runID
+        phase = .listening
+        hud.show(.listening)
+        await Task.yield()
+        guard phase == .listening, activeRunID == runID else { return }
         do {
-            try recorder.start()
-            activeRun = .standard(target: target)
-            phase = .listening
-            hud.show(.listening)
-        } catch { showError(error.localizedDescription) }
+            try await recorder.start()
+        } catch {
+            guard activeRunID == runID else { return }
+            activeRun = nil
+            activeRunID = nil
+            phase = .idle
+            showError(error.localizedDescription)
+        }
     }
 
     func startScreenAwareDictation(targetProcessIdentifier: pid_t? = nil) async {
@@ -279,18 +290,28 @@ final class AppModel: ObservableObject {
             showError("Microphone permission is required")
             return
         }
+        let runID = UUID()
+        activeRun = .screenAware(ScreenAwareRun(
+            target: target,
+            window: window,
+            provider: provider,
+            model: model,
+            credentials: credentials
+        ))
+        activeRunID = runID
+        phase = .listening
+        hud.show(.listening)
+        await Task.yield()
+        guard phase == .listening, activeRunID == runID else { return }
         do {
-            try recorder.start()
-            activeRun = .screenAware(ScreenAwareRun(
-                target: target,
-                window: window,
-                provider: provider,
-                model: model,
-                credentials: credentials
-            ))
-            phase = .listening
-            hud.show(.listening)
-        } catch { showError(error.localizedDescription) }
+            try await recorder.start()
+        } catch {
+            guard activeRunID == runID else { return }
+            activeRun = nil
+            activeRunID = nil
+            phase = .idle
+            showError(error.localizedDescription)
+        }
     }
 
     func stopDictation() async {
@@ -300,9 +321,10 @@ final class AppModel: ObservableObject {
             return
         }
         phase = .processing
-        let pipelineStarted = ContinuousClock.now
-        let audio = recorder.stop()
         activeRun = nil
+        activeRunID = nil
+        let pipelineStarted = ContinuousClock.now
+        let audio = await recorder.stop()
         guard audio.duration >= 0.15 else {
             phase = .idle
             let shortcut = run.isScreenAware ? GlobalShortcut.screenAware : dictateShortcut
@@ -320,9 +342,10 @@ final class AppModel: ObservableObject {
 
     func cancelDictation() {
         guard phase == .listening else { return }
-        recorder.cancel()
         activeRun = nil
+        activeRunID = nil
         phase = .idle
+        recorder.cancel()
         hud.show(.success("Cancelled"))
         hud.hideAfterDelay()
     }

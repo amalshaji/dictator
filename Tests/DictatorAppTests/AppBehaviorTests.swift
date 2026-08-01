@@ -302,9 +302,143 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(levels.values.first), 0.375, accuracy: 0.001)
     }
 
-    func testAudioRecorderRestartsAfterEngineConfigurationChange() async throws {
+    func testDictationShowsListeningStateBeforeAudioCaptureStarts() async throws {
+        let suiteName = "ai.dictator.tests.audio-start-feedback.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let recorder = TestAudioRecorder()
+        var model: AppModel!
+        recorder.onStart = {
+            XCTAssertEqual(model.phase, .listening)
+        }
+        model = AppModel(
+            keychain: HUDTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor(),
+            recorder: recorder
+        )
+
+        await model.startDictation()
+
+        XCTAssertEqual(model.phase, .listening)
+    }
+
+    func testAudioCaptureStartupDoesNotBlockMainActor() async throws {
+        let suiteName = "ai.dictator.tests.audio-start-responsiveness.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let gate = AudioStartGate()
+        let recorder = TestAudioRecorder()
+        recorder.startGate = gate
+        let model = AppModel(
+            keychain: HUDTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor(),
+            recorder: recorder
+        )
+        let startup = Task { @MainActor in await model.startDictation() }
+        let responsivenessCheck = Task.detached {
+            gate.waitUntilStarted()
+            Task { @MainActor in gate.recordMainActorResponse() }
+            try? await Task.sleep(for: .milliseconds(100))
+            gate.release()
+        }
+
+        await responsivenessCheck.value
+        await startup.value
+        await Task.yield()
+
+        XCTAssertTrue(gate.mainActorRespondedBeforeRelease)
+    }
+
+    func testReleaseDuringAudioStartupIgnoresStaleFailure() async throws {
+        let suiteName = "ai.dictator.tests.audio-start-release.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let gate = AudioStartGate()
+        let recorder = TestAudioRecorder()
+        recorder.startGate = gate
+        recorder.startError = AudioRecorderError.captureStartFailed
+        let model = AppModel(
+            keychain: HUDTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor(),
+            recorder: recorder
+        )
+        let startup = Task { @MainActor in await model.startDictation() }
+        let watchdog = Task.detached {
+            gate.waitUntilStarted()
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled else { return }
+            gate.release()
+        }
+
+        await Task.detached { gate.waitUntilStarted() }.value
+        await model.stopDictation()
+        gate.release()
+        watchdog.cancel()
+        await watchdog.value
+        await startup.value
+
+        XCTAssertEqual(model.phase, .idle)
+        XCTAssertNil(model.lastError)
+    }
+
+    func testDictationRestoresIdleStateWhenAudioCaptureFails() async throws {
+        let suiteName = "ai.dictator.tests.audio-start-failure.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let recorder = TestAudioRecorder()
+        recorder.startError = AudioRecorderError.captureStartFailed
+        let model = AppModel(
+            keychain: HUDTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor(),
+            recorder: recorder
+        )
+
+        await model.startDictation()
+
+        XCTAssertEqual(model.phase, .idle)
+        XCTAssertEqual(model.lastError, "The microphone could not be started.")
+    }
+
+    func testAudioCaptureRequestsNativeFloatPCM() {
+        let settings = SystemAudioCaptureSession.audioSettings
+
+        XCTAssertEqual(settings[AVFormatIDKey] as? Int, Int(kAudioFormatLinearPCM))
+        XCTAssertEqual(settings[AVLinearPCMBitDepthKey] as? Int, 32)
+        XCTAssertEqual(settings[AVLinearPCMIsFloatKey] as? Bool, true)
+        XCTAssertEqual(settings[AVLinearPCMIsNonInterleaved] as? Bool, true)
+        XCTAssertNil(settings[AVSampleRateKey])
+        XCTAssertNil(settings[AVNumberOfChannelsKey])
+    }
+
+    func testAudioRecorderWaitsForPendingSamplesBeforeFinishing() async throws {
+        let session = TestAudioCaptureSession()
+        let gate = AudioStartGate()
+        session.stopGate = gate
+        let recorder = AudioRecorder(
+            session: session,
+            notificationCenter: NotificationCenter()
+        )
+
+        try await recorder.start()
+        let stopping = Task { @MainActor in await recorder.stop() }
+        await Task.detached { gate.waitUntilStarted() }.value
+        gate.release()
+        let audio = await stopping.value
+
+        XCTAssertEqual(audio.duration, 0.1, accuracy: 0.001)
+    }
+
+    func testAudioRecorderRestartsAfterCaptureRuntimeError() async throws {
         let notificationCenter = NotificationCenter()
-        let session = TestAudioEngineSession()
+        let session = TestAudioCaptureSession()
         let recorder = AudioRecorder(
             session: session,
             notificationCenter: notificationCenter
@@ -316,11 +450,11 @@ final class AppBehaviorTests: XCTestCase {
             }
         }
 
-        try recorder.start()
-        let configurationChangeSource = session.configurationChangeSourceObject
+        try await recorder.start()
+        let configurationChangeSource = session.recoverySourceObject
         await Task.detached {
             notificationCenter.post(
-                name: .AVAudioEngineConfigurationChange,
+                name: session.recoveryNotification,
                 object: configurationChangeSource
             )
         }.value
@@ -330,17 +464,51 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertEqual(session.stopCount, 1)
     }
 
-    func testAudioRecorderInvalidatesIdleEngineAfterConfigurationChange() async {
+    func testAudioRecorderIgnoresFailureFromSupersededStartup() async throws {
         let notificationCenter = NotificationCenter()
-        let session = TestAudioEngineSession()
+        let session = TestAudioCaptureSession()
+        let gate = AudioStartGate()
+        session.firstStartGate = gate
+        session.startFailuresRemaining = 1
+        let recorder = AudioRecorder(
+            session: session,
+            notificationCenter: notificationCenter
+        )
+        let firstStartup = Task { @MainActor in try await recorder.start() }
+        await Task.detached { gate.waitUntilStarted() }.value
+        recorder.cancel()
+
+        try await recorder.start()
+        gate.release()
+        do {
+            try await firstStartup.value
+            XCTFail("Expected the superseded startup to fail")
+        } catch {}
+
+        let restarted = expectation(description: "Current recording recovered")
+        session.onStart = {
+            if session.startCount == 3 { restarted.fulfill() }
+        }
+        notificationCenter.post(
+            name: session.recoveryNotification,
+            object: session.recoverySourceObject
+        )
+
+        await fulfillment(of: [restarted], timeout: 1)
+        XCTAssertEqual(session.startCount, 3)
+    }
+
+    func testAudioRecorderInvalidatesIdleSessionAfterRuntimeError() async {
+        let notificationCenter = NotificationCenter()
+        let session = TestAudioCaptureSession()
         let recorder = AudioRecorder(
             session: session,
             notificationCenter: notificationCenter
         )
 
         notificationCenter.post(
-            name: .AVAudioEngineConfigurationChange,
-            object: session.configurationChangeSourceObject
+            name: session.recoveryNotification,
+            object: session.recoverySourceObject
         )
         await Task.yield()
 
@@ -349,17 +517,17 @@ final class AppBehaviorTests: XCTestCase {
         withExtendedLifetime(recorder) {}
     }
 
-    func testAudioRecorderIgnoresConfigurationChangesFromOtherEngine() async throws {
+    func testAudioRecorderIgnoresRuntimeErrorsFromOtherSessions() async throws {
         let notificationCenter = NotificationCenter()
-        let session = TestAudioEngineSession()
+        let session = TestAudioCaptureSession()
         let recorder = AudioRecorder(
             session: session,
             notificationCenter: notificationCenter
         )
 
-        try recorder.start()
+        try await recorder.start()
         notificationCenter.post(
-            name: .AVAudioEngineConfigurationChange,
+            name: session.recoveryNotification,
             object: TestAudioConfigurationSource()
         )
         await Task.yield()
@@ -368,9 +536,9 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertEqual(session.stopCount, 0)
     }
 
-    func testAudioRecorderObservesConfigurationChangesFromReplacementEngine() async throws {
+    func testAudioRecorderObservesRuntimeErrorsFromReplacementSession() async throws {
         let notificationCenter = NotificationCenter()
-        let session = TestAudioEngineSession()
+        let session = TestAudioCaptureSession()
         let recorder = AudioRecorder(
             session: session,
             notificationCenter: notificationCenter
@@ -385,32 +553,32 @@ final class AppBehaviorTests: XCTestCase {
             }
         }
 
-        try recorder.start()
+        try await recorder.start()
         notificationCenter.post(
-            name: .AVAudioEngineConfigurationChange,
-            object: session.configurationChangeSourceObject
+            name: session.recoveryNotification,
+            object: session.recoverySourceObject
         )
         await fulfillment(of: [firstRestart], timeout: 1)
 
         notificationCenter.post(
-            name: .AVAudioEngineConfigurationChange,
-            object: session.configurationChangeSourceObject
+            name: session.recoveryNotification,
+            object: session.recoverySourceObject
         )
         await fulfillment(of: [secondRestart], timeout: 1)
 
         XCTAssertEqual(session.stopCount, 2)
     }
 
-    func testAudioRecorderRetriesTransientConfigurationRecoveryFailure() async throws {
+    func testAudioRecorderRetriesTransientRuntimeRecoveryFailure() async throws {
         let notificationCenter = NotificationCenter()
-        let session = TestAudioEngineSession()
+        let session = TestAudioCaptureSession()
         let recorder = AudioRecorder(
             session: session,
             notificationCenter: notificationCenter
         )
         let restarted = expectation(description: "Audio engine recovered")
 
-        try recorder.start()
+        try await recorder.start()
         session.startFailuresRemaining = 1
         session.onStart = {
             if session.startCount == 3 {
@@ -418,8 +586,8 @@ final class AppBehaviorTests: XCTestCase {
             }
         }
         notificationCenter.post(
-            name: .AVAudioEngineConfigurationChange,
-            object: session.configurationChangeSourceObject
+            name: session.recoveryNotification,
+            object: session.recoverySourceObject
         )
 
         await fulfillment(of: [restarted], timeout: 1)
@@ -428,17 +596,17 @@ final class AppBehaviorTests: XCTestCase {
 
     func testAudioRecorderDoesNotRestartAfterRecordingStops() async throws {
         let notificationCenter = NotificationCenter()
-        let session = TestAudioEngineSession()
+        let session = TestAudioCaptureSession()
         let recorder = AudioRecorder(
             session: session,
             notificationCenter: notificationCenter
         )
 
-        try recorder.start()
-        _ = recorder.stop()
+        try await recorder.start()
+        _ = await recorder.stop()
         notificationCenter.post(
-            name: .AVAudioEngineConfigurationChange,
-            object: session.configurationChangeSourceObject
+            name: session.recoveryNotification,
+            object: session.recoverySourceObject
         )
         await Task.yield()
 
@@ -998,6 +1166,9 @@ private struct SpeechOnlyGroqCredentialStore: CredentialStoring {
 @MainActor
 private final class TestAudioRecorder: AudioRecording {
     var onLevel: (@Sendable (Double) -> Void)?
+    var onStart: (() -> Void)?
+    var startError: Error?
+    var startGate: AudioStartGate?
     var recordedAudio = RecordedAudio(wavData: Data(), duration: 0)
     private(set) var cancelCount = 0
     private(set) var permissionRequestCount = 0
@@ -1006,37 +1177,119 @@ private final class TestAudioRecorder: AudioRecording {
         permissionRequestCount += 1
         return true
     }
-    func start() throws {}
-    func stop() -> RecordedAudio { recordedAudio }
+    func start() async throws {
+        onStart?()
+        await startGate?.waitUntilRelease()
+        if let startError { throw startError }
+    }
+    func stop() async -> RecordedAudio { recordedAudio }
     func cancel() { cancelCount += 1 }
 }
 
-@MainActor
-private final class TestAudioEngineSession: AudioEngineSession {
-    private(set) var configurationChangeSourceObject = TestAudioConfigurationSource()
-    var configurationChangeSourceIdentifier: ObjectIdentifier {
-        ObjectIdentifier(configurationChangeSourceObject)
+private final class AudioStartGate: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var started = false
+    private var released = false
+    private var respondedBeforeRelease = false
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+
+    var mainActorRespondedBeforeRelease: Bool {
+        condition.withLock { respondedBeforeRelease }
+    }
+
+    func waitUntilRelease() async {
+        await withCheckedContinuation { continuation in
+            var shouldResume = false
+            condition.lock()
+            started = true
+            condition.broadcast()
+            if released {
+                shouldResume = true
+            } else {
+                releaseContinuation = continuation
+            }
+            condition.unlock()
+            if shouldResume { continuation.resume() }
+        }
+    }
+
+    func waitUntilStarted() {
+        condition.lock()
+        while !started { condition.wait() }
+        condition.unlock()
+    }
+
+    func recordMainActorResponse() {
+        condition.withLock { respondedBeforeRelease = !released }
+    }
+
+    func release() {
+        let continuation: CheckedContinuation<Void, Never>?
+        condition.lock()
+        released = true
+        continuation = releaseContinuation
+        releaseContinuation = nil
+        condition.broadcast()
+        condition.unlock()
+        continuation?.resume()
+    }
+}
+
+private final class TestAudioCaptureSession: AudioCaptureSession, @unchecked Sendable {
+    let recoveryNotification = Notification.Name("TestAudioCaptureSessionRecovery")
+    private(set) var recoverySourceObject = TestAudioConfigurationSource()
+    var recoverySourceIdentifier: ObjectIdentifier? {
+        ObjectIdentifier(recoverySourceObject)
     }
     var onStart: (() -> Void)?
+    var firstStartGate: AudioStartGate?
+    var stopGate: AudioStartGate?
     var startFailuresRemaining = 0
     private(set) var startCount = 0
     private(set) var stopCount = 0
+    private var tapHandler: (@Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void)?
 
     func start(
         tapHandler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
-    ) throws {
+    ) async throws {
         startCount += 1
-        configurationChangeSourceObject = TestAudioConfigurationSource()
-        if startFailuresRemaining > 0 {
+        self.tapHandler = tapHandler
+        recoverySourceObject = TestAudioConfigurationSource()
+        let shouldFail = startFailuresRemaining > 0
+        if shouldFail {
             startFailuresRemaining -= 1
+        }
+        if startCount == 1 {
+            await firstStartGate?.waitUntilRelease()
+        }
+        if shouldFail {
             throw AudioRecorderError.noInput
         }
         onStart?()
     }
 
-    func stop() {
+    func stop() async {
         stopCount += 1
-        configurationChangeSourceObject = TestAudioConfigurationSource()
+        recoverySourceObject = TestAudioConfigurationSource()
+        guard let stopGate, let tapHandler else { return }
+        await stopGate.waitUntilRelease()
+        guard let pcm = Self.makePendingBuffer() else { return }
+        tapHandler(pcm, AVAudioTime(hostTime: 0))
+    }
+
+    func cancel() {
+        stopCount += 1
+        recoverySourceObject = TestAudioConfigurationSource()
+    }
+
+    private static func makePendingBuffer() -> AVAudioPCMBuffer? {
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1),
+              let pcm = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1_600),
+              let samples = pcm.floatChannelData?[0]
+        else { return nil }
+        pcm.frameLength = 1_600
+        for index in 0..<1_600 { samples[index] = 0.1 }
+        return pcm
     }
 }
 
