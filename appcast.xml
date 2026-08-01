@@ -6,6 +6,22 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>Dictator</title>
         <item>
+            <title>0.6.1-canary.82</title>
+            <pubDate>Sat, 01 Aug 2026 16:05:28 +0000</pubDate>
+            <link>https://github.com/amalshaji/dictator</link>
+            <sparkle:channel>canary</sparkle:channel>
+            <sparkle:version>82</sparkle:version>
+            <sparkle:shortVersionString>0.6.1-canary.82</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[## What's Changed
+* Fix Fn recording with input-only audio capture by @amalshaji in https://github.com/amalshaji/dictator/pull/42
+
+
+**Full Changelog**: https://github.com/amalshaji/dictator/compare/canary-0.6.1-b80-b9cf6c17...canary-0.6.1-b82-def1c5f6
+]]></description>
+            <enclosure url="https://github.com/amalshaji/dictator/releases/download/canary-0.6.1-b82-def1c5f6/Dictator-0.6.1-canary.82-universal.dmg" length="5514302" type="application/octet-stream" sparkle:edSignature="NDtuaBE/IYolnaSsrkBtryzXhRQJmiL05tVgbwSqSa83TI9Yb0rIXwRRgXmeaYUiJfjKmabVdpKEj7zk1XL1DQ=="/>
+        </item>
+        <item>
             <title>0.6.1-canary.80</title>
             <pubDate>Sat, 01 Aug 2026 14:33:50 +0000</pubDate>
             <link>https://github.com/amalshaji/dictator</link>
@@ -36,22 +52,6 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
 **Full Changelog**: https://github.com/amalshaji/dictator/compare/canary-0.6.1-b76-852ee1bc...canary-0.6.1-b78-9f2c0b5f
 ]]></description>
             <enclosure url="https://github.com/amalshaji/dictator/releases/download/canary-0.6.1-b78-9f2c0b5f/Dictator-0.6.1-canary.78-universal.dmg" length="5482144" type="application/octet-stream" sparkle:edSignature="IhMy6/urNVzsIkdnfH0uFNfUQtpdprFC87PxWGtHJPeNr/IHginY4CN+863osj/guIrDmkMGBvw6JKcMbZpwAw=="/>
-        </item>
-        <item>
-            <title>0.6.1-canary.76</title>
-            <pubDate>Thu, 30 Jul 2026 09:20:46 +0000</pubDate>
-            <link>https://github.com/amalshaji/dictator</link>
-            <sparkle:channel>canary</sparkle:channel>
-            <sparkle:version>76</sparkle:version>
-            <sparkle:shortVersionString>0.6.1-canary.76</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="markdown"><![CDATA[## What's Changed
-* Build releases before creating tags by @amalshaji in https://github.com/amalshaji/dictator/pull/38
-
-
-**Full Changelog**: https://github.com/amalshaji/dictator/compare/canary-0.6.1-b74-1849e541...canary-0.6.1-b76-852ee1bc
-]]></description>
-            <enclosure url="https://github.com/amalshaji/dictator/releases/download/canary-0.6.1-b76-852ee1bc/Dictator-0.6.1-canary.76-universal.dmg" length="5475781" type="application/octet-stream" sparkle:edSignature="/j+dX+tBCegHmTa8Kx7pPCf/Fy8gA1jNoVrKKOO39fDAsmydOToE/cf8CTF0HJ14YWOkYS4Sj6DnaYcJo8BpBg=="/>
         </item>
         <item>
             <title>0.6.1</title>
@@ -109,6 +109,6 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: EN2Z88fzrk1rW+SDHa4MtkoCdxWN8ygGpywrxVguVI8uf/2W3FmVN7lW1gF64ADTU+s1RT4G9eAer/H1YMwgDg==
-length: 7356
+edSignature: z7Llu/H92XkV5IovQHRIzTEEa6ROU0YJJc4mKtC5O7A0a4EsOSBsUO9EOjdiyYexsaFfnDz0bHflRPEqCUvyBQ==
+length: 7367
 -->
