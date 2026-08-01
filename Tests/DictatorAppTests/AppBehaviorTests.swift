@@ -407,17 +407,6 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertEqual(model.lastError, "The microphone could not be started.")
     }
 
-    func testAudioCaptureRequestsNativeFloatPCM() {
-        let settings = SystemAudioCaptureSession.audioSettings
-
-        XCTAssertEqual(settings[AVFormatIDKey] as? Int, Int(kAudioFormatLinearPCM))
-        XCTAssertEqual(settings[AVLinearPCMBitDepthKey] as? Int, 32)
-        XCTAssertEqual(settings[AVLinearPCMIsFloatKey] as? Bool, true)
-        XCTAssertEqual(settings[AVLinearPCMIsNonInterleaved] as? Bool, true)
-        XCTAssertNil(settings[AVSampleRateKey])
-        XCTAssertNil(settings[AVNumberOfChannelsKey])
-    }
-
     func testAudioRecorderWaitsForPendingSamplesBeforeFinishing() async throws {
         let session = TestAudioCaptureSession()
         let gate = AudioStartGate()

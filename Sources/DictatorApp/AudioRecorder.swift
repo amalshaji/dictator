@@ -25,16 +25,6 @@ protocol AudioCaptureSession: AnyObject, Sendable {
 }
 
 final class SystemAudioCaptureSession: AudioCaptureSession, @unchecked Sendable {
-    static var audioSettings: [String: Any] {
-        [
-            AVFormatIDKey: Int(kAudioFormatLinearPCM),
-            AVLinearPCMBitDepthKey: 32,
-            AVLinearPCMIsFloatKey: true,
-            AVLinearPCMIsBigEndianKey: false,
-            AVLinearPCMIsNonInterleaved: true
-        ]
-    }
-
     // AVCaptureSession and its attachments are accessed only on this queue.
     private let lifecycleQueue = DispatchQueue(label: "ai.dictator.audio-capture.lifecycle")
     private let recoverySourceLock = NSLock()
@@ -107,7 +97,7 @@ final class SystemAudioCaptureSession: AudioCaptureSession, @unchecked Sendable 
         }
         let input = try AVCaptureDeviceInput(device: device)
         let output = AVCaptureAudioDataOutput()
-        output.audioSettings = Self.audioSettings
+        output.audioSettings = nil
         let outputDelegate = AudioSampleBufferDelegate(tapHandler: tapHandler)
         output.setSampleBufferDelegate(outputDelegate, queue: sampleQueue)
 
