@@ -221,7 +221,7 @@ private final class LifecycleAudioRecorder: AudioRecording {
 
     func requestPermission() async -> Bool { true }
     func start() async throws {}
-    func stop() -> RecordedAudio {
+    func stop() async -> RecordedAudio {
         RecordedAudio(wavData: Data(), duration: 0)
     }
     func cancel() {

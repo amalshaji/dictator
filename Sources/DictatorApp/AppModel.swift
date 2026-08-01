@@ -324,7 +324,7 @@ final class AppModel: ObservableObject {
         activeRun = nil
         activeRunID = nil
         let pipelineStarted = ContinuousClock.now
-        let audio = recorder.stop()
+        let audio = await recorder.stop()
         guard audio.duration >= 0.15 else {
             phase = .idle
             let shortcut = run.isScreenAware ? GlobalShortcut.screenAware : dictateShortcut

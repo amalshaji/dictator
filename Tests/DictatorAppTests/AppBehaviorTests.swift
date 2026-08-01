@@ -418,6 +418,24 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertNil(settings[AVNumberOfChannelsKey])
     }
 
+    func testAudioRecorderWaitsForPendingSamplesBeforeFinishing() async throws {
+        let session = TestAudioCaptureSession()
+        let gate = AudioStartGate()
+        session.stopGate = gate
+        let recorder = AudioRecorder(
+            session: session,
+            notificationCenter: NotificationCenter()
+        )
+
+        try await recorder.start()
+        let stopping = Task { @MainActor in await recorder.stop() }
+        await Task.detached { gate.waitUntilStarted() }.value
+        gate.release()
+        let audio = await stopping.value
+
+        XCTAssertEqual(audio.duration, 0.1, accuracy: 0.001)
+    }
+
     func testAudioRecorderRestartsAfterCaptureRuntimeError() async throws {
         let notificationCenter = NotificationCenter()
         let session = TestAudioCaptureSession()
@@ -585,7 +603,7 @@ final class AppBehaviorTests: XCTestCase {
         )
 
         try await recorder.start()
-        _ = recorder.stop()
+        _ = await recorder.stop()
         notificationCenter.post(
             name: session.recoveryNotification,
             object: session.recoverySourceObject
@@ -1164,7 +1182,7 @@ private final class TestAudioRecorder: AudioRecording {
         await startGate?.waitUntilRelease()
         if let startError { throw startError }
     }
-    func stop() -> RecordedAudio { recordedAudio }
+    func stop() async -> RecordedAudio { recordedAudio }
     func cancel() { cancelCount += 1 }
 }
 
@@ -1225,14 +1243,17 @@ private final class TestAudioCaptureSession: AudioCaptureSession, @unchecked Sen
     }
     var onStart: (() -> Void)?
     var firstStartGate: AudioStartGate?
+    var stopGate: AudioStartGate?
     var startFailuresRemaining = 0
     private(set) var startCount = 0
     private(set) var stopCount = 0
+    private var tapHandler: (@Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void)?
 
     func start(
         tapHandler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
     ) async throws {
         startCount += 1
+        self.tapHandler = tapHandler
         recoverySourceObject = TestAudioConfigurationSource()
         let shouldFail = startFailuresRemaining > 0
         if shouldFail {
@@ -1247,9 +1268,28 @@ private final class TestAudioCaptureSession: AudioCaptureSession, @unchecked Sen
         onStart?()
     }
 
-    func stop() {
+    func stop() async {
         stopCount += 1
         recoverySourceObject = TestAudioConfigurationSource()
+        guard let stopGate, let tapHandler else { return }
+        await stopGate.waitUntilRelease()
+        guard let pcm = Self.makePendingBuffer() else { return }
+        tapHandler(pcm, AVAudioTime(hostTime: 0))
+    }
+
+    func cancel() {
+        stopCount += 1
+        recoverySourceObject = TestAudioConfigurationSource()
+    }
+
+    private static func makePendingBuffer() -> AVAudioPCMBuffer? {
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1),
+              let pcm = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1_600),
+              let samples = pcm.floatChannelData?[0]
+        else { return nil }
+        pcm.frameLength = 1_600
+        for index in 0..<1_600 { samples[index] = 0.1 }
+        return pcm
     }
 }
 

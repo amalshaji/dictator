@@ -9,7 +9,7 @@ protocol AudioRecording: AnyObject {
 
     func requestPermission() async -> Bool
     func start() async throws
-    func stop() -> RecordedAudio
+    func stop() async -> RecordedAudio
     func cancel()
 }
 
@@ -20,7 +20,8 @@ protocol AudioCaptureSession: AnyObject, Sendable {
     func start(
         tapHandler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
     ) async throws
-    func stop()
+    func stop() async
+    func cancel()
 }
 
 final class SystemAudioCaptureSession: AudioCaptureSession, @unchecked Sendable {
@@ -67,7 +68,17 @@ final class SystemAudioCaptureSession: AudioCaptureSession, @unchecked Sendable 
         }
     }
 
-    func stop() {
+    func stop() async {
+        setRecoverySourceIdentifier(nil)
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            lifecycleQueue.async { [self] in
+                replaceSessionOnLifecycleQueue()
+                sampleQueue.async { continuation.resume() }
+            }
+        }
+    }
+
+    func cancel() {
         setRecoverySourceIdentifier(nil)
         lifecycleQueue.async { [self] in replaceSessionOnLifecycleQueue() }
     }
@@ -266,25 +277,31 @@ final class AudioRecorder: AudioRecording {
         return (mono, normalizedLevel)
     }
 
-    func stop() -> RecordedAudio {
+    func stop() async -> RecordedAudio {
         let recordingID = endSession()
+        await session.stop()
         let pcm = recordingID.map(buffer.finish) ?? Data()
         let duration = Double(pcm.count) / 2 / 16_000
         return RecordedAudio(wavData: WAVEncoder.encodePCM16(pcm), duration: duration)
     }
 
     func cancel() {
-        if let recordingID = endSession() {
+        let recordingID = endSession()
+        session.cancel()
+        if let recordingID {
             buffer.cancel(recordingID)
         }
     }
 
     private func recoverAfterRuntimeError() {
-        session.stop()
-        guard let recordingID = activeRecordingID else { return }
+        guard let recordingID = activeRecordingID else {
+            session.cancel()
+            return
+        }
         recoveryTask?.cancel()
         recoveryTask = Task { @MainActor [weak self] in
             guard let self else { return }
+            await session.stop()
             while activeRecordingID == recordingID, !Task.isCancelled {
                 do {
                     try await session.start(tapHandler: makeTapHandler(recordingID: recordingID))
@@ -304,7 +321,6 @@ final class AudioRecorder: AudioRecording {
         activeRecordingID = nil
         recoveryTask?.cancel()
         recoveryTask = nil
-        session.stop()
         return recordingID
     }
 }
