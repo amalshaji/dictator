@@ -25,15 +25,15 @@ protocol AudioCaptureSession: AnyObject, Sendable {
 }
 
 final class SystemAudioCaptureSession: AudioCaptureSession, @unchecked Sendable {
-    static var audioSettings: [String: Any] {
+    static func audioSettings(sampleRate: Double, channelCount: UInt32) -> [String: Any] {
         [
             AVFormatIDKey: Int(kAudioFormatLinearPCM),
-            AVSampleRateKey: 16_000.0,
-            AVNumberOfChannelsKey: 1,
+            AVSampleRateKey: sampleRate,
+            AVNumberOfChannelsKey: Int(channelCount),
             AVLinearPCMBitDepthKey: 32,
             AVLinearPCMIsFloatKey: true,
             AVLinearPCMIsBigEndianKey: false,
-            AVLinearPCMIsNonInterleaved: true
+            AVLinearPCMIsNonInterleaved: true,
         ]
     }
 
@@ -109,7 +109,14 @@ final class SystemAudioCaptureSession: AudioCaptureSession, @unchecked Sendable 
         }
         let input = try AVCaptureDeviceInput(device: device)
         let output = AVCaptureAudioDataOutput()
-        output.audioSettings = Self.audioSettings
+        guard let streamDescription = CMAudioFormatDescriptionGetStreamBasicDescription(
+            device.activeFormat.formatDescription
+        )
+        else { throw AudioRecorderError.captureConfigurationFailed }
+        output.audioSettings = Self.audioSettings(
+            sampleRate: streamDescription.pointee.mSampleRate,
+            channelCount: streamDescription.pointee.mChannelsPerFrame
+        )
         let outputDelegate = AudioSampleBufferDelegate(tapHandler: tapHandler)
         output.setSampleBufferDelegate(outputDelegate, queue: sampleQueue)
 
@@ -147,7 +154,7 @@ final class SystemAudioCaptureSession: AudioCaptureSession, @unchecked Sendable 
     }
 }
 
-private final class AudioSampleBufferDelegate: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate,
+final class AudioSampleBufferDelegate: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate,
     @unchecked Sendable
 {
     private let tapHandler: @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
@@ -165,7 +172,7 @@ private final class AudioSampleBufferDelegate: NSObject, AVCaptureAudioDataOutpu
         tapHandler(pcm, AVAudioTime(sampleTime: 0, atRate: pcm.format.sampleRate))
     }
 
-    private static func pcmBuffer(from sampleBuffer: CMSampleBuffer) -> AVAudioPCMBuffer? {
+    static func pcmBuffer(from sampleBuffer: CMSampleBuffer) -> AVAudioPCMBuffer? {
         let frameCount = CMSampleBufferGetNumSamples(sampleBuffer)
         guard frameCount > 0, frameCount <= Int32.max,
               let description = CMSampleBufferGetFormatDescription(sampleBuffer),
@@ -177,6 +184,7 @@ private final class AudioSampleBufferDelegate: NSObject, AVCaptureAudioDataOutpu
                 frameCapacity: AVAudioFrameCount(frameCount)
               )
         else { return nil }
+        pcm.frameLength = AVAudioFrameCount(frameCount)
         let status = CMSampleBufferCopyPCMDataIntoAudioBufferList(
             sampleBuffer,
             at: 0,
@@ -184,7 +192,6 @@ private final class AudioSampleBufferDelegate: NSObject, AVCaptureAudioDataOutpu
             into: pcm.mutableAudioBufferList
         )
         guard status == noErr else { return nil }
-        pcm.frameLength = AVAudioFrameCount(frameCount)
         return pcm
     }
 }
