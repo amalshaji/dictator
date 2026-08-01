@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreMedia
 import DictatorCore
 import Foundation
 
@@ -13,8 +14,9 @@ protocol AudioRecording: AnyObject {
 }
 
 @MainActor
-protocol AudioEngineSession: AnyObject {
-    var configurationChangeSourceIdentifier: ObjectIdentifier { get }
+protocol AudioCaptureSession: AnyObject {
+    var recoveryNotification: Notification.Name { get }
+    var recoverySourceIdentifier: ObjectIdentifier { get }
 
     func start(
         tapHandler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
@@ -23,71 +25,135 @@ protocol AudioEngineSession: AnyObject {
 }
 
 @MainActor
-private final class SystemAudioEngineSession: AudioEngineSession {
-    private var engine = AVAudioEngine()
-    private var hasInstalledTap = false
+final class SystemAudioCaptureSession: AudioCaptureSession {
+    static let audioSettings: [String: Any] = [
+        AVFormatIDKey: Int(kAudioFormatLinearPCM),
+        AVLinearPCMBitDepthKey: 32,
+        AVLinearPCMIsFloatKey: true,
+        AVLinearPCMIsBigEndianKey: false,
+        AVLinearPCMIsNonInterleaved: true
+    ]
 
-    var configurationChangeSourceIdentifier: ObjectIdentifier {
-        ObjectIdentifier(engine)
+    private var session = AVCaptureSession()
+    private var output: AVCaptureAudioDataOutput?
+    private var outputDelegate: AudioSampleBufferDelegate?
+    private let sampleQueue = DispatchQueue(label: "ai.dictator.audio-capture")
+
+    var recoveryNotification: Notification.Name {
+        AVCaptureSession.runtimeErrorNotification
+    }
+
+    var recoverySourceIdentifier: ObjectIdentifier {
+        ObjectIdentifier(session)
     }
 
     func start(
         tapHandler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
     ) throws {
-        replaceEngine()
-        let input = engine.inputNode
-        let hardwareFormat = input.inputFormat(forBus: 0)
-        guard hardwareFormat.sampleRate > 0, hardwareFormat.channelCount > 0 else {
+        replaceSession()
+        guard let device = AVCaptureDevice.default(for: .audio) else {
             throw AudioRecorderError.noInput
         }
-        input.installTap(
-            onBus: 0,
-            bufferSize: 1_024,
-            format: nil,
-            block: tapHandler
-        )
-        hasInstalledTap = true
-        engine.prepare()
-        do {
-            try engine.start()
-        } catch {
-            replaceEngine()
-            throw error
+        let input = try AVCaptureDeviceInput(device: device)
+        let output = AVCaptureAudioDataOutput()
+        output.audioSettings = Self.audioSettings
+        let outputDelegate = AudioSampleBufferDelegate(tapHandler: tapHandler)
+        output.setSampleBufferDelegate(outputDelegate, queue: sampleQueue)
+
+        session.beginConfiguration()
+        guard session.canAddInput(input) else {
+            session.commitConfiguration()
+            throw AudioRecorderError.captureConfigurationFailed
+        }
+        session.addInput(input)
+        guard session.canAddOutput(output) else {
+            session.commitConfiguration()
+            throw AudioRecorderError.captureConfigurationFailed
+        }
+        session.addOutput(output)
+        session.commitConfiguration()
+        self.output = output
+        self.outputDelegate = outputDelegate
+        session.startRunning()
+        guard session.isRunning else {
+            replaceSession()
+            throw AudioRecorderError.captureStartFailed
         }
     }
 
     func stop() {
-        replaceEngine()
+        replaceSession()
     }
 
-    private func replaceEngine() {
-        if hasInstalledTap {
-            engine.inputNode.removeTap(onBus: 0)
-            hasInstalledTap = false
-        }
-        engine.stop()
-        engine = AVAudioEngine()
+    private func replaceSession() {
+        output?.setSampleBufferDelegate(nil, queue: nil)
+        if session.isRunning { session.stopRunning() }
+        output = nil
+        outputDelegate = nil
+        session = AVCaptureSession()
+    }
+}
+
+private final class AudioSampleBufferDelegate: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate,
+    @unchecked Sendable
+{
+    private let tapHandler: @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
+
+    init(tapHandler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void) {
+        self.tapHandler = tapHandler
+    }
+
+    func captureOutput(
+        _ output: AVCaptureOutput,
+        didOutput sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection
+    ) {
+        guard let pcm = Self.pcmBuffer(from: sampleBuffer) else { return }
+        tapHandler(pcm, AVAudioTime(sampleTime: 0, atRate: pcm.format.sampleRate))
+    }
+
+    private static func pcmBuffer(from sampleBuffer: CMSampleBuffer) -> AVAudioPCMBuffer? {
+        let frameCount = CMSampleBufferGetNumSamples(sampleBuffer)
+        guard frameCount > 0, frameCount <= Int32.max,
+              let description = CMSampleBufferGetFormatDescription(sampleBuffer),
+              let streamDescription = CMAudioFormatDescriptionGetStreamBasicDescription(description),
+              let format = AVAudioFormat(streamDescription: streamDescription),
+              format.commonFormat == .pcmFormatFloat32,
+              let pcm = AVAudioPCMBuffer(
+                pcmFormat: format,
+                frameCapacity: AVAudioFrameCount(frameCount)
+              )
+        else { return nil }
+        let status = CMSampleBufferCopyPCMDataIntoAudioBufferList(
+            sampleBuffer,
+            at: 0,
+            frameCount: Int32(frameCount),
+            into: pcm.mutableAudioBufferList
+        )
+        guard status == noErr else { return nil }
+        pcm.frameLength = AVAudioFrameCount(frameCount)
+        return pcm
     }
 }
 
 @MainActor
 final class AudioRecorder: AudioRecording {
-    private let session: any AudioEngineSession
+    private let session: any AudioCaptureSession
     private let notificationCenter: NotificationCenter
     private let buffer = AudioBuffer()
-    private var configurationChangeObserver: NSObjectProtocol?
+    private var recoveryObserver: NSObjectProtocol?
     private var recoveryTask: Task<Void, Never>?
     private var isRecording = false
     var onLevel: (@Sendable (Double) -> Void)?
 
     init(
-        session: any AudioEngineSession = SystemAudioEngineSession(),
+        session: any AudioCaptureSession = SystemAudioCaptureSession(),
         notificationCenter: NotificationCenter = .default
     ) {
         self.session = session
         self.notificationCenter = notificationCenter
-        configurationChangeObserver = notificationCenter.addObserver(
-            forName: .AVAudioEngineConfigurationChange,
+        recoveryObserver = notificationCenter.addObserver(
+            forName: session.recoveryNotification,
             object: nil,
             queue: nil
         ) { [weak self] notification in
@@ -95,17 +161,17 @@ final class AudioRecorder: AudioRecording {
             let sourceIdentifier = ObjectIdentifier(source as AnyObject)
             Task { @MainActor [weak self] in
                 guard let self,
-                      self.session.configurationChangeSourceIdentifier == sourceIdentifier
+                      self.session.recoverySourceIdentifier == sourceIdentifier
                 else { return }
-                self.recoverAfterConfigurationChange()
+                self.recoverAfterRuntimeError()
             }
         }
     }
 
     isolated deinit {
         recoveryTask?.cancel()
-        if let configurationChangeObserver {
-            notificationCenter.removeObserver(configurationChangeObserver)
+        if let recoveryObserver {
+            notificationCenter.removeObserver(recoveryObserver)
         }
     }
 
@@ -162,7 +228,7 @@ final class AudioRecorder: AudioRecording {
         buffer.reset()
     }
 
-    private func recoverAfterConfigurationChange() {
+    private func recoverAfterRuntimeError() {
         session.stop()
         guard isRecording else { return }
         recoveryTask?.cancel()
@@ -215,5 +281,14 @@ private final class AudioBuffer: @unchecked Sendable {
 
 enum AudioRecorderError: LocalizedError {
     case noInput
-    var errorDescription: String? { "No microphone input is available." }
+    case captureConfigurationFailed
+    case captureStartFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .noInput: "No microphone input is available."
+        case .captureConfigurationFailed: "The microphone could not be configured."
+        case .captureStartFailed: "The microphone could not be started."
+        }
+    }
 }

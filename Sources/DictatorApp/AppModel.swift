@@ -220,12 +220,18 @@ final class AppModel: ObservableObject {
             return
         }
         let target = inserter.captureFocusedTarget(processIdentifier: targetProcessIdentifier)
+        activeRun = .standard(target: target)
+        phase = .listening
+        hud.show(.listening)
+        await Task.yield()
+        guard phase == .listening, activeRun != nil else { return }
         do {
             try recorder.start()
-            activeRun = .standard(target: target)
-            phase = .listening
-            hud.show(.listening)
-        } catch { showError(error.localizedDescription) }
+        } catch {
+            activeRun = nil
+            phase = .idle
+            showError(error.localizedDescription)
+        }
     }
 
     func startScreenAwareDictation(targetProcessIdentifier: pid_t? = nil) async {
@@ -279,18 +285,24 @@ final class AppModel: ObservableObject {
             showError("Microphone permission is required")
             return
         }
+        activeRun = .screenAware(ScreenAwareRun(
+            target: target,
+            window: window,
+            provider: provider,
+            model: model,
+            credentials: credentials
+        ))
+        phase = .listening
+        hud.show(.listening)
+        await Task.yield()
+        guard phase == .listening, activeRun != nil else { return }
         do {
             try recorder.start()
-            activeRun = .screenAware(ScreenAwareRun(
-                target: target,
-                window: window,
-                provider: provider,
-                model: model,
-                credentials: credentials
-            ))
-            phase = .listening
-            hud.show(.listening)
-        } catch { showError(error.localizedDescription) }
+        } catch {
+            activeRun = nil
+            phase = .idle
+            showError(error.localizedDescription)
+        }
     }
 
     func stopDictation() async {
