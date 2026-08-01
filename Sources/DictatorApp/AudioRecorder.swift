@@ -28,6 +28,8 @@ final class SystemAudioCaptureSession: AudioCaptureSession, @unchecked Sendable 
     static var audioSettings: [String: Any] {
         [
             AVFormatIDKey: Int(kAudioFormatLinearPCM),
+            AVSampleRateKey: 16_000.0,
+            AVNumberOfChannelsKey: 1,
             AVLinearPCMBitDepthKey: 32,
             AVLinearPCMIsFloatKey: true,
             AVLinearPCMIsBigEndianKey: false,
