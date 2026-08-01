@@ -66,6 +66,7 @@ jobs:
           Tests/ReleaseScripts/test-release-tags.sh
           Tests/ReleaseScripts/test-stable-candidate.sh
           Tests/ReleaseScripts/test-publish-github-release.sh
+          Tests/ReleaseScripts/test-release-version.sh
           Tests/ReleaseScripts/test-xcodegen-wrapper.sh
           Tests/ReleaseScripts/test-release-workflows.sh
           scripts/release/download-sparkle-tools.sh "$RUNNER_TEMP/sparkle"

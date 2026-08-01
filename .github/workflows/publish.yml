@@ -3,10 +3,20 @@ name: Build stable release
 on:
   workflow_dispatch:
     inputs:
-      ref:
-        description: Main commit or ref to release
+      strategy:
+        description: Version selection
         required: true
-        default: main
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+          - explicit
+      explicit_version:
+        description: Required only when version selection is explicit
+        required: false
+        default: ''
         type: string
 
 permissions: {}
@@ -17,56 +27,156 @@ concurrency:
   queue: max
 
 jobs:
-  prepare:
+  version:
     runs-on: macos-26
     permissions:
-      attestations: write
-      contents: read
-      id-token: write
+      contents: write
+      pull-requests: write
     outputs:
       artifact: ${{ steps.meta.outputs.artifact }}
+      base: ${{ steps.meta.outputs.base }}
       build: ${{ steps.meta.outputs.build }}
+      pr: ${{ steps.meta.outputs.pr }}
+      promotion: ${{ steps.meta.outputs.promotion }}
       sha: ${{ steps.meta.outputs.sha }}
       tag: ${{ steps.meta.outputs.tag }}
+      tree: ${{ steps.meta.outputs.tree }}
       version: ${{ steps.meta.outputs.version }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ inputs.ref }}
+          ref: main
           fetch-depth: 0
 
-      - name: Resolve stable release identity
+      - name: Install pinned XcodeGen
+        run: scripts/xcodegen.sh --version
+
+      - name: Select and commit stable version
         id: meta
         env:
+          EXPLICIT_VERSION: ${{ inputs.explicit_version }}
           GH_TOKEN: ${{ github.token }}
+          STRATEGY: ${{ inputs.strategy }}
         run: |
           if [[ "$GITHUB_REF" != refs/heads/main ]]; then
             echo "Stable releases must use the workflow from main: $GITHUB_REF" >&2
             exit 1
           fi
 
+          base=$(git rev-parse HEAD)
+          resolution=$(
+            scripts/release/select-stable-version.sh \
+              "$STRATEGY" "$EXPLICIT_VERSION"
+          )
+          IFS=$'\t' read -r mode version tag <<<"$resolution"
+          case "$mode" in
+            bumped)
+              release_branch="release/v$version"
+              git config user.name "github-actions[bot]"
+              git config user.email \
+                "41898282+github-actions[bot]@users.noreply.github.com"
+              git add project.yml Dictator.xcodeproj/project.pbxproj
+              git diff --cached --check
+              selected_tree=$(git write-tree)
+              if git ls-remote --exit-code --heads origin \
+                "refs/heads/$release_branch" >/dev/null 2>&1; then
+                git fetch origin \
+                  "refs/heads/$release_branch:refs/remotes/origin/$release_branch"
+                candidate="refs/remotes/origin/$release_branch"
+                [[ $(git rev-list --parents -n 1 "$candidate" | awk '{print NF}') -eq 2 ]]
+                [[ $(git rev-parse "$candidate^") == "$base" ]]
+                [[ $(git rev-parse "$candidate^{tree}") == "$selected_tree" ]]
+                git reset --hard "$candidate"
+                git checkout --detach "$candidate"
+              else
+                git switch -c "$release_branch"
+                git commit -m "Prepare $version release"
+                git push origin "HEAD:refs/heads/$release_branch"
+              fi
+
+              pr_data=$(gh pr list \
+                --repo "$GITHUB_REPOSITORY" \
+                --base main \
+                --head "$release_branch" \
+                --state open \
+                --json number,url)
+              case $(jq length <<<"$pr_data") in
+                0)
+                  pr_url=$(gh pr create \
+                    --repo "$GITHUB_REPOSITORY" \
+                    --base main \
+                    --head "$release_branch" \
+                    --label release \
+                    --title "Prepare $version release" \
+                    --body "Automated version selection for stable release $tag.")
+                  pr=${pr_url##*/}
+                  [[ "$pr" =~ ^[1-9][0-9]*$ ]]
+                  ;;
+                1)
+                  pr=$(jq -r '.[0].number' <<<"$pr_data")
+                  pr_url=$(jq -r '.[0].url' <<<"$pr_data")
+                  [[ "$pr" =~ ^[1-9][0-9]*$ && -n "$pr_url" ]]
+                  ;;
+                *)
+                  echo "Expected at most one open release PR for $release_branch" >&2
+                  exit 1
+                  ;;
+              esac
+              promotion=true
+              ;;
+            recovery)
+              pr=
+              promotion=false
+              ;;
+            *)
+              echo "Unsupported release version mode: $mode" >&2
+              exit 1
+              ;;
+          esac
+
           sha=$(git rev-parse HEAD)
+          tree=$(git rev-parse "HEAD^{tree}")
           metadata=$(scripts/release/release-metadata.sh from-ref stable "$sha")
-          IFS=$'\t' read -r channel _ version build _ tag <<<"$metadata"
+          IFS=$'\t' read -r channel _ resolved_version build _ resolved_tag \
+            <<<"$metadata"
           [[ "$channel" == stable ]]
-          scripts/release/validate-stable-candidate.sh "$sha" "$version" "$tag"
+          [[ "$resolved_version" == "$version" ]]
+          [[ "$resolved_tag" == "$tag" ]]
+          git diff --exit-code
 
           artifact="stable-release-${version}-${sha:0:8}"
           {
             echo "artifact=$artifact"
+            echo "base=$base"
             echo "build=$build"
+            echo "pr=$pr"
+            echo "promotion=$promotion"
             echo "sha=$sha"
             echo "tag=$tag"
+            echo "tree=$tree"
             echo "version=$version"
           } >> "$GITHUB_OUTPUT"
+
+  prepare:
+    needs: version
+    runs-on: macos-26
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+          fetch-depth: 0
 
       - name: Install pinned XcodeGen
         run: scripts/xcodegen.sh --version
 
       - name: Build release assets
         env:
-          BUILD_NUMBER: ${{ steps.meta.outputs.build }}
-          VERSION: ${{ steps.meta.outputs.version }}
+          BUILD_NUMBER: ${{ needs.version.outputs.build }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           scripts/release/build-release.sh "$VERSION" "$BUILD_NUMBER" release
           scripts/release/verify-release-assets.sh release "$VERSION" "$BUILD_NUMBER"
@@ -75,72 +185,121 @@ jobs:
         uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
         with:
           subject-path: |
-            release/Dictator-${{ steps.meta.outputs.version }}-universal.dmg
+            release/Dictator-${{ needs.version.outputs.version }}-universal.dmg
             release/SHA256SUMS.txt
 
       - name: Stage verified release assets
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: ${{ steps.meta.outputs.artifact }}
+          name: ${{ needs.version.outputs.artifact }}
           path: |
-            release/Dictator-${{ steps.meta.outputs.version }}-universal.dmg
+            release/Dictator-${{ needs.version.outputs.version }}-universal.dmg
             release/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 7
 
   finalize:
-    needs: prepare
+    needs: [version, prepare]
     runs-on: macos-15
     environment: stable-release
     permissions:
       contents: write
+      pull-requests: write
     outputs:
-      tag: ${{ needs.prepare.outputs.tag }}
+      tag: ${{ needs.version.outputs.tag }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ needs.prepare.outputs.sha }}
+          ref: ${{ needs.version.outputs.sha }}
           fetch-depth: 0
 
       - name: Download verified release assets
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: ${{ needs.prepare.outputs.artifact }}
+          name: ${{ needs.version.outputs.artifact }}
           path: release
 
       - name: Revalidate release candidate
         env:
-          BUILD_NUMBER: ${{ needs.prepare.outputs.build }}
-          GH_TOKEN: ${{ github.token }}
-          SHA: ${{ needs.prepare.outputs.sha }}
-          TAG: ${{ needs.prepare.outputs.tag }}
-          VERSION: ${{ needs.prepare.outputs.version }}
+          BUILD_NUMBER: ${{ needs.version.outputs.build }}
+          SHA: ${{ needs.version.outputs.sha }}
+          SOURCE_TREE: ${{ needs.version.outputs.tree }}
+          TAG: ${{ needs.version.outputs.tag }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           [[ $(git rev-parse HEAD) == "$SHA" ]]
+          [[ $(git rev-parse "HEAD^{tree}") == "$SOURCE_TREE" ]]
           metadata=$(scripts/release/release-metadata.sh from-ref stable HEAD)
           IFS=$'\t' read -r channel _ version build _ tag <<<"$metadata"
           [[ "$channel" == stable ]]
           [[ "$version" == "$VERSION" ]]
           [[ "$build" == "$BUILD_NUMBER" ]]
           [[ "$tag" == "$TAG" ]]
-          scripts/release/validate-stable-candidate.sh "$SHA" "$VERSION" "$TAG"
           scripts/release/verify-release-assets.sh release "$VERSION" "$BUILD_NUMBER"
+
+      - name: Promote verified release candidate
+        id: promote
+        env:
+          BASE_SHA: ${{ needs.version.outputs.base }}
+          BUILD_NUMBER: ${{ needs.version.outputs.build }}
+          CANDIDATE_SHA: ${{ needs.version.outputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.version.outputs.pr }}
+          PROMOTION_REQUIRED: ${{ needs.version.outputs.promotion }}
+          SOURCE_TREE: ${{ needs.version.outputs.tree }}
+          TAG: ${{ needs.version.outputs.tag }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          git fetch origin main --tags
+          if [[ "$PROMOTION_REQUIRED" == true ]]; then
+            [[ $(git rev-parse origin/main) == "$BASE_SHA" ]]
+            pr_json=$(gh pr view "$PR_NUMBER" \
+              --repo "$GITHUB_REPOSITORY" \
+              --json baseRefOid,headRefOid,reviewDecision,state)
+            [[ $(jq -r .state <<<"$pr_json") == OPEN ]]
+            [[ $(jq -r .reviewDecision <<<"$pr_json") == APPROVED ]]
+            [[ $(jq -r .baseRefOid <<<"$pr_json") == "$BASE_SHA" ]]
+            [[ $(jq -r .headRefOid <<<"$pr_json") == "$CANDIDATE_SHA" ]]
+            gh pr merge "$PR_NUMBER" \
+              --repo "$GITHUB_REPOSITORY" \
+              --squash \
+              --match-head-commit "$CANDIDATE_SHA" \
+              --delete-branch
+            git fetch origin main --tags
+            release_sha=$(git rev-parse origin/main)
+          else
+            [[ -z "$PR_NUMBER" ]]
+            release_sha=$CANDIDATE_SHA
+            [[ $(git rev-parse origin/main) == "$release_sha" ]]
+          fi
+
+          [[ $(git rev-parse "$release_sha^{tree}") == "$SOURCE_TREE" ]]
+          metadata=$(scripts/release/release-metadata.sh from-ref stable "$release_sha")
+          IFS=$'\t' read -r channel _ version build _ tag <<<"$metadata"
+          [[ "$channel" == stable ]]
+          [[ "$version" == "$VERSION" ]]
+          [[ "$build" == "$BUILD_NUMBER" ]]
+          [[ "$tag" == "$TAG" ]]
+          scripts/release/validate-stable-candidate.sh \
+            "$release_sha" "$VERSION" "$TAG"
+          echo "sha=$release_sha" >> "$GITHUB_OUTPUT"
 
       - name: Ensure release tag
         env:
-          SHA: ${{ needs.prepare.outputs.sha }}
-          TAG: ${{ needs.prepare.outputs.tag }}
+          SHA: ${{ steps.promote.outputs.sha }}
+          TAG: ${{ needs.version.outputs.tag }}
         run: scripts/release/release-tag.sh ensure "$TAG" "$SHA"
 
       - name: Create or finish GitHub Release
         env:
-          BUILD_NUMBER: ${{ needs.prepare.outputs.build }}
+          BUILD_NUMBER: ${{ needs.version.outputs.build }}
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.prepare.outputs.tag }}
-          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.version.outputs.tag }}
+          VERSION: ${{ needs.version.outputs.version }}
+          RELEASE_SHA: ${{ steps.promote.outputs.sha }}
         run: >-
           scripts/release/publish-github-release.sh
-          release "$VERSION" "$BUILD_NUMBER" "$TAG" HEAD
+          release "$VERSION" "$BUILD_NUMBER" "$TAG" "$RELEASE_SHA"
 
   publish:
     needs: finalize

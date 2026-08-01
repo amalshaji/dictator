@@ -68,32 +68,60 @@ fi
 
 assert_contains "$stable" '^  workflow_dispatch:'
 assert_absent "$stable" '^  push:'
-assert_contains "$stable" '^      ref:'
+assert_absent "$stable" '^      ref:'
+assert_contains "$stable" '^      strategy:'
+assert_contains "$stable" '^          - patch$'
+assert_contains "$stable" '^          - minor$'
+assert_contains "$stable" '^          - major$'
+assert_contains "$stable" '^          - explicit$'
+assert_before "$stable" '          - patch' '          - minor'
+assert_before "$stable" '          - minor' '          - major'
+assert_before "$stable" '          - major' '          - explicit'
+assert_contains "$stable" '^      explicit_version:'
+assert_contains "$stable" '^  version:'
 assert_contains "$stable" '^  prepare:'
 assert_contains "$stable" '^  finalize:'
-assert_contains "$stable" '^    needs: prepare$'
 assert_contains "$stable" '^    environment: stable-release$'
 assert_contains "$stable" '^  publish:$'
 assert_contains "$stable" '^    needs: finalize$'
 assert_contains "$stable" 'uses: ./\.github/workflows/release-published\.yml'
-assert_count "$stable" 'scripts/release/validate-stable-candidate.sh' 2
+assert_count "$stable" 'scripts/release/validate-stable-candidate.sh' 1
+assert_count "$stable" 'scripts/release/select-stable-version.sh' 1
 assert_count "$stable" 'scripts/release/release-tag.sh ensure' 1
 assert_count "$stable" 'scripts/release/publish-github-release.sh' 1
+assert_before "$stable" 'scripts/release/select-stable-version.sh' 'scripts/release/build-release.sh'
 assert_before "$stable" 'scripts/release/build-release.sh' 'scripts/release/release-tag.sh ensure'
 assert_before "$stable" 'actions/attest-build-provenance@' 'scripts/release/release-tag.sh ensure'
 assert_before "$stable" 'actions/upload-artifact@' 'scripts/release/release-tag.sh ensure'
+version_job=$(job_block "$stable" version)
 prepare_job=$(job_block "$stable" prepare)
 finalize_job=$(job_block "$stable" finalize)
+grep -q '^      contents: write$' <<<"$version_job"
+grep -q '^      pull-requests: write$' <<<"$version_job"
+grep -q 'select-stable-version\.sh' <<<"$version_job"
+grep -q 'git commit' <<<"$version_job"
+grep -q 'gh pr create' <<<"$version_job"
+if grep -q 'git push origin HEAD:main\|release-tag\.sh ensure\|gh release' \
+  <<<"$version_job"; then
+  echo "Version preparation must not create tags or releases" >&2
+  exit 1
+fi
+grep -q '^    needs: version$' <<<"$prepare_job"
 grep -q '^      contents: read$' <<<"$prepare_job"
 if grep -q 'contents: write\|release-tag\.sh ensure\|gh release' <<<"$prepare_job"; then
   echo "Stable preparation must not have release mutation capabilities" >&2
   exit 1
 fi
-grep -q '^    needs: prepare$' <<<"$finalize_job"
+grep -q '^    needs: \[version, prepare\]$' <<<"$finalize_job"
 grep -q '^    environment: stable-release$' <<<"$finalize_job"
 grep -q '^      contents: write$' <<<"$finalize_job"
+grep -q '^      pull-requests: write$' <<<"$finalize_job"
+grep -q 'gh pr merge' <<<"$finalize_job"
+# shellcheck disable=SC2016
+grep -q -- '--match-head-commit "$CANDIDATE_SHA"' <<<"$finalize_job"
 grep -q 'release-tag\.sh ensure' <<<"$finalize_job"
 grep -q 'publish-github-release\.sh' <<<"$finalize_job"
+assert_before "$stable" 'gh pr merge' 'scripts/release/release-tag.sh ensure'
 
 assert_count "$canary" 'scripts/release/release-tag.sh verify' 1
 assert_count "$canary" 'scripts/release/release-tag.sh ensure' 1
@@ -110,7 +138,14 @@ for workflow in .github/workflows/ci.yml "$stable" "$canary"; do
 done
 assert_contains .github/workflows/ci.yml 'scripts/xcodegen.sh --version'
 assert_contains .github/workflows/ci.yml 'scripts/xcodegen.sh generate'
+assert_contains .github/workflows/ci.yml 'Tests/ReleaseScripts/test-release-version.sh'
 assert_contains scripts/release/build-release.sh 'scripts/xcodegen.sh generate'
+# shellcheck disable=SC2016
+assert_absent README.md 'Bump `MARKETING_VERSION`'
+# shellcheck disable=SC2016
+assert_contains README.md '`patch`, `minor`, `major`, or `explicit`'
+# shellcheck disable=SC2016
+assert_contains README.md 'creates a version-only release PR'
 # shellcheck disable=SC2016
 assert_absent AGENTS.md '`xcodegen generate`'
 # shellcheck disable=SC2016

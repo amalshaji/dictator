@@ -83,13 +83,12 @@ Every successful CI run for a push to `main` publishes an immutable GitHub prere
 
 Stable releases remain review-gated:
 
-1. Bump `MARKETING_VERSION` in `project.yml`.
-2. Open a PR, apply the `release` label, and merge it into `main` after CI passes.
-3. Manually run **Build stable release** from `main`, using `main` or the exact release merge commit as the `ref` input.
-4. The workflow builds, verifies, and attests the universal DMG and checksum without creating a tag. Review the completed preparation job, then approve its `stable-release` environment deployment.
-5. Finalization reverifies the staged assets, creates the annotated `v<version>` tag and public GitHub Release, then signs and deploys the Sparkle appcast and bootstraps or updates `Casks/dictator.rb` in [`amalshaji/homebrew-taps`](https://github.com/amalshaji/homebrew-taps).
+1. Manually run **Build stable release** from `main` and choose `patch`, `minor`, `major`, or `explicit`. When choosing `explicit`, also enter the exact semantic version in the `explicit_version` input.
+2. The workflow validates the choice, creates a version-only release PR, and resolves the release identity from its candidate commit. If an earlier run already merged an unfinished version, the workflow safely reuses it instead of applying another bump.
+3. The workflow builds, verifies, and attests the universal DMG and checksum without creating a tag. Approve the generated release PR, review the completed preparation job, then approve its `stable-release` environment deployment.
+4. Finalization squash-merges the approved PR, proves the merged tree, version, and build match the verified artifacts, then creates the annotated `v<version>` tag and public GitHub Release. It subsequently signs and deploys the Sparkle appcast and bootstraps or updates `Casks/dictator.rb` in [`amalshaji/homebrew-taps`](https://github.com/amalshaji/homebrew-taps).
 
-Create a protected GitHub environment named `stable-release` with the repository owner as its required reviewer, self-review allowed, deployments restricted to `main`, and no secrets. A failed or expired preparation creates no tag; rerun the stable workflow from the same ref. If only update-channel publication fails after the release is public, repair it with the **Publish update channels** workflow and the same tag.
+Create a protected GitHub environment named `stable-release` with the repository owner as its required reviewer, self-review allowed, deployments restricted to `main`, and no secrets. A failed or expired preparation creates no tag; rerun the stable workflow with the same selection to reuse the open release PR or resume its merged version. If only update-channel publication fails after the release is public, repair it with the **Publish update channels** workflow and the same tag.
 
 Configure a protected GitHub environment named `release` with:
 
