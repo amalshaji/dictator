@@ -71,6 +71,7 @@ final class AppModel: ObservableObject {
     private let transcriptRepairService = TranscriptRepairService()
     private let hud = FloatingPanelController()
     private var activeRun: ActiveDictationRun?
+    private var activeRunID: UUID?
     private var initialLoadTask: Task<Void, Never>?
 
     convenience init() {
@@ -220,15 +221,19 @@ final class AppModel: ObservableObject {
             return
         }
         let target = inserter.captureFocusedTarget(processIdentifier: targetProcessIdentifier)
+        let runID = UUID()
         activeRun = .standard(target: target)
+        activeRunID = runID
         phase = .listening
         hud.show(.listening)
         await Task.yield()
-        guard phase == .listening, activeRun != nil else { return }
+        guard phase == .listening, activeRunID == runID else { return }
         do {
-            try recorder.start()
+            try await recorder.start()
         } catch {
+            guard activeRunID == runID else { return }
             activeRun = nil
+            activeRunID = nil
             phase = .idle
             showError(error.localizedDescription)
         }
@@ -285,6 +290,7 @@ final class AppModel: ObservableObject {
             showError("Microphone permission is required")
             return
         }
+        let runID = UUID()
         activeRun = .screenAware(ScreenAwareRun(
             target: target,
             window: window,
@@ -292,14 +298,17 @@ final class AppModel: ObservableObject {
             model: model,
             credentials: credentials
         ))
+        activeRunID = runID
         phase = .listening
         hud.show(.listening)
         await Task.yield()
-        guard phase == .listening, activeRun != nil else { return }
+        guard phase == .listening, activeRunID == runID else { return }
         do {
-            try recorder.start()
+            try await recorder.start()
         } catch {
+            guard activeRunID == runID else { return }
             activeRun = nil
+            activeRunID = nil
             phase = .idle
             showError(error.localizedDescription)
         }
@@ -312,9 +321,10 @@ final class AppModel: ObservableObject {
             return
         }
         phase = .processing
+        activeRun = nil
+        activeRunID = nil
         let pipelineStarted = ContinuousClock.now
         let audio = recorder.stop()
-        activeRun = nil
         guard audio.duration >= 0.15 else {
             phase = .idle
             let shortcut = run.isScreenAware ? GlobalShortcut.screenAware : dictateShortcut
@@ -332,9 +342,10 @@ final class AppModel: ObservableObject {
 
     func cancelDictation() {
         guard phase == .listening else { return }
-        recorder.cancel()
         activeRun = nil
+        activeRunID = nil
         phase = .idle
+        recorder.cancel()
         hud.show(.success("Cancelled"))
         hud.hideAfterDelay()
     }

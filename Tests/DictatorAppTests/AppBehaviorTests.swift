@@ -324,6 +324,69 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertEqual(model.phase, .listening)
     }
 
+    func testAudioCaptureStartupDoesNotBlockMainActor() async throws {
+        let suiteName = "ai.dictator.tests.audio-start-responsiveness.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let gate = AudioStartGate()
+        let recorder = TestAudioRecorder()
+        recorder.startGate = gate
+        let model = AppModel(
+            keychain: HUDTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor(),
+            recorder: recorder
+        )
+        let startup = Task { @MainActor in await model.startDictation() }
+        let responsivenessCheck = Task.detached {
+            gate.waitUntilStarted()
+            Task { @MainActor in gate.recordMainActorResponse() }
+            try? await Task.sleep(for: .milliseconds(100))
+            gate.release()
+        }
+
+        await responsivenessCheck.value
+        await startup.value
+        await Task.yield()
+
+        XCTAssertTrue(gate.mainActorRespondedBeforeRelease)
+    }
+
+    func testReleaseDuringAudioStartupIgnoresStaleFailure() async throws {
+        let suiteName = "ai.dictator.tests.audio-start-release.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let gate = AudioStartGate()
+        let recorder = TestAudioRecorder()
+        recorder.startGate = gate
+        recorder.startError = AudioRecorderError.captureStartFailed
+        let model = AppModel(
+            keychain: HUDTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor(),
+            recorder: recorder
+        )
+        let startup = Task { @MainActor in await model.startDictation() }
+        let watchdog = Task.detached {
+            gate.waitUntilStarted()
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled else { return }
+            gate.release()
+        }
+
+        await Task.detached { gate.waitUntilStarted() }.value
+        await model.stopDictation()
+        gate.release()
+        watchdog.cancel()
+        await watchdog.value
+        await startup.value
+
+        XCTAssertEqual(model.phase, .idle)
+        XCTAssertNil(model.lastError)
+    }
+
     func testDictationRestoresIdleStateWhenAudioCaptureFails() async throws {
         let suiteName = "ai.dictator.tests.audio-start-failure.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -369,7 +432,7 @@ final class AppBehaviorTests: XCTestCase {
             }
         }
 
-        try recorder.start()
+        try await recorder.start()
         let configurationChangeSource = session.recoverySourceObject
         await Task.detached {
             notificationCenter.post(
@@ -381,6 +444,40 @@ final class AppBehaviorTests: XCTestCase {
         await fulfillment(of: [restarted], timeout: 1)
         XCTAssertEqual(session.startCount, 2)
         XCTAssertEqual(session.stopCount, 1)
+    }
+
+    func testAudioRecorderIgnoresFailureFromSupersededStartup() async throws {
+        let notificationCenter = NotificationCenter()
+        let session = TestAudioCaptureSession()
+        let gate = AudioStartGate()
+        session.firstStartGate = gate
+        session.startFailuresRemaining = 1
+        let recorder = AudioRecorder(
+            session: session,
+            notificationCenter: notificationCenter
+        )
+        let firstStartup = Task { @MainActor in try await recorder.start() }
+        await Task.detached { gate.waitUntilStarted() }.value
+        recorder.cancel()
+
+        try await recorder.start()
+        gate.release()
+        do {
+            try await firstStartup.value
+            XCTFail("Expected the superseded startup to fail")
+        } catch {}
+
+        let restarted = expectation(description: "Current recording recovered")
+        session.onStart = {
+            if session.startCount == 3 { restarted.fulfill() }
+        }
+        notificationCenter.post(
+            name: session.recoveryNotification,
+            object: session.recoverySourceObject
+        )
+
+        await fulfillment(of: [restarted], timeout: 1)
+        XCTAssertEqual(session.startCount, 3)
     }
 
     func testAudioRecorderInvalidatesIdleSessionAfterRuntimeError() async {
@@ -410,7 +507,7 @@ final class AppBehaviorTests: XCTestCase {
             notificationCenter: notificationCenter
         )
 
-        try recorder.start()
+        try await recorder.start()
         notificationCenter.post(
             name: session.recoveryNotification,
             object: TestAudioConfigurationSource()
@@ -438,7 +535,7 @@ final class AppBehaviorTests: XCTestCase {
             }
         }
 
-        try recorder.start()
+        try await recorder.start()
         notificationCenter.post(
             name: session.recoveryNotification,
             object: session.recoverySourceObject
@@ -463,7 +560,7 @@ final class AppBehaviorTests: XCTestCase {
         )
         let restarted = expectation(description: "Audio engine recovered")
 
-        try recorder.start()
+        try await recorder.start()
         session.startFailuresRemaining = 1
         session.onStart = {
             if session.startCount == 3 {
@@ -487,7 +584,7 @@ final class AppBehaviorTests: XCTestCase {
             notificationCenter: notificationCenter
         )
 
-        try recorder.start()
+        try await recorder.start()
         _ = recorder.stop()
         notificationCenter.post(
             name: session.recoveryNotification,
@@ -1053,6 +1150,7 @@ private final class TestAudioRecorder: AudioRecording {
     var onLevel: (@Sendable (Double) -> Void)?
     var onStart: (() -> Void)?
     var startError: Error?
+    var startGate: AudioStartGate?
     var recordedAudio = RecordedAudio(wavData: Data(), duration: 0)
     private(set) var cancelCount = 0
     private(set) var permissionRequestCount = 0
@@ -1061,33 +1159,89 @@ private final class TestAudioRecorder: AudioRecording {
         permissionRequestCount += 1
         return true
     }
-    func start() throws {
+    func start() async throws {
         onStart?()
+        await startGate?.waitUntilRelease()
         if let startError { throw startError }
     }
     func stop() -> RecordedAudio { recordedAudio }
     func cancel() { cancelCount += 1 }
 }
 
-@MainActor
-private final class TestAudioCaptureSession: AudioCaptureSession {
+private final class AudioStartGate: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var started = false
+    private var released = false
+    private var respondedBeforeRelease = false
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+
+    var mainActorRespondedBeforeRelease: Bool {
+        condition.withLock { respondedBeforeRelease }
+    }
+
+    func waitUntilRelease() async {
+        await withCheckedContinuation { continuation in
+            var shouldResume = false
+            condition.lock()
+            started = true
+            condition.broadcast()
+            if released {
+                shouldResume = true
+            } else {
+                releaseContinuation = continuation
+            }
+            condition.unlock()
+            if shouldResume { continuation.resume() }
+        }
+    }
+
+    func waitUntilStarted() {
+        condition.lock()
+        while !started { condition.wait() }
+        condition.unlock()
+    }
+
+    func recordMainActorResponse() {
+        condition.withLock { respondedBeforeRelease = !released }
+    }
+
+    func release() {
+        let continuation: CheckedContinuation<Void, Never>?
+        condition.lock()
+        released = true
+        continuation = releaseContinuation
+        releaseContinuation = nil
+        condition.broadcast()
+        condition.unlock()
+        continuation?.resume()
+    }
+}
+
+private final class TestAudioCaptureSession: AudioCaptureSession, @unchecked Sendable {
     let recoveryNotification = Notification.Name("TestAudioCaptureSessionRecovery")
     private(set) var recoverySourceObject = TestAudioConfigurationSource()
-    var recoverySourceIdentifier: ObjectIdentifier {
+    var recoverySourceIdentifier: ObjectIdentifier? {
         ObjectIdentifier(recoverySourceObject)
     }
     var onStart: (() -> Void)?
+    var firstStartGate: AudioStartGate?
     var startFailuresRemaining = 0
     private(set) var startCount = 0
     private(set) var stopCount = 0
 
     func start(
         tapHandler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
-    ) throws {
+    ) async throws {
         startCount += 1
         recoverySourceObject = TestAudioConfigurationSource()
-        if startFailuresRemaining > 0 {
+        let shouldFail = startFailuresRemaining > 0
+        if shouldFail {
             startFailuresRemaining -= 1
+        }
+        if startCount == 1 {
+            await firstStartGate?.waitUntilRelease()
+        }
+        if shouldFail {
             throw AudioRecorderError.noInput
         }
         onStart?()

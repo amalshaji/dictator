@@ -8,49 +8,89 @@ protocol AudioRecording: AnyObject {
     var onLevel: (@Sendable (Double) -> Void)? { get set }
 
     func requestPermission() async -> Bool
-    func start() throws
+    func start() async throws
     func stop() -> RecordedAudio
     func cancel()
 }
 
-@MainActor
-protocol AudioCaptureSession: AnyObject {
+protocol AudioCaptureSession: AnyObject, Sendable {
     var recoveryNotification: Notification.Name { get }
-    var recoverySourceIdentifier: ObjectIdentifier { get }
+    var recoverySourceIdentifier: ObjectIdentifier? { get }
 
     func start(
         tapHandler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
-    ) throws
+    ) async throws
     func stop()
 }
 
-@MainActor
-final class SystemAudioCaptureSession: AudioCaptureSession {
-    static let audioSettings: [String: Any] = [
-        AVFormatIDKey: Int(kAudioFormatLinearPCM),
-        AVLinearPCMBitDepthKey: 32,
-        AVLinearPCMIsFloatKey: true,
-        AVLinearPCMIsBigEndianKey: false,
-        AVLinearPCMIsNonInterleaved: true
-    ]
+final class SystemAudioCaptureSession: AudioCaptureSession, @unchecked Sendable {
+    static var audioSettings: [String: Any] {
+        [
+            AVFormatIDKey: Int(kAudioFormatLinearPCM),
+            AVLinearPCMBitDepthKey: 32,
+            AVLinearPCMIsFloatKey: true,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsNonInterleaved: true
+        ]
+    }
 
-    private var session = AVCaptureSession()
+    // AVCaptureSession and its attachments are accessed only on this queue.
+    private let lifecycleQueue = DispatchQueue(label: "ai.dictator.audio-capture.lifecycle")
+    private let recoverySourceLock = NSLock()
+    private var session: AVCaptureSession?
     private var output: AVCaptureAudioDataOutput?
     private var outputDelegate: AudioSampleBufferDelegate?
-    private let sampleQueue = DispatchQueue(label: "ai.dictator.audio-capture")
+    private var currentRecoverySourceIdentifier: ObjectIdentifier?
+    private let sampleQueue = DispatchQueue(label: "ai.dictator.audio-capture.samples")
 
     var recoveryNotification: Notification.Name {
         AVCaptureSession.runtimeErrorNotification
     }
 
-    var recoverySourceIdentifier: ObjectIdentifier {
-        ObjectIdentifier(session)
+    var recoverySourceIdentifier: ObjectIdentifier? {
+        recoverySourceLock.withLock { currentRecoverySourceIdentifier }
     }
 
     func start(
         tapHandler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
+    ) async throws {
+        try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<Void, Error>) in
+            lifecycleQueue.async { [self] in
+                do {
+                    try startOnLifecycleQueue(tapHandler: tapHandler)
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    func stop() {
+        setRecoverySourceIdentifier(nil)
+        lifecycleQueue.async { [self] in replaceSessionOnLifecycleQueue() }
+    }
+
+    private func startOnLifecycleQueue(
+        tapHandler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
     ) throws {
-        replaceSession()
+        replaceSessionOnLifecycleQueue()
+        let session = AVCaptureSession()
+        self.session = session
+        setRecoverySourceIdentifier(ObjectIdentifier(session))
+        do {
+            try configureAndStart(session, tapHandler: tapHandler)
+        } catch {
+            replaceSessionOnLifecycleQueue()
+            throw error
+        }
+    }
+
+    private func configureAndStart(
+        _ session: AVCaptureSession,
+        tapHandler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
+    ) throws {
         guard let device = AVCaptureDevice.default(for: .audio) else {
             throw AudioRecorderError.noInput
         }
@@ -76,21 +116,21 @@ final class SystemAudioCaptureSession: AudioCaptureSession {
         self.outputDelegate = outputDelegate
         session.startRunning()
         guard session.isRunning else {
-            replaceSession()
             throw AudioRecorderError.captureStartFailed
         }
     }
 
-    func stop() {
-        replaceSession()
-    }
-
-    private func replaceSession() {
+    private func replaceSessionOnLifecycleQueue() {
         output?.setSampleBufferDelegate(nil, queue: nil)
-        if session.isRunning { session.stopRunning() }
+        if session?.isRunning == true { session?.stopRunning() }
         output = nil
         outputDelegate = nil
-        session = AVCaptureSession()
+        session = nil
+        setRecoverySourceIdentifier(nil)
+    }
+
+    private func setRecoverySourceIdentifier(_ identifier: ObjectIdentifier?) {
+        recoverySourceLock.withLock { currentRecoverySourceIdentifier = identifier }
     }
 }
 
@@ -143,7 +183,7 @@ final class AudioRecorder: AudioRecording {
     private let buffer = AudioBuffer()
     private var recoveryObserver: NSObjectProtocol?
     private var recoveryTask: Task<Void, Never>?
-    private var isRecording = false
+    private var activeRecordingID: UUID?
     var onLevel: (@Sendable (Double) -> Void)?
 
     init(
@@ -179,23 +219,33 @@ final class AudioRecorder: AudioRecording {
         await AVCaptureDevice.requestAccess(for: .audio)
     }
 
-    func start() throws {
-        buffer.reset()
+    func start() async throws {
+        let recordingID = UUID()
+        buffer.begin(recordingID)
         recoveryTask?.cancel()
-        isRecording = true
+        activeRecordingID = recordingID
         do {
-            try session.start(tapHandler: makeTapHandler())
+            try await session.start(tapHandler: makeTapHandler(recordingID: recordingID))
         } catch {
-            isRecording = false
+            if activeRecordingID == recordingID {
+                activeRecordingID = nil
+                buffer.cancel(recordingID)
+            }
             throw error
         }
     }
 
-    func makeTapHandler() -> @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void {
+    func makeTapHandler(
+        recordingID: UUID? = nil
+    ) -> @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void {
         { [buffer, onLevel] pcm, _ in
             guard let processed = AudioRecorder.process(pcm) else { return }
+            guard buffer.appendResampled(
+                processed.samples,
+                sourceRate: pcm.format.sampleRate,
+                recordingID: recordingID
+            ) else { return }
             onLevel?(processed.normalizedLevel)
-            buffer.appendResampled(processed.samples, sourceRate: pcm.format.sampleRate)
         }
     }
 
@@ -217,26 +267,28 @@ final class AudioRecorder: AudioRecording {
     }
 
     func stop() -> RecordedAudio {
-        endSession()
-        let pcm = buffer.data()
+        let recordingID = endSession()
+        let pcm = recordingID.map(buffer.finish) ?? Data()
         let duration = Double(pcm.count) / 2 / 16_000
         return RecordedAudio(wavData: WAVEncoder.encodePCM16(pcm), duration: duration)
     }
 
     func cancel() {
-        endSession()
-        buffer.reset()
+        if let recordingID = endSession() {
+            buffer.cancel(recordingID)
+        }
     }
 
     private func recoverAfterRuntimeError() {
         session.stop()
-        guard isRecording else { return }
+        guard let recordingID = activeRecordingID else { return }
         recoveryTask?.cancel()
         recoveryTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            while isRecording, !Task.isCancelled {
+            while activeRecordingID == recordingID, !Task.isCancelled {
                 do {
-                    try session.start(tapHandler: makeTapHandler())
+                    try await session.start(tapHandler: makeTapHandler(recordingID: recordingID))
+                    guard activeRecordingID == recordingID else { return }
                     recoveryTask = nil
                     return
                 } catch {
@@ -247,22 +299,49 @@ final class AudioRecorder: AudioRecording {
         }
     }
 
-    private func endSession() {
-        isRecording = false
+    private func endSession() -> UUID? {
+        let recordingID = activeRecordingID
+        activeRecordingID = nil
         recoveryTask?.cancel()
         recoveryTask = nil
         session.stop()
+        return recordingID
     }
 }
 
 private final class AudioBuffer: @unchecked Sendable {
     private let lock = NSLock()
     private var bytes = Data()
+    private var activeRecordingID: UUID?
 
-    func reset() { lock.withLock { bytes.removeAll(keepingCapacity: true) } }
-    func data() -> Data { lock.withLock { bytes } }
+    func begin(_ recordingID: UUID) {
+        lock.withLock {
+            activeRecordingID = recordingID
+            bytes.removeAll(keepingCapacity: true)
+        }
+    }
 
-    func appendResampled(_ samples: [Float], sourceRate: Double) {
+    func finish(_ recordingID: UUID) -> Data {
+        lock.withLock {
+            guard activeRecordingID == recordingID else { return Data() }
+            activeRecordingID = nil
+            return bytes
+        }
+    }
+
+    func cancel(_ recordingID: UUID) {
+        lock.withLock {
+            guard activeRecordingID == recordingID else { return }
+            activeRecordingID = nil
+            bytes.removeAll(keepingCapacity: true)
+        }
+    }
+
+    func appendResampled(
+        _ samples: [Float],
+        sourceRate: Double,
+        recordingID: UUID?
+    ) -> Bool {
         let ratio = sourceRate / 16_000
         let outputCount = max(1, Int(Double(samples.count) / ratio))
         var output = Data(capacity: outputCount * 2)
@@ -275,7 +354,11 @@ private final class AudioBuffer: @unchecked Sendable {
             var value = Int16(max(-1, min(1, sample)) * Float(Int16.max)).littleEndian
             output.append(Data(bytes: &value, count: 2))
         }
-        lock.withLock { bytes.append(output) }
+        return lock.withLock {
+            guard recordingID == nil || activeRecordingID == recordingID else { return false }
+            bytes.append(output)
+            return true
+        }
     }
 }
 
