@@ -570,6 +570,50 @@ final class AppBehaviorTests: XCTestCase {
         )
     }
 
+    func testAudioRecorderBandLimitsBeforeDownsampling() async throws {
+        let sourceRate = 48_000.0
+        let toneFrequency = 12_000.0
+        let framesPerBuffer = 512
+        let bufferCount = 100
+        let format = try XCTUnwrap(AVAudioFormat(
+            standardFormatWithSampleRate: sourceRate,
+            channels: 1
+        ))
+        let session = TestAudioCaptureSession()
+        let recorder = AudioRecorder(
+            session: session,
+            notificationCenter: NotificationCenter()
+        )
+
+        try await recorder.start()
+        for bufferIndex in 0..<bufferCount {
+            let pcm = try XCTUnwrap(AVAudioPCMBuffer(
+                pcmFormat: format,
+                frameCapacity: AVAudioFrameCount(framesPerBuffer)
+            ))
+            pcm.frameLength = AVAudioFrameCount(framesPerBuffer)
+            let samples = try XCTUnwrap(pcm.floatChannelData?[0])
+            for frame in 0..<framesPerBuffer {
+                let sampleIndex = bufferIndex * framesPerBuffer + frame
+                let phase = 2 * Double.pi * toneFrequency * Double(sampleIndex) / sourceRate
+                samples[frame] = Float(sin(phase))
+            }
+            session.emit(pcm)
+        }
+
+        let audio = await recorder.stop()
+        let pcm = Data(audio.wavData.dropFirst(44))
+        let samples = pcm.withUnsafeBytes { rawBuffer in
+            rawBuffer.bindMemory(to: Int16.self).map { Int16(littleEndian: $0) }
+        }
+        let meanSquare = samples.reduce(0.0) { result, sample in
+            let normalized = Double(sample) / Double(Int16.max)
+            return result + normalized * normalized
+        } / Double(samples.count)
+
+        XCTAssertLessThan(sqrt(meanSquare), 0.05)
+    }
+
     func testAudioRecorderRestartsAfterCaptureRuntimeError() async throws {
         let notificationCenter = NotificationCenter()
         let session = TestAudioCaptureSession()

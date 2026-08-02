@@ -335,26 +335,34 @@ final class AudioRecorder: AudioRecording {
 }
 
 private final class AudioBuffer: @unchecked Sendable {
+    private static let outputSampleRate = 16_000.0
+    private static let outputFormat = AVAudioFormat(
+        commonFormat: .pcmFormatInt16,
+        sampleRate: outputSampleRate,
+        channels: 1,
+        interleaved: false
+    )!
+
     private let lock = NSLock()
     private var bytes = Data()
     private var activeRecordingID: UUID?
-    private var resamplingSourceRate: Double?
-    private var nextResamplingPosition = 0.0
-    private var resamplingPreviousSample: Float?
+    private var converter: AVAudioConverter?
+    private var converterSourceRate: Double?
 
     func begin(_ recordingID: UUID) {
         lock.withLock {
             activeRecordingID = recordingID
             bytes.removeAll(keepingCapacity: true)
-            resetResamplingState()
+            resetConverter()
         }
     }
 
     func finish(_ recordingID: UUID) -> Data {
         lock.withLock {
             guard activeRecordingID == recordingID else { return Data() }
+            _ = finishConversion()
             activeRecordingID = nil
-            resetResamplingState()
+            resetConverter()
             return bytes
         }
     }
@@ -364,7 +372,7 @@ private final class AudioBuffer: @unchecked Sendable {
             guard activeRecordingID == recordingID else { return }
             activeRecordingID = nil
             bytes.removeAll(keepingCapacity: true)
-            resetResamplingState()
+            resetConverter()
         }
     }
 
@@ -375,38 +383,123 @@ private final class AudioBuffer: @unchecked Sendable {
     ) -> Bool {
         lock.withLock {
             guard recordingID == nil || activeRecordingID == recordingID else { return false }
-            if resamplingSourceRate != sourceRate {
-                resetResamplingState()
-                resamplingSourceRate = sourceRate
-            }
-
-            let input = resamplingPreviousSample.map { [$0] + samples } ?? samples
-            let lastIndex = input.count - 1
-            let ratio = sourceRate / 16_000
-            var position = nextResamplingPosition
-            var output = Data(capacity: (Int(Double(input.count) / ratio) + 1) * 2)
-            while position <= Double(lastIndex) {
-                let lower = Int(position)
-                let upper = min(lastIndex, lower + 1)
-                let fraction = Float(position - Double(lower))
-                let sample = input[lower] + (input[upper] - input[lower]) * fraction
-                var value = Int16(max(-1, min(1, sample)) * Float(Int16.max)).littleEndian
-                output.append(Data(bytes: &value, count: 2))
-                position += ratio
-            }
-
-            resamplingPreviousSample = samples.last
-            // Keep the next position relative to the retained boundary sample.
-            nextResamplingPosition = position - Double(lastIndex)
+            guard prepareConverter(sourceRate: sourceRate),
+                  let input = Self.inputBuffer(samples: samples, sampleRate: sourceRate),
+                  let output = convert(input)
+            else { return false }
             bytes.append(output)
             return true
         }
     }
 
-    private func resetResamplingState() {
-        resamplingSourceRate = nil
-        nextResamplingPosition = 0
-        resamplingPreviousSample = nil
+    private func prepareConverter(sourceRate: Double) -> Bool {
+        if converterSourceRate == sourceRate, converter != nil { return true }
+        if converter != nil { _ = finishConversion() }
+        resetConverter()
+        guard let inputFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: sourceRate,
+            channels: 1,
+            interleaved: false
+        ), let converter = AVAudioConverter(from: inputFormat, to: Self.outputFormat)
+        else { return false }
+        converter.primeMethod = .normal
+        self.converter = converter
+        converterSourceRate = sourceRate
+        return true
+    }
+
+    private func convert(_ input: AVAudioPCMBuffer) -> Data? {
+        guard let converter else { return nil }
+        let outputFrameCapacity = AVAudioFrameCount(ceil(
+            Double(input.frameLength) * Self.outputSampleRate / input.format.sampleRate
+        )) + 1
+        guard let output = AVAudioPCMBuffer(
+            pcmFormat: Self.outputFormat,
+            frameCapacity: outputFrameCapacity
+        ) else { return nil }
+        let inputProvider = AudioConverterInputProvider(input)
+        var conversionError: NSError?
+        let status = converter.convert(to: output, error: &conversionError) { _, inputStatus in
+            inputProvider.next(status: inputStatus)
+        }
+        guard status != .error, conversionError == nil else { return nil }
+        return Self.pcm16Data(from: output)
+    }
+
+    private func finishConversion() -> Bool {
+        guard let converter, let sourceRate = converterSourceRate else { return true }
+        let trailingFrames = Double(converter.primeInfo.trailingFrames)
+        let outputFrameCapacity = max(1, AVAudioFrameCount(ceil(
+            trailingFrames * Self.outputSampleRate / sourceRate
+        )) + 1)
+        while true {
+            guard let output = AVAudioPCMBuffer(
+                pcmFormat: Self.outputFormat,
+                frameCapacity: outputFrameCapacity
+            ) else { return false }
+            var conversionError: NSError?
+            let status = converter.convert(to: output, error: &conversionError) { _, inputStatus in
+                inputStatus.pointee = .endOfStream
+                return nil
+            }
+            guard status != .error, conversionError == nil,
+                  let outputData = Self.pcm16Data(from: output)
+            else { return false }
+            bytes.append(outputData)
+            if status == .endOfStream { return true }
+            if output.frameLength == 0 { return false }
+        }
+    }
+
+    private func resetConverter() {
+        converter?.reset()
+        converter = nil
+        converterSourceRate = nil
+    }
+
+    private static func inputBuffer(samples: [Float], sampleRate: Double) -> AVAudioPCMBuffer? {
+        guard let format = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: sampleRate,
+            channels: 1,
+            interleaved: false
+        ), let input = AVAudioPCMBuffer(
+            pcmFormat: format,
+            frameCapacity: AVAudioFrameCount(samples.count)
+        ), let channel = input.floatChannelData?[0]
+        else { return nil }
+        input.frameLength = AVAudioFrameCount(samples.count)
+        for index in samples.indices { channel[index] = samples[index] }
+        return input
+    }
+
+    private static func pcm16Data(from buffer: AVAudioPCMBuffer) -> Data? {
+        guard buffer.frameLength > 0 else { return Data() }
+        guard let channel = buffer.int16ChannelData?[0] else { return nil }
+        return Data(bytes: channel, count: Int(buffer.frameLength) * MemoryLayout<Int16>.size)
+    }
+}
+
+private final class AudioConverterInputProvider: @unchecked Sendable {
+    private let lock = NSLock()
+    private let input: AVAudioPCMBuffer
+    private var suppliedInput = false
+
+    init(_ input: AVAudioPCMBuffer) {
+        self.input = input
+    }
+
+    func next(status: UnsafeMutablePointer<AVAudioConverterInputStatus>) -> AVAudioBuffer? {
+        lock.withLock {
+            guard !suppliedInput else {
+                status.pointee = .noDataNow
+                return nil
+            }
+            suppliedInput = true
+            status.pointee = .haveData
+            return input
+        }
     }
 }
 
