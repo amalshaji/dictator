@@ -338,11 +338,15 @@ private final class AudioBuffer: @unchecked Sendable {
     private let lock = NSLock()
     private var bytes = Data()
     private var activeRecordingID: UUID?
+    private var resamplingSourceRate: Double?
+    private var nextResamplingPosition = 0.0
+    private var resamplingPreviousSample: Float?
 
     func begin(_ recordingID: UUID) {
         lock.withLock {
             activeRecordingID = recordingID
             bytes.removeAll(keepingCapacity: true)
+            resetResamplingState()
         }
     }
 
@@ -350,6 +354,7 @@ private final class AudioBuffer: @unchecked Sendable {
         lock.withLock {
             guard activeRecordingID == recordingID else { return Data() }
             activeRecordingID = nil
+            resetResamplingState()
             return bytes
         }
     }
@@ -359,6 +364,7 @@ private final class AudioBuffer: @unchecked Sendable {
             guard activeRecordingID == recordingID else { return }
             activeRecordingID = nil
             bytes.removeAll(keepingCapacity: true)
+            resetResamplingState()
         }
     }
 
@@ -367,23 +373,40 @@ private final class AudioBuffer: @unchecked Sendable {
         sourceRate: Double,
         recordingID: UUID?
     ) -> Bool {
-        let ratio = sourceRate / 16_000
-        let outputCount = max(1, Int(Double(samples.count) / ratio))
-        var output = Data(capacity: outputCount * 2)
-        for index in 0..<outputCount {
-            let position = min(Double(samples.count - 1), Double(index) * ratio)
-            let lower = Int(position)
-            let upper = min(samples.count - 1, lower + 1)
-            let fraction = Float(position - Double(lower))
-            let sample = samples[lower] + (samples[upper] - samples[lower]) * fraction
-            var value = Int16(max(-1, min(1, sample)) * Float(Int16.max)).littleEndian
-            output.append(Data(bytes: &value, count: 2))
-        }
-        return lock.withLock {
+        lock.withLock {
             guard recordingID == nil || activeRecordingID == recordingID else { return false }
+            if resamplingSourceRate != sourceRate {
+                resetResamplingState()
+                resamplingSourceRate = sourceRate
+            }
+
+            let input = resamplingPreviousSample.map { [$0] + samples } ?? samples
+            let lastIndex = input.count - 1
+            let ratio = sourceRate / 16_000
+            var position = nextResamplingPosition
+            var output = Data(capacity: (Int(Double(input.count) / ratio) + 1) * 2)
+            while position <= Double(lastIndex) {
+                let lower = Int(position)
+                let upper = min(lastIndex, lower + 1)
+                let fraction = Float(position - Double(lower))
+                let sample = input[lower] + (input[upper] - input[lower]) * fraction
+                var value = Int16(max(-1, min(1, sample)) * Float(Int16.max)).littleEndian
+                output.append(Data(bytes: &value, count: 2))
+                position += ratio
+            }
+
+            resamplingPreviousSample = samples.last
+            // Keep the next position relative to the retained boundary sample.
+            nextResamplingPosition = position - Double(lastIndex)
             bytes.append(output)
             return true
         }
+    }
+
+    private func resetResamplingState() {
+        resamplingSourceRate = nil
+        nextResamplingPosition = 0
+        resamplingPreviousSample = nil
     }
 }
 

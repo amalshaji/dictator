@@ -535,6 +535,41 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertEqual(audio.duration, 0.1, accuracy: 0.001)
     }
 
+    func testAudioRecorderCarriesResamplingStateAcrossCaptureBuffers() async throws {
+        let sourceRate = 44_100.0
+        let framesPerBuffer = 512
+        let bufferCount = 100
+        let format = try XCTUnwrap(AVAudioFormat(
+            standardFormatWithSampleRate: sourceRate,
+            channels: 1
+        ))
+        let session = TestAudioCaptureSession()
+        let recorder = AudioRecorder(
+            session: session,
+            notificationCenter: NotificationCenter()
+        )
+
+        try await recorder.start()
+        for _ in 0..<bufferCount {
+            let pcm = try XCTUnwrap(AVAudioPCMBuffer(
+                pcmFormat: format,
+                frameCapacity: AVAudioFrameCount(framesPerBuffer)
+            ))
+            pcm.frameLength = AVAudioFrameCount(framesPerBuffer)
+            let samples = try XCTUnwrap(pcm.floatChannelData?[0])
+            for index in 0..<framesPerBuffer { samples[index] = 0.1 }
+            session.emit(pcm)
+        }
+
+        let audio = await recorder.stop()
+
+        XCTAssertEqual(
+            audio.duration,
+            Double(framesPerBuffer * bufferCount) / sourceRate,
+            accuracy: 1 / 16_000
+        )
+    }
+
     func testAudioRecorderRestartsAfterCaptureRuntimeError() async throws {
         let notificationCenter = NotificationCenter()
         let session = TestAudioCaptureSession()
@@ -1379,6 +1414,10 @@ private final class TestAudioCaptureSession: AudioCaptureSession, @unchecked Sen
     func cancel() {
         stopCount += 1
         recoverySourceObject = TestAudioConfigurationSource()
+    }
+
+    func emit(_ pcm: AVAudioPCMBuffer) {
+        tapHandler?(pcm, AVAudioTime(hostTime: 0))
     }
 
     private static func makePendingBuffer() -> AVAudioPCMBuffer? {
