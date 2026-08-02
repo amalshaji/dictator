@@ -1,6 +1,7 @@
 import ApplicationServices
 import AppKit
 import AVFoundation
+import CoreMedia
 import CoreGraphics
 import DictatorCore
 import Foundation
@@ -407,16 +408,113 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertEqual(model.lastError, "The microphone could not be started.")
     }
 
-    func testAudioCaptureRequestsCompletePCMOutputSettings() {
-        let settings = SystemAudioCaptureSession.audioSettings
+    func testAudioCaptureUsesSelectedDevicePCMFormat() {
+        for (sampleRate, channelCount) in [(44_100.0, UInt32(1)), (48_000.0, UInt32(2))] {
+            let settings = SystemAudioCaptureSession.audioSettings(
+                sampleRate: sampleRate,
+                channelCount: channelCount
+            )
 
-        XCTAssertEqual(settings[AVFormatIDKey] as? Int, Int(kAudioFormatLinearPCM))
-        XCTAssertEqual(settings[AVSampleRateKey] as? Double, 16_000)
-        XCTAssertEqual(settings[AVNumberOfChannelsKey] as? Int, 1)
-        XCTAssertEqual(settings[AVLinearPCMBitDepthKey] as? Int, 32)
-        XCTAssertEqual(settings[AVLinearPCMIsFloatKey] as? Bool, true)
-        XCTAssertEqual(settings[AVLinearPCMIsBigEndianKey] as? Bool, false)
-        XCTAssertEqual(settings[AVLinearPCMIsNonInterleaved] as? Bool, true)
+            XCTAssertEqual(settings[AVFormatIDKey] as? Int, Int(kAudioFormatLinearPCM))
+            XCTAssertEqual(settings[AVSampleRateKey] as? Double, sampleRate)
+            XCTAssertEqual(settings[AVNumberOfChannelsKey] as? Int, Int(channelCount))
+            XCTAssertEqual(settings[AVLinearPCMBitDepthKey] as? Int, 32)
+            XCTAssertEqual(settings[AVLinearPCMIsFloatKey] as? Bool, true)
+            XCTAssertEqual(settings[AVLinearPCMIsBigEndianKey] as? Bool, false)
+            XCTAssertEqual(settings[AVLinearPCMIsNonInterleaved] as? Bool, true)
+        }
+    }
+
+    func testAudioSampleBufferCopyPopulatesAllocatedFrames() throws {
+        let format = try XCTUnwrap(AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: 44_100,
+            channels: 1,
+            interleaved: false
+        ))
+        let source = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4))
+        source.frameLength = 4
+        let samples = try XCTUnwrap(source.floatChannelData?[0])
+        for (index, value) in [Float(0.25), -0.5, 0.75, -1].enumerated() {
+            samples[index] = value
+        }
+
+        var streamDescription = format.streamDescription.pointee
+        var formatDescription: CMAudioFormatDescription?
+        XCTAssertEqual(CMAudioFormatDescriptionCreate(
+            allocator: kCFAllocatorDefault,
+            asbd: &streamDescription,
+            layoutSize: 0,
+            layout: nil,
+            magicCookieSize: 0,
+            magicCookie: nil,
+            extensions: nil,
+            formatDescriptionOut: &formatDescription
+        ), noErr)
+        let byteCount = Int(source.audioBufferList.pointee.mBuffers.mDataByteSize)
+        var blockBuffer: CMBlockBuffer?
+        XCTAssertEqual(CMBlockBufferCreateWithMemoryBlock(
+            allocator: kCFAllocatorDefault,
+            memoryBlock: nil,
+            blockLength: byteCount,
+            blockAllocator: kCFAllocatorDefault,
+            customBlockSource: nil,
+            offsetToData: 0,
+            dataLength: byteCount,
+            flags: 0,
+            blockBufferOut: &blockBuffer
+        ), noErr)
+        XCTAssertEqual(CMBlockBufferReplaceDataBytes(
+            with: try XCTUnwrap(source.audioBufferList.pointee.mBuffers.mData),
+            blockBuffer: try XCTUnwrap(blockBuffer),
+            offsetIntoDestination: 0,
+            dataLength: byteCount
+        ), noErr)
+        var sampleBuffer: CMSampleBuffer?
+        XCTAssertEqual(CMAudioSampleBufferCreateReadyWithPacketDescriptions(
+            allocator: kCFAllocatorDefault,
+            dataBuffer: try XCTUnwrap(blockBuffer),
+            formatDescription: try XCTUnwrap(formatDescription),
+            sampleCount: 4,
+            presentationTimeStamp: .zero,
+            packetDescriptions: nil,
+            sampleBufferOut: &sampleBuffer
+        ), noErr)
+
+        let copied = try XCTUnwrap(AudioSampleBufferDelegate.pcmBuffer(
+            from: try XCTUnwrap(sampleBuffer)
+        ))
+        XCTAssertEqual(copied.frameLength, 4)
+        XCTAssertEqual(Array(UnsafeBufferPointer(
+            start: try XCTUnwrap(copied.floatChannelData?[0]),
+            count: 4
+        )), [0.25, -0.5, 0.75, -1])
+    }
+
+    func testSystemAudioCaptureProducesLiveSamples() async throws {
+        guard Bundle.main.bundleIdentifier == "ai.dictator.live-audio-test" else {
+            throw XCTSkip("Run with the live-audio test bundle identifier")
+        }
+        let microphoneGranted = switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized: true
+        case .notDetermined: await AVCaptureDevice.requestAccess(for: .audio)
+        default: false
+        }
+        guard microphoneGranted else {
+            XCTFail("Microphone permission was not granted to the live-audio test bundle")
+            return
+        }
+        let session = SystemAudioCaptureSession()
+        let receivedSample = expectation(description: "Received microphone PCM")
+        receivedSample.assertForOverFulfill = false
+
+        try await session.start { pcm, _ in
+            if pcm.frameLength > 0 {
+                receivedSample.fulfill()
+            }
+        }
+        await fulfillment(of: [receivedSample], timeout: 5)
+        await session.stop()
     }
 
     func testAudioRecorderWaitsForPendingSamplesBeforeFinishing() async throws {
@@ -435,6 +533,85 @@ final class AppBehaviorTests: XCTestCase {
         let audio = await stopping.value
 
         XCTAssertEqual(audio.duration, 0.1, accuracy: 0.001)
+    }
+
+    func testAudioRecorderCarriesResamplingStateAcrossCaptureBuffers() async throws {
+        let sourceRate = 44_100.0
+        let framesPerBuffer = 512
+        let bufferCount = 100
+        let format = try XCTUnwrap(AVAudioFormat(
+            standardFormatWithSampleRate: sourceRate,
+            channels: 1
+        ))
+        let session = TestAudioCaptureSession()
+        let recorder = AudioRecorder(
+            session: session,
+            notificationCenter: NotificationCenter()
+        )
+
+        try await recorder.start()
+        for _ in 0..<bufferCount {
+            let pcm = try XCTUnwrap(AVAudioPCMBuffer(
+                pcmFormat: format,
+                frameCapacity: AVAudioFrameCount(framesPerBuffer)
+            ))
+            pcm.frameLength = AVAudioFrameCount(framesPerBuffer)
+            let samples = try XCTUnwrap(pcm.floatChannelData?[0])
+            for index in 0..<framesPerBuffer { samples[index] = 0.1 }
+            session.emit(pcm)
+        }
+
+        let audio = await recorder.stop()
+
+        XCTAssertEqual(
+            audio.duration,
+            Double(framesPerBuffer * bufferCount) / sourceRate,
+            accuracy: 1 / 16_000
+        )
+    }
+
+    func testAudioRecorderBandLimitsBeforeDownsampling() async throws {
+        let sourceRate = 48_000.0
+        let toneFrequency = 12_000.0
+        let framesPerBuffer = 512
+        let bufferCount = 100
+        let format = try XCTUnwrap(AVAudioFormat(
+            standardFormatWithSampleRate: sourceRate,
+            channels: 1
+        ))
+        let session = TestAudioCaptureSession()
+        let recorder = AudioRecorder(
+            session: session,
+            notificationCenter: NotificationCenter()
+        )
+
+        try await recorder.start()
+        for bufferIndex in 0..<bufferCount {
+            let pcm = try XCTUnwrap(AVAudioPCMBuffer(
+                pcmFormat: format,
+                frameCapacity: AVAudioFrameCount(framesPerBuffer)
+            ))
+            pcm.frameLength = AVAudioFrameCount(framesPerBuffer)
+            let samples = try XCTUnwrap(pcm.floatChannelData?[0])
+            for frame in 0..<framesPerBuffer {
+                let sampleIndex = bufferIndex * framesPerBuffer + frame
+                let phase = 2 * Double.pi * toneFrequency * Double(sampleIndex) / sourceRate
+                samples[frame] = Float(sin(phase))
+            }
+            session.emit(pcm)
+        }
+
+        let audio = await recorder.stop()
+        let pcm = Data(audio.wavData.dropFirst(44))
+        let samples = pcm.withUnsafeBytes { rawBuffer in
+            rawBuffer.bindMemory(to: Int16.self).map { Int16(littleEndian: $0) }
+        }
+        let meanSquare = samples.reduce(0.0) { result, sample in
+            let normalized = Double(sample) / Double(Int16.max)
+            return result + normalized * normalized
+        } / Double(samples.count)
+
+        XCTAssertLessThan(sqrt(meanSquare), 0.05)
     }
 
     func testAudioRecorderRestartsAfterCaptureRuntimeError() async throws {
@@ -1281,6 +1458,10 @@ private final class TestAudioCaptureSession: AudioCaptureSession, @unchecked Sen
     func cancel() {
         stopCount += 1
         recoverySourceObject = TestAudioConfigurationSource()
+    }
+
+    func emit(_ pcm: AVAudioPCMBuffer) {
+        tapHandler?(pcm, AVAudioTime(hostTime: 0))
     }
 
     private static func makePendingBuffer() -> AVAudioPCMBuffer? {

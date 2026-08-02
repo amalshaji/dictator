@@ -25,15 +25,15 @@ protocol AudioCaptureSession: AnyObject, Sendable {
 }
 
 final class SystemAudioCaptureSession: AudioCaptureSession, @unchecked Sendable {
-    static var audioSettings: [String: Any] {
+    static func audioSettings(sampleRate: Double, channelCount: UInt32) -> [String: Any] {
         [
             AVFormatIDKey: Int(kAudioFormatLinearPCM),
-            AVSampleRateKey: 16_000.0,
-            AVNumberOfChannelsKey: 1,
+            AVSampleRateKey: sampleRate,
+            AVNumberOfChannelsKey: Int(channelCount),
             AVLinearPCMBitDepthKey: 32,
             AVLinearPCMIsFloatKey: true,
             AVLinearPCMIsBigEndianKey: false,
-            AVLinearPCMIsNonInterleaved: true
+            AVLinearPCMIsNonInterleaved: true,
         ]
     }
 
@@ -109,7 +109,14 @@ final class SystemAudioCaptureSession: AudioCaptureSession, @unchecked Sendable 
         }
         let input = try AVCaptureDeviceInput(device: device)
         let output = AVCaptureAudioDataOutput()
-        output.audioSettings = Self.audioSettings
+        guard let streamDescription = CMAudioFormatDescriptionGetStreamBasicDescription(
+            device.activeFormat.formatDescription
+        )
+        else { throw AudioRecorderError.captureConfigurationFailed }
+        output.audioSettings = Self.audioSettings(
+            sampleRate: streamDescription.pointee.mSampleRate,
+            channelCount: streamDescription.pointee.mChannelsPerFrame
+        )
         let outputDelegate = AudioSampleBufferDelegate(tapHandler: tapHandler)
         output.setSampleBufferDelegate(outputDelegate, queue: sampleQueue)
 
@@ -147,7 +154,7 @@ final class SystemAudioCaptureSession: AudioCaptureSession, @unchecked Sendable 
     }
 }
 
-private final class AudioSampleBufferDelegate: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate,
+final class AudioSampleBufferDelegate: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate,
     @unchecked Sendable
 {
     private let tapHandler: @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
@@ -165,7 +172,7 @@ private final class AudioSampleBufferDelegate: NSObject, AVCaptureAudioDataOutpu
         tapHandler(pcm, AVAudioTime(sampleTime: 0, atRate: pcm.format.sampleRate))
     }
 
-    private static func pcmBuffer(from sampleBuffer: CMSampleBuffer) -> AVAudioPCMBuffer? {
+    static func pcmBuffer(from sampleBuffer: CMSampleBuffer) -> AVAudioPCMBuffer? {
         let frameCount = CMSampleBufferGetNumSamples(sampleBuffer)
         guard frameCount > 0, frameCount <= Int32.max,
               let description = CMSampleBufferGetFormatDescription(sampleBuffer),
@@ -177,6 +184,7 @@ private final class AudioSampleBufferDelegate: NSObject, AVCaptureAudioDataOutpu
                 frameCapacity: AVAudioFrameCount(frameCount)
               )
         else { return nil }
+        pcm.frameLength = AVAudioFrameCount(frameCount)
         let status = CMSampleBufferCopyPCMDataIntoAudioBufferList(
             sampleBuffer,
             at: 0,
@@ -184,7 +192,6 @@ private final class AudioSampleBufferDelegate: NSObject, AVCaptureAudioDataOutpu
             into: pcm.mutableAudioBufferList
         )
         guard status == noErr else { return nil }
-        pcm.frameLength = AVAudioFrameCount(frameCount)
         return pcm
     }
 }
@@ -328,21 +335,34 @@ final class AudioRecorder: AudioRecording {
 }
 
 private final class AudioBuffer: @unchecked Sendable {
+    private static let outputSampleRate = 16_000.0
+    private static let outputFormat = AVAudioFormat(
+        commonFormat: .pcmFormatInt16,
+        sampleRate: outputSampleRate,
+        channels: 1,
+        interleaved: false
+    )!
+
     private let lock = NSLock()
     private var bytes = Data()
     private var activeRecordingID: UUID?
+    private var converter: AVAudioConverter?
+    private var converterSourceRate: Double?
 
     func begin(_ recordingID: UUID) {
         lock.withLock {
             activeRecordingID = recordingID
             bytes.removeAll(keepingCapacity: true)
+            resetConverter()
         }
     }
 
     func finish(_ recordingID: UUID) -> Data {
         lock.withLock {
             guard activeRecordingID == recordingID else { return Data() }
+            _ = finishConversion()
             activeRecordingID = nil
+            resetConverter()
             return bytes
         }
     }
@@ -352,6 +372,7 @@ private final class AudioBuffer: @unchecked Sendable {
             guard activeRecordingID == recordingID else { return }
             activeRecordingID = nil
             bytes.removeAll(keepingCapacity: true)
+            resetConverter()
         }
     }
 
@@ -360,22 +381,124 @@ private final class AudioBuffer: @unchecked Sendable {
         sourceRate: Double,
         recordingID: UUID?
     ) -> Bool {
-        let ratio = sourceRate / 16_000
-        let outputCount = max(1, Int(Double(samples.count) / ratio))
-        var output = Data(capacity: outputCount * 2)
-        for index in 0..<outputCount {
-            let position = min(Double(samples.count - 1), Double(index) * ratio)
-            let lower = Int(position)
-            let upper = min(samples.count - 1, lower + 1)
-            let fraction = Float(position - Double(lower))
-            let sample = samples[lower] + (samples[upper] - samples[lower]) * fraction
-            var value = Int16(max(-1, min(1, sample)) * Float(Int16.max)).littleEndian
-            output.append(Data(bytes: &value, count: 2))
-        }
-        return lock.withLock {
+        lock.withLock {
             guard recordingID == nil || activeRecordingID == recordingID else { return false }
+            guard prepareConverter(sourceRate: sourceRate),
+                  let input = Self.inputBuffer(samples: samples, sampleRate: sourceRate),
+                  let output = convert(input)
+            else { return false }
             bytes.append(output)
             return true
+        }
+    }
+
+    private func prepareConverter(sourceRate: Double) -> Bool {
+        if converterSourceRate == sourceRate, converter != nil { return true }
+        if converter != nil { _ = finishConversion() }
+        resetConverter()
+        guard let inputFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: sourceRate,
+            channels: 1,
+            interleaved: false
+        ), let converter = AVAudioConverter(from: inputFormat, to: Self.outputFormat)
+        else { return false }
+        converter.primeMethod = .normal
+        self.converter = converter
+        converterSourceRate = sourceRate
+        return true
+    }
+
+    private func convert(_ input: AVAudioPCMBuffer) -> Data? {
+        guard let converter else { return nil }
+        let outputFrameCapacity = AVAudioFrameCount(ceil(
+            Double(input.frameLength) * Self.outputSampleRate / input.format.sampleRate
+        )) + 1
+        guard let output = AVAudioPCMBuffer(
+            pcmFormat: Self.outputFormat,
+            frameCapacity: outputFrameCapacity
+        ) else { return nil }
+        let inputProvider = AudioConverterInputProvider(input)
+        var conversionError: NSError?
+        let status = converter.convert(to: output, error: &conversionError) { _, inputStatus in
+            inputProvider.next(status: inputStatus)
+        }
+        guard status != .error, conversionError == nil else { return nil }
+        return Self.pcm16Data(from: output)
+    }
+
+    private func finishConversion() -> Bool {
+        guard let converter, let sourceRate = converterSourceRate else { return true }
+        let trailingFrames = Double(converter.primeInfo.trailingFrames)
+        let outputFrameCapacity = max(1, AVAudioFrameCount(ceil(
+            trailingFrames * Self.outputSampleRate / sourceRate
+        )) + 1)
+        while true {
+            guard let output = AVAudioPCMBuffer(
+                pcmFormat: Self.outputFormat,
+                frameCapacity: outputFrameCapacity
+            ) else { return false }
+            var conversionError: NSError?
+            let status = converter.convert(to: output, error: &conversionError) { _, inputStatus in
+                inputStatus.pointee = .endOfStream
+                return nil
+            }
+            guard status != .error, conversionError == nil,
+                  let outputData = Self.pcm16Data(from: output)
+            else { return false }
+            bytes.append(outputData)
+            if status == .endOfStream { return true }
+            if output.frameLength == 0 { return false }
+        }
+    }
+
+    private func resetConverter() {
+        converter?.reset()
+        converter = nil
+        converterSourceRate = nil
+    }
+
+    private static func inputBuffer(samples: [Float], sampleRate: Double) -> AVAudioPCMBuffer? {
+        guard let format = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: sampleRate,
+            channels: 1,
+            interleaved: false
+        ), let input = AVAudioPCMBuffer(
+            pcmFormat: format,
+            frameCapacity: AVAudioFrameCount(samples.count)
+        ), let channel = input.floatChannelData?[0]
+        else { return nil }
+        input.frameLength = AVAudioFrameCount(samples.count)
+        for index in samples.indices { channel[index] = samples[index] }
+        return input
+    }
+
+    private static func pcm16Data(from buffer: AVAudioPCMBuffer) -> Data? {
+        guard buffer.frameLength > 0 else { return Data() }
+        guard let channel = buffer.int16ChannelData?[0] else { return nil }
+        return Data(bytes: channel, count: Int(buffer.frameLength) * MemoryLayout<Int16>.size)
+    }
+}
+
+private final class AudioConverterInputProvider: @unchecked Sendable {
+    private let lock = NSLock()
+    private let input: AVAudioPCMBuffer
+    private var suppliedInput = false
+
+    init(_ input: AVAudioPCMBuffer) {
+        self.input = input
+    }
+
+    func next(status: UnsafeMutablePointer<AVAudioConverterInputStatus>) -> AVAudioBuffer? {
+        lock.withLock {
+            guard !suppliedInput else {
+                status.pointee = .noDataNow
+                return nil
+            }
+            suppliedInput = true
+            status.pointee = .haveData
+            return input
         }
     }
 }
