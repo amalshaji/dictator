@@ -89,6 +89,33 @@ final class HotkeyMonitorTests: XCTestCase {
         XCTAssertEqual(label, "C")
     }
 
+    func testMouseButtonShortcutRoundTripsWithUserFacingLabel() throws {
+        let shortcut = try XCTUnwrap(GlobalShortcut(mouseButtonNumber: 3))
+
+        XCTAssertEqual(shortcut.displayName, "Mouse Button 4")
+
+        let restored = try JSONDecoder().decode(
+            GlobalShortcut.self,
+            from: JSONEncoder().encode(shortcut)
+        )
+        XCTAssertEqual(restored, shortcut)
+    }
+
+    func testMouseButtonShortcutAcceptsOnlyQuartzSupportedButtons() {
+        XCTAssertNil(GlobalShortcut(mouseButtonNumber: 1))
+        XCTAssertNotNil(GlobalShortcut(mouseButtonNumber: 2))
+        XCTAssertNotNil(GlobalShortcut(mouseButtonNumber: 31))
+        XCTAssertNil(GlobalShortcut(mouseButtonNumber: 32))
+    }
+
+    func testInvalidPersistedMouseButtonIsRejected() {
+        let invalid = #"{"trigger":{"mouseButton":{"buttonNumber":32}}}"#
+
+        XCTAssertThrowsError(
+            try JSONDecoder().decode(GlobalShortcut.self, from: Data(invalid.utf8))
+        )
+    }
+
     func testHotkeyHealthRequiresValidEnabledTap() {
         XCTAssertTrue(
             HotkeyMonitor.isTapHealthy(isValid: true, isEnabled: true)

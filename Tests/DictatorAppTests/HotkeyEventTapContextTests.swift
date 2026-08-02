@@ -84,6 +84,40 @@ final class HotkeyEventTapContextTests: XCTestCase {
         )
     }
 
+    func testMouseButtonShortcutConsumesHoldAndReleaseWithoutUsingPointerTarget() throws {
+        let dictate = try XCTUnwrap(GlobalShortcut(mouseButtonNumber: 3))
+        let context = makeContext(dictate: dictate)
+        let down = try makeMouseEvent(
+            type: .otherMouseDown,
+            buttonNumber: 3,
+            targetProcessIdentifier: 21
+        )
+        let up = try makeMouseEvent(type: .otherMouseUp, buttonNumber: 3)
+
+        XCTAssertEqual(
+            context.process(down, type: .otherMouseDown),
+            HotkeyEventOutcome(action: .press(nil), consumesEvent: true)
+        )
+        XCTAssertEqual(
+            context.process(down, type: .otherMouseDown),
+            HotkeyEventOutcome(action: nil, consumesEvent: true)
+        )
+        XCTAssertEqual(
+            context.process(up, type: .otherMouseUp),
+            HotkeyEventOutcome(action: .release, consumesEvent: true)
+        )
+    }
+
+    func testMouseButtonShortcutLeavesOtherButtonsUntouched() throws {
+        let dictate = try XCTUnwrap(GlobalShortcut(mouseButtonNumber: 3))
+        let context = makeContext(dictate: dictate)
+        let otherButtonDown = try makeMouseEvent(type: .otherMouseDown, buttonNumber: 4)
+        let otherButtonUp = try makeMouseEvent(type: .otherMouseUp, buttonNumber: 4)
+
+        XCTAssertEqual(context.process(otherButtonDown, type: .otherMouseDown), .ignored)
+        XCTAssertEqual(context.process(otherButtonUp, type: .otherMouseUp), .ignored)
+    }
+
     func testClipboardShortcutsEmitActionsAndConsumeKeyDown() throws {
         let context = makeContext()
         let paste = try makeEvent(keyCode: 9, flags: [.maskCommand, .maskAlternate])
@@ -124,6 +158,29 @@ final class HotkeyEventTapContextTests: XCTestCase {
         )
         event.flags = flags
         event.setIntegerValueField(.keyboardEventAutorepeat, value: autorepeat ? 1 : 0)
+        if let targetProcessIdentifier {
+            event.setIntegerValueField(
+                .eventTargetUnixProcessID,
+                value: Int64(targetProcessIdentifier)
+            )
+        }
+        return event
+    }
+
+    private func makeMouseEvent(
+        type: CGEventType,
+        buttonNumber: Int64,
+        targetProcessIdentifier: pid_t? = nil
+    ) throws -> CGEvent {
+        let mouseButton = try XCTUnwrap(CGMouseButton(rawValue: UInt32(buttonNumber)))
+        let event = try XCTUnwrap(
+            CGEvent(
+                mouseEventSource: nil,
+                mouseType: type,
+                mouseCursorPosition: .zero,
+                mouseButton: mouseButton
+            )
+        )
         if let targetProcessIdentifier {
             event.setIntegerValueField(
                 .eventTargetUnixProcessID,

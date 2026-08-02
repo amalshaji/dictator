@@ -6,6 +6,7 @@ struct GlobalShortcut: Codable, Equatable, Sendable {
         case key(keyCode: Int64, modifiersRawValue: UInt64, label: String)
         case functionModifier
         case modifierChord(modifiersRawValue: UInt64)
+        case mouseButton(buttonNumber: Int64)
     }
 
     let trigger: Trigger
@@ -22,6 +23,11 @@ struct GlobalShortcut: Codable, Equatable, Sendable {
         )
     }
 
+    init?(mouseButtonNumber: Int64) {
+        guard Self.supportedMouseButtons.contains(mouseButtonNumber) else { return nil }
+        trigger = .mouseButton(buttonNumber: mouseButtonNumber)
+    }
+
     private init(trigger: Trigger) {
         self.trigger = trigger
     }
@@ -29,13 +35,16 @@ struct GlobalShortcut: Codable, Equatable, Sendable {
     var modifiers: CGEventFlags {
         let rawValue = switch trigger {
         case .key(_, let modifiersRawValue, _), .modifierChord(let modifiersRawValue): modifiersRawValue
-        case .functionModifier: UInt64(0)
+        case .functionModifier, .mouseButton: UInt64(0)
         }
         return CGEventFlags(rawValue: rawValue).shortcutModifiers
     }
 
     var displayName: String {
         if case .functionModifier = trigger { return "Fn" }
+        if case .mouseButton(let buttonNumber) = trigger {
+            return "Mouse Button \(buttonNumber + 1)"
+        }
         var value = ""
         if modifiers.contains(.maskControl) { value += "⌃" }
         if modifiers.contains(.maskAlternate) { value += "⌥" }
@@ -53,6 +62,13 @@ struct GlobalShortcut: Codable, Equatable, Sendable {
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         if let trigger = try values.decodeIfPresent(Trigger.self, forKey: .trigger) {
+            guard Self.isSupported(trigger) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .trigger,
+                    in: values,
+                    debugDescription: "Mouse button number must be between 2 and 31."
+                )
+            }
             self.trigger = trigger
             return
         }
@@ -73,6 +89,13 @@ struct GlobalShortcut: Codable, Equatable, Sendable {
         try values.encode(trigger, forKey: .trigger)
     }
 
+    private static let supportedMouseButtons: ClosedRange<Int64> = 2...31
+
+    private static func isSupported(_ trigger: Trigger) -> Bool {
+        guard case .mouseButton(let buttonNumber) = trigger else { return true }
+        return supportedMouseButtons.contains(buttonNumber)
+    }
+
     private static let screenAwareModifiers: CGEventFlags = [.maskControl, .maskAlternate]
     static let dictate = GlobalShortcut(trigger: .functionModifier)
     static let screenAware = GlobalShortcut(trigger: .modifierChord(
@@ -83,7 +106,7 @@ struct GlobalShortcut: Codable, Equatable, Sendable {
 }
 
 extension CGEventFlags {
-    fileprivate var shortcutModifiers: CGEventFlags {
+    var shortcutModifiers: CGEventFlags {
         intersection([.maskCommand, .maskAlternate, .maskShift, .maskControl])
     }
 }
@@ -146,6 +169,8 @@ final class HotkeyMonitor: HotkeyMonitoring {
         let mask = CGEventMask(1 << CGEventType.flagsChanged.rawValue)
             | CGEventMask(1 << CGEventType.keyDown.rawValue)
             | CGEventMask(1 << CGEventType.keyUp.rawValue)
+            | CGEventMask(1 << CGEventType.otherMouseDown.rawValue)
+            | CGEventMask(1 << CGEventType.otherMouseUp.rawValue)
         let context = HotkeyEventTapContext(
             dictate: dictateShortcut,
             pasteLatest: pasteShortcut,
