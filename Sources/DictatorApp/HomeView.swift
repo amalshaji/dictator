@@ -40,12 +40,40 @@ struct HomeView: View {
     }
 
     private var metrics: some View {
-        HStack(spacing: 0) {
-            metric(value: "\(wordsThisWeek)", label: "words this week")
-            metric(value: averageWPM.map(String.init) ?? "—", label: "average wpm")
-            metric(value: averageLatency.map { String(format: "%.0f ms", $0 * 1_000) } ?? "—", label: "pipeline latency")
+        VStack(alignment: .leading, spacing: 24) {
+            statisticsSection(
+                title: "LAST 7 DAYS",
+                words: wordCount(in: weeklyTranscripts),
+                averageWPM: averageWPM(in: weeklyTranscripts),
+                averageLatency: averageLatency(in: weeklyTranscripts)
+            )
+            statisticsSection(
+                title: "ALL TIME",
+                words: model.data.lifetimeStatistics.words,
+                averageWPM: model.data.lifetimeStatistics.averageWPM,
+                averageLatency: model.data.lifetimeStatistics.averagePipelineLatency
+            )
         }
         .padding(.top, 34)
+    }
+
+    private func statisticsSection(
+        title: String,
+        words: Int,
+        averageWPM: Int?,
+        averageLatency: TimeInterval?
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.dictatorUtility(9))
+                .foregroundStyle(DictatorDesign.ink.opacity(0.42))
+                .accessibilityAddTraits(.isHeader)
+            HStack(spacing: 0) {
+                metric(value: "\(words)", label: "words")
+                metric(value: averageWPM.map(String.init) ?? "—", label: "average wpm")
+                metric(value: averageLatency.map { String(format: "%.0f ms", $0 * 1_000) } ?? "—", label: "pipeline latency")
+            }
+        }
     }
 
     private func metric(value: String, label: String) -> some View {
@@ -74,20 +102,23 @@ struct HomeView: View {
         .padding(.vertical, 42)
     }
 
-    private var wordsThisWeek: Int {
+    private var weeklyTranscripts: [TranscriptRecord] {
         let cutoff = Calendar.current.date(byAdding: .day, value: -7, to: Date())!
-        return model.data.transcripts.filter { $0.createdAt >= cutoff }.reduce(0) { $0 + $1.finalText.split(whereSeparator: \.isWhitespace).count }
+        return model.data.transcripts.filter { $0.createdAt >= cutoff }
     }
 
-    private var averageWPM: Int? {
-        let totalSeconds = model.data.transcripts.reduce(0) { $0 + $1.audioDuration }
+    private func wordCount(in transcripts: [TranscriptRecord]) -> Int {
+        transcripts.reduce(0) { $0 + $1.finalText.split(whereSeparator: \.isWhitespace).count }
+    }
+
+    private func averageWPM(in transcripts: [TranscriptRecord]) -> Int? {
+        let totalSeconds = transcripts.reduce(0) { $0 + $1.audioDuration }
         guard totalSeconds > 0 else { return nil }
-        let words = model.data.transcripts.reduce(0) { $0 + $1.finalText.split(whereSeparator: \.isWhitespace).count }
-        return Int(Double(words) / totalSeconds * 60)
+        return Int(Double(wordCount(in: transcripts)) / totalSeconds * 60)
     }
 
-    private var averageLatency: Double? {
-        let latencies = model.data.transcripts.compactMap(\.pipelineLatency)
+    private func averageLatency(in transcripts: [TranscriptRecord]) -> TimeInterval? {
+        let latencies = transcripts.compactMap(\.pipelineLatency)
         guard !latencies.isEmpty else { return nil }
         return latencies.reduce(0, +) / Double(latencies.count)
     }

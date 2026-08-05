@@ -28,6 +28,7 @@
 		2DC038A7A15131623D332F58 /* CleanupProcessingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00FE43DE1A13FEA653407E7C /* CleanupProcessingTests.swift */; };
 		2DF027FBF31328D3A8349411 /* SnippetExpander.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1C677B956D3D95165F5F43E /* SnippetExpander.swift */; };
 		2E8E5726771452D74E96A3E6 /* DictatorCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4D3BCE5B8674726D3FB4D6F3 /* DictatorCore.framework */; };
+		2EC9CF7148A32FB1345B511F /* LifetimeStatistics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D52D683665B64F12A7E1DB1 /* LifetimeStatistics.swift */; };
 		2EEF5B87FE37D09DB89479E9 /* ProviderConnectionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9B9381E298ECEC04E62D9BD /* ProviderConnectionService.swift */; };
 		31D4F5467C74B440E16DEFD1 /* HotkeyEventTapContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B809A2118A74C22F718EDBC /* HotkeyEventTapContext.swift */; };
 		33AE4EE112D2B4B1C9C6363A /* AppleSpeechModelSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A5FC89D1BAE6BCD9BD769C /* AppleSpeechModelSetupView.swift */; };
@@ -193,6 +194,7 @@
 		251D7142875D2A85DB812A67 /* AppleSpeechCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSpeechCoordinator.swift; sourceTree = "<group>"; };
 		27687BA351341A73CB22A924 /* DeepgramSTTProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepgramSTTProvider.swift; sourceTree = "<group>"; };
 		2A75D9708D8EC111D1EBA22B /* AppUpdater.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppUpdater.swift; sourceTree = "<group>"; };
+		2D52D683665B64F12A7E1DB1 /* LifetimeStatistics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LifetimeStatistics.swift; sourceTree = "<group>"; };
 		2E2BC492E2E2611C70891D90 /* GroqSTTProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroqSTTProvider.swift; sourceTree = "<group>"; };
 		3143D0AF2913301C0A5F241C /* GeminiCleanupProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeminiCleanupProvider.swift; sourceTree = "<group>"; };
 		317B8990E911CF6A6A2D5680 /* ModelTokenRate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelTokenRate.swift; sourceTree = "<group>"; };
@@ -401,6 +403,7 @@
 				12C18ACB4C15683A2DF27C1C /* CleanupSafetyValidator.swift */,
 				084B4AC7C735F00DDFCF73E5 /* HTTPClient.swift */,
 				671944A6D1D358C5C90A5991 /* KeychainStore.swift */,
+				2D52D683665B64F12A7E1DB1 /* LifetimeStatistics.swift */,
 				EE6035F53F24EF8037CDD9AF /* LocalStore.swift */,
 				5DE02E176452630D4943B27E /* Models.swift */,
 				317B8990E911CF6A6A2D5680 /* ModelTokenRate.swift */,
@@ -742,6 +745,7 @@
 				DF317AD8F8364B4244D819A4 /* HTTPClient.swift in Sources */,
 				053480535CFF23EAF76B60C5 /* KeychainStore.swift in Sources */,
 				E9692891BA3312A811663CC0 /* LLMWireClients.swift in Sources */,
+				2EC9CF7148A32FB1345B511F /* LifetimeStatistics.swift in Sources */,
 				1134B9A344A7F34735F9D1BC /* LocalStore.swift in Sources */,
 				55E5BF220EAB76BF19372829 /* ModelTokenRate.swift in Sources */,
 				CFD4B1E8D8FAB2D1FE97A5E5 /* Models.swift in Sources */,

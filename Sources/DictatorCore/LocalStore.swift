@@ -2,23 +2,26 @@ import Foundation
 
 public struct PersistedData: Codable, Equatable, Sendable {
     public var transcripts: [TranscriptRecord]
+    public var lifetimeStatistics: LifetimeStatistics
     public var vocabulary: [VocabularyEntry]
     public var clipboard: [ClipboardEntry]
     public var styles: [WritingStyle]
     public var snippets: [SnippetEntry]
 
-    public init(transcripts: [TranscriptRecord] = [], vocabulary: [VocabularyEntry] = [], clipboard: [ClipboardEntry] = [], styles: [WritingStyle] = [], snippets: [SnippetEntry] = []) {
+    public init(transcripts: [TranscriptRecord] = [], lifetimeStatistics: LifetimeStatistics = LifetimeStatistics(), vocabulary: [VocabularyEntry] = [], clipboard: [ClipboardEntry] = [], styles: [WritingStyle] = [], snippets: [SnippetEntry] = []) {
         self.transcripts = transcripts
+        self.lifetimeStatistics = lifetimeStatistics
         self.vocabulary = vocabulary
         self.clipboard = clipboard
         self.styles = styles
         self.snippets = snippets
     }
 
-    private enum CodingKeys: String, CodingKey { case transcripts, vocabulary, clipboard, styles, snippets }
+    private enum CodingKeys: String, CodingKey { case transcripts, lifetimeStatistics, vocabulary, clipboard, styles, snippets }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         transcripts = try values.decodeIfPresent([TranscriptRecord].self, forKey: .transcripts) ?? []
+        lifetimeStatistics = try values.decodeIfPresent(LifetimeStatistics.self, forKey: .lifetimeStatistics) ?? LifetimeStatistics()
         vocabulary = try values.decodeIfPresent([VocabularyEntry].self, forKey: .vocabulary) ?? []
         clipboard = try values.decodeIfPresent([ClipboardEntry].self, forKey: .clipboard) ?? []
         styles = try values.decodeIfPresent([WritingStyle].self, forKey: .styles) ?? []
