@@ -124,9 +124,12 @@ private struct AppleSpeechSetupRow: View {
                     Button(actionTitle) { primarySetupRequested = true }
                         .dictatorButton()
                         .disabled(actionDisabled || primarySetupRequested)
-                    if case .failed = model.appleSpeech.state.readiness {
+                    switch model.appleSpeech.state.readiness {
+                    case .failed, .unavailable:
                         Button("Retry status") { Task { await model.appleSpeech.refresh() } }
                             .dictatorButton(.secondary)
+                    default:
+                        EmptyView()
                     }
                 }
 
