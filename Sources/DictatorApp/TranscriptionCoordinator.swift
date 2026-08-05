@@ -74,6 +74,7 @@ final class TranscriptionCoordinator: TranscriptionCoordinating {
         if selectedProvider == .appleSpeech {
             let mode = currentMode
             onModeChange(mode)
+            if !appleSpeech.state.readiness.isReady { await appleSpeech.refresh() }
             let result = try await appleSpeech.transcribe(audio: audio, vocabulary: vocabulary)
             return .init(result: result, mode: mode)
         }

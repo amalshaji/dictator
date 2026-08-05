@@ -82,6 +82,36 @@ final class OfflineDictationTests: XCTestCase {
         XCTAssertTrue(run.allowsCleanup)
     }
 
+    func testPrimaryAppleProviderRefreshesUnavailableReadinessBeforeTranscribing() async throws {
+        let provider = RecoveringAppleSpeechProvider()
+        let appleSpeech = AppleSpeechCoordinator(
+            provider: provider,
+            selectedLocaleIdentifier: "fr_FR",
+            persistSelection: { _ in }
+        )
+        await appleSpeech.refresh()
+        guard case .unavailable = appleSpeech.state.readiness else {
+            return XCTFail("Expected the first readiness check to be unavailable")
+        }
+        let coordinator = TranscriptionCoordinator(
+            keychain: EmptyCredentialStore(),
+            appleSpeech: appleSpeech,
+            connectivity: StaticConnectivityMonitor(state: .online)
+        )
+
+        let run = try await coordinator.transcribe(
+            audio: audio,
+            selectedProvider: .appleSpeech,
+            selectedModel: nil,
+            fallbackEnabled: false,
+            vocabulary: []
+        )
+
+        XCTAssertEqual(run.result.text, "recovered")
+        XCTAssertEqual(run.result.language, "fr_FR")
+        XCTAssertTrue(appleSpeech.state.readiness.isReady)
+    }
+
     func testAppleOnboardingFailureDoesNotPartiallyEnableFallback() async throws {
         let suiteName = "ai.dictator.tests.offline.atomic.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -311,5 +341,38 @@ private actor UnavailableAppleSpeechProvider: LocalSpeechTranscribing {
         vocabulary: [VocabularyEntry]
     ) async throws -> TranscriptionResult {
         throw ProviderError.unsupported("Unavailable")
+    }
+}
+
+private actor RecoveringAppleSpeechProvider: LocalSpeechTranscribing {
+    private let locale = AppleSpeechLocale(identifier: "fr_FR", engine: .speechTranscriber)
+    private var readinessCheckCount = 0
+
+    func availableLocales() async -> [AppleSpeechLocale] { [locale] }
+
+    func readiness(for localeIdentifier: String) async -> AppleSpeechReadiness {
+        readinessCheckCount += 1
+        return readinessCheckCount == 1 ? .unavailable("Temporarily unavailable") : .ready(locale)
+    }
+
+    func installAssets(
+        for localeIdentifier: String,
+        progress: @escaping @Sendable (Double) -> Void
+    ) async throws -> AppleSpeechReadiness {
+        .ready(locale)
+    }
+
+    func transcribe(
+        audio: RecordedAudio,
+        localeIdentifier: String,
+        vocabulary: [VocabularyEntry]
+    ) async throws -> TranscriptionResult {
+        .init(
+            text: "recovered",
+            language: localeIdentifier,
+            provider: .appleSpeech,
+            model: AppleTranscriptionEngine.speechTranscriber.rawValue,
+            latency: 0
+        )
     }
 }
