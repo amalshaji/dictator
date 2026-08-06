@@ -502,7 +502,7 @@ final class AppModel: ObservableObject {
             cleanupFallbackReason: cleanupFallbackReason,
             offlineMode: transcription.mode == .offline
         )
-        data.transcripts.insert(.init(
+        let transcript = TranscriptRecord(
             rawText: transcription.result.text,
             finalText: finalText,
             sttProvider: transcription.result.provider,
@@ -514,7 +514,9 @@ final class AppModel: ObservableObject {
             pipelineLatency: Self.elapsedSeconds(since: pipelineStarted),
             llmExecution: llmExecution,
             insertionOutcome: outcome.label
-        ), at: 0)
+        )
+        data.lifetimeStatistics.record(transcript)
+        data.transcripts.insert(transcript, at: 0)
         await persist()
         phase = .idle
         hud.hideAfterDelay()

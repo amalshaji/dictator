@@ -1075,6 +1075,11 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertEqual(record.llmExecution?.purpose, .screenAware)
         XCTAssertEqual(record.llmExecution?.provider, .groq)
         XCTAssertEqual(record.llmExecution?.model, modelName)
+        XCTAssertEqual(model.data.lifetimeStatistics.dictations, 1)
+        XCTAssertEqual(model.data.lifetimeStatistics.words, 6)
+        XCTAssertEqual(model.data.lifetimeStatistics.audioSeconds, 1)
+        XCTAssertEqual(model.data.lifetimeStatistics.averageWPM, 360)
+        XCTAssertEqual(model.data.lifetimeStatistics.pipelineLatencySamples, 1)
     }
 
     func testDisabledStyleCannotBeSelected() {
