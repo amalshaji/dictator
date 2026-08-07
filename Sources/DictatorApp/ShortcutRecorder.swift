@@ -17,7 +17,7 @@ struct ShortcutRecorder: View {
                 isRecording ? stopRecording() : startRecording()
             }
             .dictatorButton(isRecording ? .primary : .secondary)
-            .frame(minWidth: 112)
+            .frame(minWidth: 112, alignment: .trailing)
             .accessibilityLabel(isRecording ? "Waiting for shortcut" : "Change shortcut, currently \(shortcut.displayName)")
 
             if let hint {

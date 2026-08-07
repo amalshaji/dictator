@@ -163,7 +163,11 @@ struct SettingsView: View {
                         Text("Click a shortcut, then press a new key combination.")
                             .font(.dictatorBody(11)).foregroundStyle(.secondary)
                         Spacer()
-                        Button("Restore defaults") { model.resetShortcuts() }.dictatorButton(.ghost)
+                        Button("Restore defaults") { model.resetShortcuts() }
+                            .dictatorButton(.ghost)
+                            // Ghost buttons draw no background, so cancel the style's
+                            // horizontal padding to sit the label on the same edge.
+                            .padding(.trailing, -8)
                     }.padding(.top, 5)
                 }
                 settingsSection("Permissions") {
