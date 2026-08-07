@@ -35,6 +35,62 @@ final class HotkeyEventTapContextTests: XCTestCase {
         )
     }
 
+    func testToggleActivationEmitsAPressPerFunctionModifierDownAndNoRelease() throws {
+        let context = makeContext(dictateActivation: .toggle)
+        let down = try makeEvent(flags: .maskSecondaryFn, targetProcessIdentifier: 42)
+        let up = try makeEvent(flags: [])
+
+        XCTAssertEqual(
+            context.process(down, type: .flagsChanged),
+            HotkeyEventOutcome(action: .press(42), consumesEvent: false)
+        )
+        XCTAssertEqual(
+            context.process(up, type: .flagsChanged),
+            HotkeyEventOutcome(action: nil, consumesEvent: false)
+        )
+        XCTAssertEqual(
+            context.process(down, type: .flagsChanged),
+            HotkeyEventOutcome(action: .press(42), consumesEvent: false)
+        )
+    }
+
+    func testToggleActivationStillConsumesKeyShortcutReleaseWithoutEmittingIt() throws {
+        let dictate = GlobalShortcut(keyCode: 8, modifiers: [.maskCommand], keyLabel: "C")
+        let context = makeContext(dictate: dictate, dictateActivation: .toggle)
+        let down = try makeEvent(keyCode: 8, flags: .maskCommand, targetProcessIdentifier: 21)
+        let up = try makeEvent(keyCode: 8, flags: .maskCommand)
+
+        XCTAssertEqual(
+            context.process(down, type: .keyDown),
+            HotkeyEventOutcome(action: .press(21), consumesEvent: true)
+        )
+        XCTAssertEqual(
+            context.process(up, type: .keyUp),
+            HotkeyEventOutcome(action: nil, consumesEvent: true)
+        )
+        XCTAssertEqual(
+            context.process(down, type: .keyDown),
+            HotkeyEventOutcome(action: .press(21), consumesEvent: true)
+        )
+    }
+
+    func testSwitchingActivationModeWhileHeldDoesNotStrandTheNextPress() throws {
+        let context = makeContext()
+        let down = try makeEvent(flags: .maskSecondaryFn)
+        let up = try makeEvent(flags: [])
+        XCTAssertEqual(context.process(down, type: .flagsChanged).action, .press(nil))
+
+        context.configure(
+            dictate: .dictate,
+            dictateActivation: .toggle,
+            pasteLatest: .pasteLatest,
+            openClipboard: .openClipboard
+        )
+
+        XCTAssertEqual(context.process(up, type: .flagsChanged), .ignored)
+        XCTAssertEqual(context.process(down, type: .flagsChanged).action, .press(nil))
+    }
+
     func testScreenAwareModifierChordEmitsOnePressAndRelease() throws {
         let context = makeContext()
         let down = try makeEvent(flags: [.maskControl, .maskAlternate], targetProcessIdentifier: 84)
@@ -103,10 +159,12 @@ final class HotkeyEventTapContextTests: XCTestCase {
     }
 
     private func makeContext(
-        dictate: GlobalShortcut = .dictate
+        dictate: GlobalShortcut = .dictate,
+        dictateActivation: HotkeyActivationMode = .hold
     ) -> HotkeyEventTapContext {
         HotkeyEventTapContext(
             dictate: dictate,
+            dictateActivation: dictateActivation,
             pasteLatest: .pasteLatest,
             openClipboard: .openClipboard,
             onAction: { _ in }

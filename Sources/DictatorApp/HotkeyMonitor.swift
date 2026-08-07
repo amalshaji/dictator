@@ -1,6 +1,16 @@
 @preconcurrency import CoreGraphics
 import Foundation
 
+/// How the dictate shortcut starts and stops a recording.
+enum HotkeyActivationMode: String, CaseIterable, Identifiable, Sendable {
+    /// Record while the shortcut is held; stop on release.
+    case hold
+    /// Start on the first press, stop on the next press.
+    case toggle
+
+    var id: String { rawValue }
+}
+
 struct GlobalShortcut: Codable, Equatable, Sendable {
     enum Trigger: Codable, Equatable, Sendable {
         case key(keyCode: Int64, modifiersRawValue: UInt64, label: String)
@@ -98,7 +108,12 @@ protocol HotkeyMonitoring: AnyObject {
     var onOpenClipboard: (() -> Void)? { get set }
     var isRunning: Bool { get }
 
-    func configure(dictate: GlobalShortcut, pasteLatest: GlobalShortcut, openClipboard: GlobalShortcut)
+    func configure(
+        dictate: GlobalShortcut,
+        dictateActivation: HotkeyActivationMode,
+        pasteLatest: GlobalShortcut,
+        openClipboard: GlobalShortcut
+    )
     func start() throws
     func stop()
 }
@@ -112,6 +127,7 @@ final class HotkeyMonitor: HotkeyMonitoring {
     var onPasteLatest: (() -> Void)?
     var onOpenClipboard: (() -> Void)?
     private var dictateShortcut = GlobalShortcut.dictate
+    private var dictateActivation = HotkeyActivationMode.hold
     private var pasteShortcut = GlobalShortcut.pasteLatest
     private var clipboardShortcut = GlobalShortcut.openClipboard
     private var eventTap: CFMachPort?
@@ -129,12 +145,19 @@ final class HotkeyMonitor: HotkeyMonitoring {
         isValid && isEnabled
     }
 
-    func configure(dictate: GlobalShortcut, pasteLatest: GlobalShortcut, openClipboard: GlobalShortcut) {
+    func configure(
+        dictate: GlobalShortcut,
+        dictateActivation: HotkeyActivationMode,
+        pasteLatest: GlobalShortcut,
+        openClipboard: GlobalShortcut
+    ) {
         dictateShortcut = dictate
+        self.dictateActivation = dictateActivation
         pasteShortcut = pasteLatest
         clipboardShortcut = openClipboard
         eventTapContext?.configure(
             dictate: dictate,
+            dictateActivation: dictateActivation,
             pasteLatest: pasteLatest,
             openClipboard: openClipboard
         )
@@ -148,6 +171,7 @@ final class HotkeyMonitor: HotkeyMonitoring {
             | CGEventMask(1 << CGEventType.keyUp.rawValue)
         let context = HotkeyEventTapContext(
             dictate: dictateShortcut,
+            dictateActivation: dictateActivation,
             pasteLatest: pasteShortcut,
             openClipboard: clipboardShortcut
         ) { [weak self] action in

@@ -24,6 +24,7 @@ struct HotkeyEventOutcome: Equatable, Sendable {
 /// actions across the actor boundary instead of assuming executor isolation.
 final class HotkeyEventTapContext {
     private var dictateShortcut: GlobalShortcut
+    private var dictateActivation: HotkeyActivationMode
     private var pasteShortcut: GlobalShortcut
     private var clipboardShortcut: GlobalShortcut
     private var dictateIsDown = false
@@ -33,11 +34,13 @@ final class HotkeyEventTapContext {
 
     init(
         dictate: GlobalShortcut,
+        dictateActivation: HotkeyActivationMode = .hold,
         pasteLatest: GlobalShortcut,
         openClipboard: GlobalShortcut,
         onAction: @escaping @Sendable (HotkeyAction) -> Void
     ) {
         dictateShortcut = dictate
+        self.dictateActivation = dictateActivation
         pasteShortcut = pasteLatest
         clipboardShortcut = openClipboard
         self.onAction = onAction
@@ -45,10 +48,15 @@ final class HotkeyEventTapContext {
 
     func configure(
         dictate: GlobalShortcut,
+        dictateActivation: HotkeyActivationMode,
         pasteLatest: GlobalShortcut,
         openClipboard: GlobalShortcut
     ) {
+        // A shortcut held across a mode switch can never deliver a matching
+        // release under the new mode, so drop the stale held state.
+        if dictateActivation != self.dictateActivation { dictateIsDown = false }
         dictateShortcut = dictate
+        self.dictateActivation = dictateActivation
         pasteShortcut = pasteLatest
         clipboardShortcut = openClipboard
     }
@@ -69,7 +77,7 @@ final class HotkeyEventTapContext {
             guard down != dictateIsDown else { return .ignored }
             dictateIsDown = down
             return HotkeyEventOutcome(
-                action: down ? .press(targetPID) : .release,
+                action: down ? .press(targetPID) : releaseAction,
                 consumesEvent: false
             )
         }
@@ -98,7 +106,7 @@ final class HotkeyEventTapContext {
             }
             if type == .keyUp, dictateIsDown {
                 dictateIsDown = false
-                return HotkeyEventOutcome(action: .release, consumesEvent: true)
+                return HotkeyEventOutcome(action: releaseAction, consumesEvent: true)
             }
         }
 
@@ -110,6 +118,11 @@ final class HotkeyEventTapContext {
             return HotkeyEventOutcome(action: .pasteLatest, consumesEvent: true)
         }
         return .ignored
+    }
+
+    /// Toggle mode drives both edges from presses, so letting go emits nothing.
+    private var releaseAction: HotkeyAction? {
+        dictateActivation == .toggle ? nil : .release
     }
 
     static let callback: CGEventTapCallBack = { _, type, event, userInfo in

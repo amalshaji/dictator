@@ -53,7 +53,7 @@ private struct MenuBarContent: View {
     var body: some View {
         Button("Open Dictator") { openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true) }
         Divider()
-        Text(model.phase == .listening ? "Listening…" : "Hold \(model.dictateShortcut.displayName) to dictate")
+        Text(model.phase == .listening ? "Listening…" : model.dictateInstruction)
         Button("Paste latest Dictator clipboard") { Task { await model.pasteClipboard() } }
             .disabled(model.data.clipboard.isEmpty)
         Divider()
