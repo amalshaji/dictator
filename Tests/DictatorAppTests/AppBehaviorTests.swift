@@ -251,6 +251,30 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertEqual(controller.model.phase, .idle)
     }
 
+    func testHUDReanchorsAfterScreenParametersChange() async throws {
+        let existingWindows = Set(NSApp.windows.map(ObjectIdentifier.init))
+        let controller = FloatingPanelController()
+        controller.show(.idle)
+        let panel = try XCTUnwrap(NSApp.windows.first {
+            !existingWindows.contains(ObjectIdentifier($0)) && $0 is NSPanel
+        })
+        defer { panel.close() }
+        let anchored = panel.frame
+        panel.setFrameOrigin(NSPoint(x: anchored.minX - 180, y: anchored.minY - 120))
+        XCTAssertNotEqual(panel.frame.origin, anchored.origin, "Test must move the panel off its anchor")
+        let didMove = expectation(forNotification: NSWindow.didMoveNotification, object: panel)
+
+        NotificationCenter.default.post(
+            name: NSApplication.didChangeScreenParametersNotification,
+            object: NSApp
+        )
+
+        await fulfillment(of: [didMove], timeout: 1)
+        XCTAssertEqual(panel.frame.origin.x, anchored.origin.x, accuracy: 1)
+        XCTAssertEqual(panel.frame.origin.y, anchored.origin.y, accuracy: 1)
+        withExtendedLifetime(controller) {}
+    }
+
     func testChangingVisibleHUDPositionDefersPanelResize() async throws {
         let existingWindows = Set(NSApp.windows.map(ObjectIdentifier.init))
         let screen = try XCTUnwrap(NSScreen.main ?? NSScreen.screens.first)
