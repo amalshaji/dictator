@@ -150,6 +150,83 @@ final class HotkeyLifecycleControllerTests: XCTestCase {
         XCTAssertEqual(controller.state, .available)
     }
 
+    func testToggleActivationStartsThenStopsDictationOnRepeatedPresses() async throws {
+        let hotkey = TestHotkeyMonitor(isRunning: true)
+        let controller = HotkeyLifecycleController(
+            monitor: hotkey,
+            notificationCenter: NotificationCenter()
+        )
+        let (model, defaults, suiteName) = try makeModel(
+            hotkeys: controller,
+            recorder: LifecycleAudioRecorder()
+        )
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        model.setDictateActivationMode(.toggle)
+        XCTAssertEqual(defaults.string(forKey: "dictateActivationMode"), "toggle")
+
+        hotkey.onPress?(nil)
+        try await waitForPhase(.listening, on: model)
+
+        hotkey.onPress?(nil)
+        try await waitForPhase(.idle, on: model)
+    }
+
+    func testHoldActivationIgnoresARepeatedPressAndStopsOnRelease() async throws {
+        let hotkey = TestHotkeyMonitor(isRunning: true)
+        let controller = HotkeyLifecycleController(
+            monitor: hotkey,
+            notificationCenter: NotificationCenter()
+        )
+        let (model, defaults, suiteName) = try makeModel(
+            hotkeys: controller,
+            recorder: LifecycleAudioRecorder()
+        )
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        XCTAssertEqual(model.dictateActivationMode, .hold)
+
+        hotkey.onPress?(nil)
+        try await waitForPhase(.listening, on: model)
+        hotkey.onPress?(nil)
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(model.phase, .listening)
+
+        hotkey.onRelease?()
+        try await waitForPhase(.idle, on: model)
+    }
+
+    func testSwitchingActivationModeEndsAnInFlightDictation() throws {
+        let hotkey = TestHotkeyMonitor(isRunning: true)
+        let controller = HotkeyLifecycleController(
+            monitor: hotkey,
+            notificationCenter: NotificationCenter()
+        )
+        let recorder = LifecycleAudioRecorder()
+        let (model, defaults, suiteName) = try makeModel(
+            hotkeys: controller,
+            recorder: recorder
+        )
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        model.phase = .listening
+
+        model.setDictateActivationMode(.toggle)
+
+        XCTAssertEqual(model.phase, .idle)
+        XCTAssertEqual(recorder.cancelCount, 1)
+    }
+
+    private func waitForPhase(
+        _ expected: DictationPhase,
+        on model: AppModel,
+        timeout: Duration = .seconds(2)
+    ) async throws {
+        let deadline = ContinuousClock.now + timeout
+        while ContinuousClock.now < deadline {
+            if model.phase == expected { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(model.phase, expected, "Timed out waiting for phase \(expected)")
+    }
+
     private func makeModel(
         hotkeys: HotkeyLifecycleController,
         recorder: any AudioRecording
@@ -194,6 +271,7 @@ private final class TestHotkeyMonitor: HotkeyMonitoring {
 
     func configure(
         dictate: GlobalShortcut,
+        dictateActivation: HotkeyActivationMode,
         pasteLatest: GlobalShortcut,
         openClipboard: GlobalShortcut
     ) {}

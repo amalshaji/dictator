@@ -49,6 +49,7 @@ final class AppModel: ObservableObject {
     @Published var screenCaptureGranted = CGPreflightScreenCaptureAccess()
     @Published var onboardingComplete = UserDefaults.standard.bool(forKey: "onboardingComplete")
     @Published private(set) var dictateShortcut = GlobalShortcut.dictate
+    @Published private(set) var dictateActivationMode = HotkeyActivationMode.hold
     @Published private(set) var pasteLatestShortcut = GlobalShortcut.pasteLatest
     @Published private(set) var openClipboardShortcut = GlobalShortcut.openClipboard
     @Published var selectedStyleID: UUID? = nil {
@@ -151,6 +152,9 @@ final class AppModel: ObservableObject {
         }
         selectedStyleID = defaults.string(forKey: "selectedStyleID").flatMap(UUID.init(uuidString:))
         dictateShortcut = loadShortcut(forKey: "shortcut.dictate", fallback: .dictate)
+        dictateActivationMode = HotkeyActivationMode(
+            rawValue: defaults.string(forKey: "dictateActivationMode") ?? ""
+        ) ?? .hold
         pasteLatestShortcut = loadShortcut(forKey: "shortcut.pasteLatest", fallback: .pasteLatest)
         openClipboardShortcut = loadShortcut(forKey: "shortcut.openClipboard", fallback: .openClipboard)
         hud.setPositionMode(hudPositionMode)
@@ -164,7 +168,7 @@ final class AppModel: ObservableObject {
             Task { @MainActor in self?.hud.model.push(level: level) }
         }
         hotkeys.onPress = { [weak self] targetPID in
-            Task { @MainActor in await self?.startDictation(targetProcessIdentifier: targetPID) }
+            Task { @MainActor in await self?.handleDictatePress(targetProcessIdentifier: targetPID) }
         }
         hotkeys.onRelease = { [weak self] in Task { @MainActor in await self?.stopDictation() } }
         hotkeys.onScreenAwarePress = { [weak self] targetPID in
@@ -211,6 +215,16 @@ final class AppModel: ObservableObject {
     private static func defaultAppleSpeechProvider() -> (any LocalSpeechTranscribing)? {
         if #available(macOS 26.0, *) { return AppleSpeechTranscriber() }
         return nil
+    }
+
+    /// In toggle mode the same press both starts and stops, so route it against
+    /// the live phase rather than tracking a separate armed flag in the event tap.
+    private func handleDictatePress(targetProcessIdentifier: pid_t?) async {
+        if dictateActivationMode == .toggle, phase == .listening {
+            await stopDictation()
+            return
+        }
+        await startDictation(targetProcessIdentifier: targetProcessIdentifier)
     }
 
     func startDictation(targetProcessIdentifier: pid_t? = nil) async {
@@ -328,7 +342,10 @@ final class AppModel: ObservableObject {
         guard audio.duration >= 0.15 else {
             phase = .idle
             let shortcut = run.isScreenAware ? GlobalShortcut.screenAware : dictateShortcut
-            hud.show(.error("Too short—hold \(shortcut.displayName) while speaking"))
+            let usesToggle = !run.isScreenAware && dictateActivationMode == .toggle
+            hud.show(.error(usesToggle
+                ? "Too short—speak, then press \(shortcut.displayName)"
+                : "Too short—hold \(shortcut.displayName) while speaking"))
             hud.hideAfterDelay()
             return
         }
@@ -728,6 +745,23 @@ final class AppModel: ObservableObject {
         return true
     }
 
+    var dictateInstruction: String {
+        switch dictateActivationMode {
+        case .hold: "Hold \(dictateShortcut.displayName) to dictate"
+        case .toggle: "Press \(dictateShortcut.displayName) to start and stop"
+        }
+    }
+
+    func setDictateActivationMode(_ mode: HotkeyActivationMode) {
+        guard mode != dictateActivationMode else { return }
+        // The in-flight recording was started under the old mode and its stop
+        // edge would never arrive, so end it before switching.
+        if phase == .listening { cancelDictation() }
+        dictateActivationMode = mode
+        defaults.set(mode.rawValue, forKey: "dictateActivationMode")
+        configureHotkeys()
+    }
+
     func resetShortcuts() {
         dictateShortcut = .dictate
         pasteLatestShortcut = .pasteLatest
@@ -957,6 +991,7 @@ final class AppModel: ObservableObject {
     private func configureHotkeys() {
         hotkeys.configure(
             dictate: dictateShortcut,
+            dictateActivation: dictateActivationMode,
             pasteLatest: pasteLatestShortcut,
             openClipboard: openClipboardShortcut
         )

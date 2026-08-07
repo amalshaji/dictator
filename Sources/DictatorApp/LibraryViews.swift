@@ -120,10 +120,28 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 26) {
                 Text("Settings").font(.dictatorDisplay(30))
                 settingsSection("Shortcuts") {
-                    shortcutRow("Dictate", detail: "Hold while speaking") {
+                    shortcutRow(
+                        "Dictate",
+                        detail: model.dictateActivationMode == .hold
+                            ? "Hold while speaking"
+                            : "Press to start, press again to stop"
+                    ) {
                         ShortcutRecorder(shortcut: model.dictateShortcut, allowsFunctionModifier: true) {
                             model.setShortcut($0, for: .dictate)
                         }
+                    }
+                    shortcutRow("Dictate behavior", detail: "Choose how the dictate shortcut starts and stops recording.") {
+                        DictatorSegmentedSwitcher(
+                            label: "Dictate shortcut behavior",
+                            options: [
+                                .init(title: "Hold", icon: "hand.tap"),
+                                .init(title: "Toggle", icon: "arrow.triangle.2.circlepath"),
+                            ],
+                            selection: Binding(
+                                get: { model.dictateActivationMode == .hold ? 0 : 1 },
+                                set: { model.setDictateActivationMode($0 == 0 ? .hold : .toggle) }
+                            )
+                        )
                     }
                     shortcutRow("Screen aware", detail: "Hold while speaking about the focused window") {
                         Text(GlobalShortcut.screenAware.displayName)

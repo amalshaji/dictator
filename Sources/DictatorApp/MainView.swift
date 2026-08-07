@@ -84,7 +84,8 @@ struct MainView: View {
                         .font(.dictatorUtility(9)).foregroundStyle(.white.opacity(0.78))
                         .padding(.horizontal, 7).frame(height: 22)
                         .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    Text("Hold to speak").font(.dictatorBody(10.5)).foregroundStyle(.white.opacity(0.46))
+                    Text(model.dictateActivationMode == .hold ? "Hold to speak" : "Press to start and stop")
+                        .font(.dictatorBody(10.5)).foregroundStyle(.white.opacity(0.46))
                 }
             }
             .font(.dictatorBody(11, weight: .medium))

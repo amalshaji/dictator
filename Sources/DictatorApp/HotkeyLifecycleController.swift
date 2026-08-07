@@ -73,11 +73,13 @@ final class HotkeyLifecycleController {
 
     func configure(
         dictate: GlobalShortcut,
+        dictateActivation: HotkeyActivationMode,
         pasteLatest: GlobalShortcut,
         openClipboard: GlobalShortcut
     ) {
         monitor.configure(
             dictate: dictate,
+            dictateActivation: dictateActivation,
             pasteLatest: pasteLatest,
             openClipboard: openClipboard
         )
