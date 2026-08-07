@@ -95,6 +95,7 @@ final class FloatingPanelController {
     private var pointerTrackingTask: Task<Void, Never>?
     private var positionUpdateTask: Task<Void, Never>?
     private var lastPointerLocation: NSPoint?
+    private var screenObserver: NSObjectProtocol?
     private let transitionDuration = 0.24
     private let pointerLocation: () -> NSPoint
 
@@ -114,13 +115,33 @@ final class FloatingPanelController {
         panel.hidesOnDeactivate = false
         panel.ignoresMouseEvents = true
         panel.contentView = NSHostingView(rootView: FloatingHUDView(model: model))
+        observeScreenChanges()
     }
 
     isolated deinit {
         hideTask?.cancel()
         pointerTrackingTask?.cancel()
         positionUpdateTask?.cancel()
+        if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
         panel.close()
+    }
+
+    private func observeScreenChanges() {
+        screenObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reanchorForScreenChange() }
+        }
+    }
+
+    /// Panel frames are absolute screen coordinates, so connecting or disconnecting a
+    /// display leaves the HUD stranded wherever its old geometry landed.
+    private func reanchorForScreenChange() {
+        guard panel.isVisible else { return }
+        lastPointerLocation = nil
+        resize(for: model.phase, animated: false)
     }
 
     func setPositionMode(_ mode: HUDPositionMode) {
