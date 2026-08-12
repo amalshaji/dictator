@@ -55,7 +55,7 @@ struct ProvidersView: View {
             Divider().overlay(DictatorDesign.border)
             VStack(alignment: .leading, spacing: 6) {
                 Text("Custom instructions").font(.dictatorBody(11, weight: .semibold)).foregroundStyle(DictatorDesign.ink.opacity(0.72))
-                Text("Optional. Tell the model how to polish transcripts—grammar, tone, phrasing. Applied on top of your selected style.")
+                Text("Optional. Tell the model how to polish transcripts—grammar, tone, phrasing. Applied on top of your selected style. Up to \(AppModel.maximumCleanupInstructionLength) characters.")
                     .font(.dictatorBody(11)).foregroundStyle(.secondary)
                 TextEditor(text: Binding(
                     get: { model.cleanupCustomInstruction },

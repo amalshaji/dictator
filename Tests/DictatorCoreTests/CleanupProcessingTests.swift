@@ -34,20 +34,22 @@ final class CleanupProcessingTests: XCTestCase {
         let input = CleanupInput.transcription("hello")
         let prompt = CleanupPrompt.system(request: .init(input: input, customInstruction: "Prefer British spelling"))
         XCTAssertTrue(prompt.contains("Prefer British spelling"))
-        XCTAssertTrue(prompt.contains("never override them"))
+        XCTAssertTrue(prompt.contains("never change meaning"))
 
         XCTAssertFalse(CleanupPrompt.system(request: .init(input: input, customInstruction: "   ")).contains("user preferences"))
         XCTAssertFalse(CleanupPrompt.system(request: .init(input: input)).contains("user preferences"))
     }
 
-    func testPromptCombinesStyleAndCustomInstruction() {
+    func testPromptAppliesCustomInstructionAfterStyle() throws {
         let prompt = CleanupPrompt.system(request: .init(
             input: .transcription("hello"),
-            styleInstruction: "Concise email tone",
-            customInstruction: "Expand contractions"
+            styleInstruction: "Use US spelling",
+            customInstruction: "Prefer British spelling"
         ))
-        XCTAssertTrue(prompt.contains("Concise email tone"))
-        XCTAssertTrue(prompt.contains("Expand contractions"))
+        let styleIndex = try XCTUnwrap(prompt.range(of: "Use US spelling")).lowerBound
+        let customIndex = try XCTUnwrap(prompt.range(of: "Prefer British spelling")).lowerBound
+        XCTAssertLessThan(styleIndex, customIndex, "Custom instruction must follow the style so it takes precedence")
+        XCTAssertTrue(prompt.contains("They override the writing style when the two conflict"))
     }
 
     func testTranscriptProcessorReturnsCleanedTextAndMetadata() async {

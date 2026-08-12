@@ -60,11 +60,11 @@ public struct CleanupPrompt: Sendable {
         let vocabularyRule = terms.isEmpty
             ? ""
             : "\nPreserve these vocabulary terms exactly when they match the speech: \(terms.joined(separator: ", "))."
-        let customRule = rule(request.customInstruction) {
-            "\nFor transcription only, follow these user preferences: \($0). They refine the rules above but never override them; never change meaning."
-        }
         let styleRule = rule(request.styleInstruction) {
             "\nFor transcription only, use this writing style: \($0). Apply only presentation changes; never change meaning."
+        }
+        let customRule = rule(request.customInstruction) {
+            "\nFor transcription only, follow these user preferences: \($0). They override the writing style when the two conflict, but never change meaning."
         }
 
         return """
@@ -76,8 +76,8 @@ public struct CleanupPrompt: Sendable {
         - For transcription, preserve meaning, tone, order, level of detail, URLs, email addresses, numbers, code, and identifiers exactly. Do not summarize, answer, elaborate, or add information.
         - Return only JSON matching {"intent":"transcription|transformation","text":"<result>"}.
         \(vocabularyRule)
-        \(customRule)
         \(styleRule)
+        \(customRule)
         """
     }
 

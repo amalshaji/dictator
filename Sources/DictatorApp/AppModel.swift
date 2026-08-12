@@ -56,6 +56,7 @@ final class AppModel: ObservableObject {
         didSet { defaults.set(selectedStyleID?.uuidString, forKey: "selectedStyleID") }
     }
     @Published private(set) var cleanupCustomInstruction = ""
+    static let maximumCleanupInstructionLength = 2_000
     let pricing = PricingStore()
     let appleSpeech: AppleSpeechCoordinator
 
@@ -152,7 +153,7 @@ final class AppModel: ObservableObject {
             defaults.set(hudPositionMode.rawValue, forKey: "hudPositionMode")
         }
         selectedStyleID = defaults.string(forKey: "selectedStyleID").flatMap(UUID.init(uuidString:))
-        cleanupCustomInstruction = defaults.string(forKey: "cleanupCustomInstruction") ?? ""
+        cleanupCustomInstruction = String((defaults.string(forKey: "cleanupCustomInstruction") ?? "").prefix(Self.maximumCleanupInstructionLength))
         dictateShortcut = loadShortcut(forKey: "shortcut.dictate", fallback: .dictate)
         dictateActivationMode = HotkeyActivationMode(
             rawValue: defaults.string(forKey: "dictateActivationMode") ?? ""
@@ -844,8 +845,9 @@ final class AppModel: ObservableObject {
     }
 
     func setCleanupCustomInstruction(_ instruction: String) {
-        cleanupCustomInstruction = instruction
-        defaults.set(instruction, forKey: "cleanupCustomInstruction")
+        let bounded = String(instruction.prefix(Self.maximumCleanupInstructionLength))
+        cleanupCustomInstruction = bounded
+        defaults.set(bounded, forKey: "cleanupCustomInstruction")
     }
 
     func selectScreenAwareProvider(_ provider: ProviderKind) {
