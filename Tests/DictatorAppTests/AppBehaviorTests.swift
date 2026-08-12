@@ -67,6 +67,31 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertEqual(model.hudPositionMode, .pointer)
     }
 
+    func testCleanupCustomInstructionPersistsAndRestores() throws {
+        let suiteName = "ai.dictator.tests.cleanup-instruction.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let model = AppModel(
+            keychain: HUDTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor()
+        )
+        XCTAssertEqual(model.cleanupCustomInstruction, "")
+
+        model.setCleanupCustomInstruction("Prefer British spelling")
+        XCTAssertEqual(defaults.string(forKey: "cleanupCustomInstruction"), "Prefer British spelling")
+
+        let restored = AppModel(
+            keychain: HUDTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor()
+        )
+        XCTAssertEqual(restored.cleanupCustomInstruction, "Prefer British spelling")
+    }
+
     func testAppModelMigratesBottomHUDModeToNotch() throws {
         let suiteName = "ai.dictator.tests.hud-position-migration.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))

@@ -18,17 +18,7 @@ struct ProvidersView: View {
                 if tab == 0 {
                     providerList(model.sttMetadata, purpose: .speechToText)
                 } else if tab == 1 {
-                    HStack(spacing: 16) {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("Clean up transcripts").font(.dictatorBody(13, weight: .semibold))
-                            Text("Improve punctuation and apply your selected style.").font(.dictatorBody(11)).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Toggle("", isOn: $model.cleanupEnabled).labelsHidden().toggleStyle(.switch).tint(DictatorDesign.signalInk)
-                    }
-                    .padding(14)
-                    .background(DictatorDesign.control, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).stroke(DictatorDesign.border))
+                    cleanupControl
                     providerList(CleanupProviderRegistry.metadata, purpose: .cleanup)
                 } else {
                     screenAwareControl
@@ -50,6 +40,34 @@ struct ProvidersView: View {
             ],
             selection: $tab
         )
+    }
+
+    private var cleanupControl: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Clean up transcripts").font(.dictatorBody(13, weight: .semibold))
+                    Text("Improve punctuation and apply your selected style.").font(.dictatorBody(11)).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Toggle("", isOn: $model.cleanupEnabled).labelsHidden().toggleStyle(.switch).tint(DictatorDesign.signalInk)
+            }
+            Divider().overlay(DictatorDesign.border)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Custom instructions").font(.dictatorBody(11, weight: .semibold)).foregroundStyle(DictatorDesign.ink.opacity(0.72))
+                Text("Optional. Tell the model how to polish transcripts—grammar, tone, phrasing. Applied on top of your selected style.")
+                    .font(.dictatorBody(11)).foregroundStyle(.secondary)
+                TextEditor(text: Binding(
+                    get: { model.cleanupCustomInstruction },
+                    set: { model.setCleanupCustomInstruction($0) }
+                ))
+                .font(.dictatorBody(13)).frame(minHeight: 64)
+                .dictatorEditor()
+            }
+        }
+        .padding(14)
+        .background(DictatorDesign.control, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).stroke(DictatorDesign.border))
     }
 
     private var screenAwareControl: some View {

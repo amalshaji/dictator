@@ -18,7 +18,7 @@ final class CleanupProcessingTests: XCTestCase {
     }
 
     func testPromptRoutesSelectionEditsWithoutInventingCheckboxes() throws {
-        let prompt = CleanupPrompt.system(vocabulary: [])
+        let prompt = CleanupPrompt.system(request: .init(input: .transcription("hello")))
         XCTAssertTrue(prompt.contains("transcription"))
         XCTAssertTrue(prompt.contains("transformation"))
         XCTAssertFalse(prompt.contains("- [ ]"))
@@ -28,6 +28,26 @@ final class CleanupProcessingTests: XCTestCase {
         )
         XCTAssertTrue(user.contains("make it lowercase"))
         XCTAssertTrue(user.contains("HELLO WORLD"))
+    }
+
+    func testPromptIncludesCustomInstructionForTranscriptionOnly() {
+        let input = CleanupInput.transcription("hello")
+        let prompt = CleanupPrompt.system(request: .init(input: input, customInstruction: "Prefer British spelling"))
+        XCTAssertTrue(prompt.contains("Prefer British spelling"))
+        XCTAssertTrue(prompt.contains("never override them"))
+
+        XCTAssertFalse(CleanupPrompt.system(request: .init(input: input, customInstruction: "   ")).contains("user preferences"))
+        XCTAssertFalse(CleanupPrompt.system(request: .init(input: input)).contains("user preferences"))
+    }
+
+    func testPromptCombinesStyleAndCustomInstruction() {
+        let prompt = CleanupPrompt.system(request: .init(
+            input: .transcription("hello"),
+            styleInstruction: "Concise email tone",
+            customInstruction: "Expand contractions"
+        ))
+        XCTAssertTrue(prompt.contains("Concise email tone"))
+        XCTAssertTrue(prompt.contains("Expand contractions"))
     }
 
     func testTranscriptProcessorReturnsCleanedTextAndMetadata() async {

@@ -36,7 +36,7 @@ public struct CloudflareCleanupProvider: CleanupLLMProvider {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let body = RequestBody(
             messages: [
-                .init(role: "system", content: CleanupPrompt.system(vocabulary: cleanup.vocabulary, styleInstruction: cleanup.styleInstruction)),
+                .init(role: "system", content: CleanupPrompt.system(request: cleanup)),
                 .init(role: "user", content: try CleanupPrompt.user(request: cleanup))
             ],
             responseFormat: .init(type: "json_object"),

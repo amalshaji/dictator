@@ -33,10 +33,7 @@ public struct OpenAICompatibleCleanupProvider: CleanupLLMProvider {
         let result = try await client.complete(
             model: model,
             messages: [
-                .init(role: "system", content: .text(CleanupPrompt.system(
-                    vocabulary: cleanup.vocabulary,
-                    styleInstruction: cleanup.styleInstruction
-                ))),
+                .init(role: "system", content: .text(CleanupPrompt.system(request: cleanup))),
                 .init(role: "user", content: .text(try CleanupPrompt.user(request: cleanup)))
             ],
             credentials: credentials

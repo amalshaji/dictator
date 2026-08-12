@@ -5,17 +5,20 @@ public struct TranscriptCleanupConfiguration: Sendable {
     public let model: String
     public let credentials: ProviderCredentials
     public let styleInstruction: String?
+    public let customInstruction: String?
 
     public init(
         provider: any CleanupLLMProvider,
         model: String,
         credentials: ProviderCredentials,
-        styleInstruction: String? = nil
+        styleInstruction: String? = nil,
+        customInstruction: String? = nil
     ) {
         self.provider = provider
         self.model = model
         self.credentials = credentials
         self.styleInstruction = styleInstruction
+        self.customInstruction = customInstruction
     }
 }
 
@@ -48,7 +51,8 @@ public struct TranscriptProcessor: Sendable {
         let request = CleanupRequest(
             input: input,
             vocabulary: vocabulary,
-            styleInstruction: cleanup.styleInstruction
+            styleInstruction: cleanup.styleInstruction,
+            customInstruction: cleanup.customInstruction
         )
         let outcome = await CleanupCoordinator().cleanOrFallback(
             request: request,
