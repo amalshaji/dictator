@@ -18,7 +18,7 @@ final class CleanupProcessingTests: XCTestCase {
     }
 
     func testPromptRoutesSelectionEditsWithoutInventingCheckboxes() throws {
-        let prompt = CleanupPrompt.system(vocabulary: [])
+        let prompt = CleanupPrompt.system(request: .init(input: .transcription("hello")))
         XCTAssertTrue(prompt.contains("transcription"))
         XCTAssertTrue(prompt.contains("transformation"))
         XCTAssertFalse(prompt.contains("- [ ]"))
@@ -28,6 +28,28 @@ final class CleanupProcessingTests: XCTestCase {
         )
         XCTAssertTrue(user.contains("make it lowercase"))
         XCTAssertTrue(user.contains("HELLO WORLD"))
+    }
+
+    func testPromptIncludesCustomInstructionForTranscriptionOnly() {
+        let input = CleanupInput.transcription("hello")
+        let prompt = CleanupPrompt.system(request: .init(input: input, customInstruction: "Prefer British spelling"))
+        XCTAssertTrue(prompt.contains("Prefer British spelling"))
+        XCTAssertTrue(prompt.contains("never change meaning"))
+
+        XCTAssertFalse(CleanupPrompt.system(request: .init(input: input, customInstruction: "   ")).contains("user preferences"))
+        XCTAssertFalse(CleanupPrompt.system(request: .init(input: input)).contains("user preferences"))
+    }
+
+    func testPromptAppliesCustomInstructionAfterStyle() throws {
+        let prompt = CleanupPrompt.system(request: .init(
+            input: .transcription("hello"),
+            styleInstruction: "Use US spelling",
+            customInstruction: "Prefer British spelling"
+        ))
+        let styleIndex = try XCTUnwrap(prompt.range(of: "Use US spelling")).lowerBound
+        let customIndex = try XCTUnwrap(prompt.range(of: "Prefer British spelling")).lowerBound
+        XCTAssertLessThan(styleIndex, customIndex, "Custom instruction must follow the style so it takes precedence")
+        XCTAssertTrue(prompt.contains("They override the writing style when the two conflict"))
     }
 
     func testTranscriptProcessorReturnsCleanedTextAndMetadata() async {

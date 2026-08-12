@@ -55,15 +55,17 @@ public struct ScreenAwarePrompt: Sendable {
 }
 
 public struct CleanupPrompt: Sendable {
-    public static func system(vocabulary: [VocabularyEntry], styleInstruction: String? = nil) -> String {
-        let terms = vocabulary.filter(\.isEnabled).map(\.value)
+    public static func system(request: CleanupRequest) -> String {
+        let terms = request.vocabulary.filter(\.isEnabled).map(\.value)
         let vocabularyRule = terms.isEmpty
             ? ""
             : "\nPreserve these vocabulary terms exactly when they match the speech: \(terms.joined(separator: ", "))."
-        let styleRule = styleInstruction
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .flatMap { $0.isEmpty ? nil : "\nFor transcription only, use this writing style: \($0). Apply only presentation changes; never change meaning." }
-            ?? ""
+        let styleRule = rule(request.styleInstruction) {
+            "\nFor transcription only, use this writing style: \($0). Apply only presentation changes; never change meaning."
+        }
+        let customRule = rule(request.customInstruction) {
+            "\nFor transcription only, follow these user preferences: \($0). They override the writing style when the two conflict, but never change meaning."
+        }
 
         return """
         Decide whether the speaker is dictating new text or requesting an edit to selected text.
@@ -75,7 +77,15 @@ public struct CleanupPrompt: Sendable {
         - Return only JSON matching {"intent":"transcription|transformation","text":"<result>"}.
         \(vocabularyRule)
         \(styleRule)
+        \(customRule)
         """
+    }
+
+    private static func rule(_ instruction: String?, _ template: (String) -> String) -> String {
+        instruction
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .flatMap { $0.isEmpty ? nil : template($0) }
+            ?? ""
     }
 
     public static func user(request: CleanupRequest) throws -> String {

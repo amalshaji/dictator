@@ -67,6 +67,57 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertEqual(model.hudPositionMode, .pointer)
     }
 
+    func testCleanupCustomInstructionPersistsAndRestores() throws {
+        let suiteName = "ai.dictator.tests.cleanup-instruction.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let model = AppModel(
+            keychain: HUDTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor()
+        )
+        XCTAssertEqual(model.cleanupCustomInstruction, "")
+
+        model.setCleanupCustomInstruction("Prefer British spelling")
+        XCTAssertEqual(defaults.string(forKey: "cleanupCustomInstruction"), "Prefer British spelling")
+
+        let restored = AppModel(
+            keychain: HUDTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor()
+        )
+        XCTAssertEqual(restored.cleanupCustomInstruction, "Prefer British spelling")
+    }
+
+    func testCleanupCustomInstructionIsBoundedToMaximumLength() throws {
+        let suiteName = "ai.dictator.tests.cleanup-instruction-bound.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let limit = AppModel.maximumCleanupInstructionLength
+
+        let model = AppModel(
+            keychain: HUDTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor()
+        )
+        model.setCleanupCustomInstruction(String(repeating: "a", count: limit + 500))
+        XCTAssertEqual(model.cleanupCustomInstruction.count, limit)
+        XCTAssertEqual(defaults.string(forKey: "cleanupCustomInstruction")?.count, limit)
+
+        defaults.set(String(repeating: "b", count: limit + 500), forKey: "cleanupCustomInstruction")
+        let restored = AppModel(
+            keychain: HUDTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor()
+        )
+        XCTAssertEqual(restored.cleanupCustomInstruction.count, limit)
+    }
+
     func testAppModelMigratesBottomHUDModeToNotch() throws {
         let suiteName = "ai.dictator.tests.hud-position-migration.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))

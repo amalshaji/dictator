@@ -192,15 +192,18 @@ public struct CleanupRequest: Equatable, Sendable {
     public var input: CleanupInput
     public var vocabulary: [VocabularyEntry]
     public var styleInstruction: String?
+    public var customInstruction: String?
 
     public init(
         input: CleanupInput,
         vocabulary: [VocabularyEntry] = [],
-        styleInstruction: String? = nil
+        styleInstruction: String? = nil,
+        customInstruction: String? = nil
     ) {
         self.input = input
         self.vocabulary = vocabulary
         self.styleInstruction = styleInstruction
+        self.customInstruction = customInstruction
     }
 }
 

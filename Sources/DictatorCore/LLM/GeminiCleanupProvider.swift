@@ -21,10 +21,7 @@ public struct GeminiCleanupProvider: CleanupLLMProvider {
     public func clean(request cleanup: CleanupRequest, model: String, credentials: ProviderCredentials) async throws -> CleanupResult {
         let result = try await client.generate(
             model: model,
-            systemPrompt: CleanupPrompt.system(
-                vocabulary: cleanup.vocabulary,
-                styleInstruction: cleanup.styleInstruction
-            ),
+            systemPrompt: CleanupPrompt.system(request: cleanup),
             userParts: [.init(text: try CleanupPrompt.user(request: cleanup))],
             credentials: credentials
         )

@@ -55,6 +55,8 @@ final class AppModel: ObservableObject {
     @Published var selectedStyleID: UUID? = nil {
         didSet { defaults.set(selectedStyleID?.uuidString, forKey: "selectedStyleID") }
     }
+    @Published private(set) var cleanupCustomInstruction = ""
+    static let maximumCleanupInstructionLength = 2_000
     let pricing = PricingStore()
     let appleSpeech: AppleSpeechCoordinator
 
@@ -151,6 +153,7 @@ final class AppModel: ObservableObject {
             defaults.set(hudPositionMode.rawValue, forKey: "hudPositionMode")
         }
         selectedStyleID = defaults.string(forKey: "selectedStyleID").flatMap(UUID.init(uuidString:))
+        cleanupCustomInstruction = String((defaults.string(forKey: "cleanupCustomInstruction") ?? "").prefix(Self.maximumCleanupInstructionLength))
         dictateShortcut = loadShortcut(forKey: "shortcut.dictate", fallback: .dictate)
         dictateActivationMode = HotkeyActivationMode(
             rawValue: defaults.string(forKey: "dictateActivationMode") ?? ""
@@ -841,6 +844,12 @@ final class AppModel: ObservableObject {
         hud.setPositionMode(mode)
     }
 
+    func setCleanupCustomInstruction(_ instruction: String) {
+        let bounded = String(instruction.prefix(Self.maximumCleanupInstructionLength))
+        cleanupCustomInstruction = bounded
+        defaults.set(bounded, forKey: "cleanupCustomInstruction")
+    }
+
     func selectScreenAwareProvider(_ provider: ProviderKind) {
         selectedScreenAwareLLM = provider
     }
@@ -932,11 +941,13 @@ final class AppModel: ObservableObject {
         }
         let model = configuredModel(for: .cleanup, provider: selectedLLM) ?? provider.metadata.defaultModel
         let style = data.styles.first { $0.id == selectedStyleID && $0.isEnabled }?.instruction
+        let custom = cleanupCustomInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
         return TranscriptCleanupConfiguration(
             provider: provider,
             model: model,
             credentials: credentials,
-            styleInstruction: style
+            styleInstruction: style,
+            customInstruction: custom.isEmpty ? nil : custom
         )
     }
 
