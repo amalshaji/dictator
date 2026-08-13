@@ -108,10 +108,17 @@ jobs:
       - name: Build canary assets
         if: steps.existing.outputs.exists != 'true'
         env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           BUILD_NUMBER: ${{ steps.meta.outputs.build_number }}
           VERSION: ${{ steps.meta.outputs.version }}
         run: |
-          scripts/release/build-release.sh "$VERSION" "$BUILD_NUMBER" release
+          scripts/release/with-signing-keychain.sh \
+            scripts/release/build-release.sh "$VERSION" "$BUILD_NUMBER" release
           scripts/release/verify-release-assets.sh release "$VERSION" "$BUILD_NUMBER"
 
       - name: Attest canary assets

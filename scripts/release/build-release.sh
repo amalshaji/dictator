@@ -6,6 +6,17 @@ if [[ $# -ne 3 ]]; then
   exit 2
 fi
 
+for variable in \
+  APPLE_ID \
+  APPLE_APP_SPECIFIC_PASSWORD \
+  APPLE_SIGNING_IDENTITY \
+  APPLE_TEAM_ID; do
+  if [[ -z ${!variable:-} ]]; then
+    echo "$variable must be set" >&2
+    exit 1
+  fi
+done
+
 version=$1
 build_number=$2
 output_dir=$3
@@ -35,8 +46,10 @@ xcodebuild \
   ARCHS='arm64 x86_64' \
   ONLY_ACTIVE_ARCH=NO \
   CODE_SIGN_STYLE=Manual \
-  CODE_SIGN_IDENTITY=- \
-  DEVELOPMENT_TEAM= \
+  "CODE_SIGN_IDENTITY=$APPLE_SIGNING_IDENTITY" \
+  "DEVELOPMENT_TEAM=$APPLE_TEAM_ID" \
+  CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
+  OTHER_CODE_SIGN_FLAGS=--timestamp \
   MARKETING_VERSION="$version" \
   CURRENT_PROJECT_VERSION="$build_number" \
   build
@@ -50,7 +63,15 @@ test -d "$sparkle"
 test -L "$sparkle/Versions/Current"
 codesign --verify --deep --strict --verbose=2 "$app"
 signature_details=$(codesign -dv --verbose=4 "$app" 2>&1)
-grep -q 'Signature=adhoc' <<<"$signature_details"
+grep -Fq "Authority=$APPLE_SIGNING_IDENTITY" <<<"$signature_details"
+grep -Fq "TeamIdentifier=$APPLE_TEAM_ID" <<<"$signature_details"
+grep -Eq '^Timestamp=' <<<"$signature_details"
+grep -Eq '^CodeDirectory .*flags=.*runtime' <<<"$signature_details"
+entitlements=$(codesign -d --entitlements - "$app" 2>/dev/null)
+if grep -q 'com.apple.security.get-task-allow' <<<"$entitlements"; then
+  echo "Release app must not include com.apple.security.get-task-allow" >&2
+  exit 1
+fi
 lipo -archs "$executable" | grep -q 'arm64'
 lipo -archs "$executable" | grep -q 'x86_64'
 otool -L "$executable" | grep -q 'Sparkle.framework'
@@ -58,3 +79,4 @@ otool -L "$executable" | grep -q 'Sparkle.framework'
 [[ $(plutil -extract CFBundleVersion raw "$app/Contents/Info.plist") == "$build_number" ]]
 
 scripts/release/create-dmg.sh "$app" "$version" "$output_dir"
+scripts/release/notarize-release.sh "$output_dir" "$version"

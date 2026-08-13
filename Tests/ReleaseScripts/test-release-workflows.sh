@@ -107,6 +107,7 @@ if grep -q 'git push origin HEAD:main\|release-tag\.sh ensure\|gh release' \
   exit 1
 fi
 grep -q '^    needs: version$' <<<"$prepare_job"
+grep -q '^    environment: release$' <<<"$prepare_job"
 grep -q '^      contents: read$' <<<"$prepare_job"
 if grep -q 'contents: write\|release-tag\.sh ensure\|gh release' <<<"$prepare_job"; then
   echo "Stable preparation must not have release mutation capabilities" >&2
@@ -133,6 +134,16 @@ assert_before "$canary" 'scripts/release/build-release.sh' \
 assert_before "$canary" 'actions/attest-build-provenance@' \
   'scripts/release/release-tag.sh ensure'
 
+for workflow in "$stable" "$canary"; do
+  assert_count "$workflow" 'scripts/release/with-signing-keychain.sh' 1
+  assert_contains "$workflow" 'APPLE_CERTIFICATE:.*secrets\.APPLE_CERTIFICATE'
+  assert_contains "$workflow" 'APPLE_CERTIFICATE_PASSWORD:.*secrets\.APPLE_CERTIFICATE_PASSWORD'
+  assert_contains "$workflow" 'APPLE_SIGNING_IDENTITY:.*secrets\.APPLE_SIGNING_IDENTITY'
+  assert_contains "$workflow" 'APPLE_ID:.*secrets\.APPLE_ID'
+  assert_contains "$workflow" 'APPLE_APP_SPECIFIC_PASSWORD:.*secrets\.APPLE_APP_SPECIFIC_PASSWORD'
+  assert_contains "$workflow" 'APPLE_TEAM_ID:.*secrets\.APPLE_TEAM_ID'
+done
+
 for workflow in .github/workflows/ci.yml "$stable" "$canary"; do
   assert_absent "$workflow" 'brew install xcodegen'
 done
@@ -140,12 +151,22 @@ assert_contains .github/workflows/ci.yml 'scripts/xcodegen.sh --version'
 assert_contains .github/workflows/ci.yml 'scripts/xcodegen.sh generate'
 assert_contains .github/workflows/ci.yml 'Tests/ReleaseScripts/test-release-version.sh'
 assert_contains scripts/release/build-release.sh 'scripts/xcodegen.sh generate'
+assert_contains scripts/release/build-release.sh 'CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO'
+assert_contains scripts/release/build-release.sh 'OTHER_CODE_SIGN_FLAGS=--timestamp'
+assert_contains scripts/release/build-release.sh 'APPLE_SIGNING_IDENTITY'
+assert_absent scripts/release/build-release.sh 'CODE_SIGN_IDENTITY=-'
+assert_absent scripts/release/build-release.sh 'Signature=adhoc'
+assert_contains scripts/release/verify-release-assets.sh 'stapler validate'
+assert_contains scripts/release/verify-release-assets.sh 'spctl --assess'
+assert_contains scripts/release/verify-release-assets.sh 'type execute'
 # shellcheck disable=SC2016
 assert_absent README.md 'Bump `MARKETING_VERSION`'
 # shellcheck disable=SC2016
 assert_contains README.md '`patch`, `minor`, `major`, or `explicit`'
 # shellcheck disable=SC2016
 assert_contains README.md 'creates a version-only release PR'
+assert_absent README.md 'xattr -dr com\.apple\.quarantine'
+assert_contains README.md 'Developer ID-signed and notarized'
 # shellcheck disable=SC2016
 assert_absent AGENTS.md '`xcodegen generate`'
 # shellcheck disable=SC2016
