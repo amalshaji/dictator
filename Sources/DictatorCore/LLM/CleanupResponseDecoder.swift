@@ -11,12 +11,17 @@ enum CleanupResponseDecoder {
         case .transcription: .transcription(text)
         case .transformation: .transformation(text)
         }
-        try CleanupSafetyValidator.validate(request: request, output: output)
+        try CleanupSafetyValidator.validate(
+            request: request,
+            output: output,
+            retractionApplied: payload.intent == .transcription && payload.retractionApplied == true
+        )
         return output
     }
 
     private struct Payload: Decodable {
         let intent: CleanupIntent
         let text: String
+        let retractionApplied: Bool?
     }
 }

@@ -8,15 +8,22 @@ public enum CleanupSafetyValidator {
         #"`[^`]+`"#
     ]
 
-    public static func validate(raw: String, cleaned: String, vocabulary: [VocabularyEntry]) throws {
+    public static func validate(
+        raw: String,
+        cleaned: String,
+        vocabulary: [VocabularyEntry],
+        retractionApplied: Bool = false
+    ) throws {
         let trimmed = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw ProviderError.cleanupRejected("empty output") }
         guard !trimmed.contains("```") else { throw ProviderError.cleanupRejected("markdown fence") }
 
         let ratio = Double(trimmed.count) / Double(max(raw.count, 1))
-        guard (0.45...1.65).contains(ratio) else {
+        guard ratio <= 1.65, retractionApplied || ratio >= 0.45 else {
             throw ProviderError.cleanupRejected("unexpected length change")
         }
+
+        guard !retractionApplied else { return }
 
         for pattern in protectedPatterns {
             let rawValues = occurrenceCounts(matches(pattern, in: raw))
@@ -33,10 +40,19 @@ public enum CleanupSafetyValidator {
         }
     }
 
-    public static func validate(request: CleanupRequest, output: CleanupOutput) throws {
+    public static func validate(
+        request: CleanupRequest,
+        output: CleanupOutput,
+        retractionApplied: Bool = false
+    ) throws {
         switch output {
         case .transcription(let text):
-            try validate(raw: request.input.spokenText, cleaned: text, vocabulary: request.vocabulary)
+            try validate(
+                raw: request.input.spokenText,
+                cleaned: text,
+                vocabulary: request.vocabulary,
+                retractionApplied: retractionApplied
+            )
         case .transformation(let text):
             guard case .contextual(_, let selectedText) = request.input, !selectedText.isEmpty else {
                 throw ProviderError.cleanupRejected("transformation requires selected text")

@@ -17,6 +17,31 @@ final class CleanupProcessingTests: XCTestCase {
         XCTAssertThrowsError(try CleanupSafetyValidator.validate(raw: "Use port 8080, then retry port 8080.", cleaned: "Use port 8080, then retry.", vocabulary: []))
     }
 
+    func testResponseDecoderAllowsSemanticRetractionWithoutPhraseMatching() throws {
+        let raw = "I want to name my child XYZ, or maybe just YZ. I think my wife would love YZ, but I am going with XYZ. I retract all of that. I'll just name my child YZ."
+        let response = #"{"intent":"transcription","text":"I'll just name my child YZ.","retractionApplied":true}"#
+
+        let output = try CleanupResponseDecoder.decode(response, for: .init(input: .transcription(raw)))
+
+        XCTAssertEqual(output, .transcription("I'll just name my child YZ."))
+    }
+
+    func testResponseDecoderAllowsRetractedProtectedTokensToBeReplaced() throws {
+        let raw = "Email the draft to old@example.com. I take back that instruction. Email the draft to new@example.com."
+        let response = #"{"intent":"transcription","text":"Email the draft to new@example.com.","retractionApplied":true}"#
+
+        let output = try CleanupResponseDecoder.decode(response, for: .init(input: .transcription(raw)))
+
+        XCTAssertEqual(output, .transcription("Email the draft to new@example.com."))
+    }
+
+    func testResponseDecoderKeepsStrictValidationWithoutSemanticRetraction() {
+        let raw = "I want to name my child XYZ, or maybe just YZ. I think my wife would love YZ, but I am going with XYZ."
+        let response = #"{"intent":"transcription","text":"I'll name my child YZ.","retractionApplied":false}"#
+
+        XCTAssertThrowsError(try CleanupResponseDecoder.decode(response, for: .init(input: .transcription(raw))))
+    }
+
     func testPromptRoutesSelectionEditsWithoutInventingCheckboxes() throws {
         let prompt = CleanupPrompt.system(request: .init(input: .transcription("hello")))
         XCTAssertTrue(prompt.contains("transcription"))
@@ -28,6 +53,15 @@ final class CleanupProcessingTests: XCTestCase {
         )
         XCTAssertTrue(user.contains("make it lowercase"))
         XCTAssertTrue(user.contains("HELLO WORLD"))
+    }
+
+    func testPromptResolvesExplicitRetractionsWithoutCollapsingOrdinaryIdeation() {
+        let prompt = CleanupPrompt.system(request: .init(input: .transcription("hello")))
+
+        XCTAssertTrue(prompt.contains("semantically determine"))
+        XCTAssertTrue(prompt.contains("final intended wording"))
+        XCTAssertTrue(prompt.contains("Brainstorming alternatives alone is not a retraction"))
+        XCTAssertTrue(prompt.contains("retractionApplied"))
     }
 
     func testPromptIncludesCustomInstructionForTranscriptionOnly() {
