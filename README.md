@@ -43,13 +43,7 @@ Download `Dictator-<version>-universal.dmg` and `SHA256SUMS.txt` from the matchi
 shasum -a 256 -c SHA256SUMS.txt
 ```
 
-Open the DMG and drag Dictator to Applications. Dictator is currently ad-hoc signed rather than Apple-notarized, so remove quarantine from this app bundle only before opening it:
-
-```sh
-/usr/bin/xattr -dr com.apple.quarantine "/Applications/Dictator.app"
-```
-
-Only run that command for the checksum-verified artifact downloaded from the official release. It does not disable Gatekeeper globally or make the app notarized.
+Open the DMG and drag Dictator to Applications. Release artifacts are Developer ID-signed and notarized by Apple, with the notarization ticket stapled to the DMG for Gatekeeper verification.
 
 ## Build and test
 
@@ -85,16 +79,22 @@ Stable releases remain review-gated:
 
 1. Manually run **Build stable release** from `main` and choose `patch`, `minor`, `major`, or `explicit`. When choosing `explicit`, also enter the exact semantic version in the `explicit_version` input.
 2. The workflow validates the choice, creates a version-only release PR, and resolves the release identity from its candidate commit. If an earlier run already merged an unfinished version, the workflow safely reuses it instead of applying another bump.
-3. The workflow builds, verifies, and attests the universal DMG and checksum without creating a tag. Approve the generated release PR, review the completed preparation job, then approve its `stable-release` environment deployment.
+3. The workflow builds a Developer ID-signed universal app, notarizes and staples its DMG, then verifies and attests the DMG and checksum without creating a tag. Approve the generated release PR, review the completed preparation job, then approve its `stable-release` environment deployment.
 4. Finalization squash-merges the approved PR, proves the merged tree, version, and build match the verified artifacts, then creates the annotated `v<version>` tag and public GitHub Release. It subsequently signs and deploys the Sparkle appcast and bootstraps or updates `Casks/dictator.rb` in [`amalshaji/homebrew-taps`](https://github.com/amalshaji/homebrew-taps).
 
 Create a protected GitHub environment named `stable-release` with the repository owner as its required reviewer, self-review allowed, deployments restricted to `main`, and no secrets. A failed or expired preparation creates no tag; rerun the stable workflow with the same selection to reuse the open release PR or resume its merged version. If only update-channel publication fails after the release is public, repair it with the **Publish update channels** workflow and the same tag.
 
 Configure a protected GitHub environment named `release` with:
 
+- `APPLE_CERTIFICATE`: the base64-encoded PKCS#12 (`.p12`) export containing the Developer ID Application certificate and private key.
+- `APPLE_CERTIFICATE_PASSWORD`: the password used to protect the PKCS#12 export.
+- `APPLE_SIGNING_IDENTITY`: `Developer ID Application: Amal Shaji (6NJKY8HB47)`.
+- `APPLE_ID`: the Apple Account used for notarization.
+- `APPLE_APP_SPECIFIC_PASSWORD`: an app-specific password for `notarytool`.
+- `APPLE_TEAM_ID`: `6NJKY8HB47`.
 - `SPARKLE_PRIVATE_KEY`: the private Ed25519 key whose public half is committed as `SUPublicEDKey`.
 - `HOMEBREW_TAP_TOKEN`: a fine-grained token with Contents read/write access only to `amalshaji/homebrew-taps`.
 
 Do not add required reviewers to the `release` environment if canaries must remain fully automatic.
 
-Configure GitHub Pages to use **GitHub Actions** as its source. The publishing workflow keeps the signed feed on `gh-pages` for rollback and deploys that exact feed to `https://amalshaji.github.io/dictator/appcast.xml` with GitHub's Pages deployment action. Keep an encrypted offline backup of the Sparkle private key; without Developer ID signing, losing it prevents trusted key rotation for existing installations.
+Configure GitHub Pages to use **GitHub Actions** as its source. The publishing workflow keeps the signed feed on `gh-pages` for rollback and deploys that exact feed to `https://amalshaji.github.io/dictator/appcast.xml` with GitHub's Pages deployment action. Keep encrypted offline backups of both signing keys; losing the Sparkle private key prevents trusted key rotation for existing installations, while losing the Developer ID private key requires replacing the certificate and CI secret before another release can be signed.
