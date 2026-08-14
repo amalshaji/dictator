@@ -17,6 +17,10 @@ final class CleanupProcessingTests: XCTestCase {
         XCTAssertThrowsError(try CleanupSafetyValidator.validate(raw: "Use port 8080, then retry port 8080.", cleaned: "Use port 8080, then retry.", vocabulary: []))
     }
 
+    func testValidatorAllowsDeduplicatingRepeatedVocabularyTerm() {
+        XCTAssertNoThrow(try CleanupSafetyValidator.validate(raw: "Dictator Dictator", cleaned: "Dictator", vocabulary: [.init(value: "Dictator")]))
+    }
+
     func testResponseDecoderAllowsVerifiedMultiSentenceRetraction() throws {
         let withdrawn = "I want to name my child XYZ, or maybe just YZ. I think my wife would love YZ, but I am going with XYZ."
         let raw = "\(withdrawn) I retract all of that. I'll just name my child YZ."
@@ -120,6 +124,30 @@ final class CleanupProcessingTests: XCTestCase {
             withdrawnRanges: [range]
         )
         XCTAssertThrowsError(try CleanupResponseDecoder.decode(substituted, for: .init(input: .transcription(raw))))
+    }
+
+    func testCueLookalikeContinuingIntoOrdinarySpeechDoesNotAuthorizeWithdrawal() throws {
+        let raw = "Wipe the cache at https://example.com. Scratch that disk and reboot."
+        let response = try transcriptionResponse(
+            text: "Scratch that disk and reboot.",
+            raw: raw,
+            withdrawnRanges: [(raw as NSString).range(of: "Wipe the cache at https://example.com.")]
+        )
+
+        XCTAssertThrowsError(try CleanupResponseDecoder.decode(response, for: .init(input: .transcription(raw))))
+    }
+
+    func testWithdrawnCueIsExcludedFromLengthBaseline() throws {
+        let raw = "Email old@example.com. Scratch that. Hi."
+        let response = try transcriptionResponse(
+            text: "Hi.",
+            raw: raw,
+            withdrawnRanges: [(raw as NSString).range(of: "Email old@example.com.")]
+        )
+
+        let output = try CleanupResponseDecoder.decode(response, for: .init(input: .transcription(raw)))
+
+        XCTAssertEqual(output, .transcription("Hi."))
     }
 
     func testLegacyRetractionFlagCannotBypassProtectedTokenValidation() {

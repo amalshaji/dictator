@@ -20,7 +20,7 @@ public enum CleanupSafetyValidator {
         #"`[^`]+`"#
     ]
 
-    private static let withdrawalCuePattern = #"^\s*(?:[.!?,;:—-]\s*)?(?:(?:i\s+)?(?:retract|withdraw)\s+(?:that|this|it|all\s+of\s+that|everything\s+i\s+(?:just\s+)?said|what\s+i\s+(?:just\s+)?said|the\s+(?:last|previous)\s+(?:statement|sentence|instruction))|i\s+(?:take|took)\s+back\s+(?:that|this|it|all\s+of\s+that|everything\s+i\s+(?:just\s+)?said|what\s+i\s+(?:just\s+)?said|the\s+(?:last|previous)\s+(?:statement|sentence|instruction))|i\s+(?:take|took)\s+(?:that|this|it|all\s+of\s+that|everything\s+i\s+(?:just\s+)?said|what\s+i\s+(?:just\s+)?said|the\s+(?:last|previous)\s+(?:statement|sentence|instruction))\s+back|scratch\s+that|forget\s+(?:that|this|it|everything\s+i\s+(?:just\s+)?said|what\s+i\s+(?:just\s+)?said)|disregard\s+(?:that|this|it|the\s+(?:last|previous)\s+(?:statement|sentence|instruction))|never\s+mind(?:\s+(?:that|this|it))?)\b"#
+    private static let withdrawalCuePattern = #"^\s*(?:[.!?,;:—-]\s*)?(?:(?:i\s+)?(?:retract|withdraw)\s+(?:that|this|it|all\s+of\s+that|everything\s+i\s+(?:just\s+)?said|what\s+i\s+(?:just\s+)?said|(?:the\s+(?:last|previous)|that|this)\s+(?:statement|sentence|instruction))|i\s+(?:take|took)\s+back\s+(?:that|this|it|all\s+of\s+that|everything\s+i\s+(?:just\s+)?said|what\s+i\s+(?:just\s+)?said|(?:the\s+(?:last|previous)|that|this)\s+(?:statement|sentence|instruction))|i\s+(?:take|took)\s+(?:that|this|it|all\s+of\s+that|everything\s+i\s+(?:just\s+)?said|what\s+i\s+(?:just\s+)?said|(?:the\s+(?:last|previous)|that|this)\s+(?:statement|sentence|instruction))\s+back|scratch\s+that|forget\s+(?:that|this|it|everything\s+i\s+(?:just\s+)?said|what\s+i\s+(?:just\s+)?said)|disregard\s+(?:that|this|it|(?:the\s+(?:last|previous)|that|this)\s+(?:statement|sentence|instruction))|never\s+mind(?:\s+(?:that|this|it))?)\b(?=\s*(?:[.!?,;:—-]|$))"#
     private static let broadWithdrawalCuePattern = #"\b(?:all\s+of\s+that|everything\s+i\s+(?:just\s+)?said)\b"#
     private static let sentenceEndingPattern = #"[.!?](?=\s|$)"#
 
@@ -48,10 +48,8 @@ public enum CleanupSafetyValidator {
             }
         }
 
-        for term in vocabulary.filter(\.isEnabled).map(\.value) {
-            let baselineCount = caseInsensitiveOccurrenceCount(of: term, in: baseline)
-            let cleanedCount = caseInsensitiveOccurrenceCount(of: term, in: trimmed)
-            guard cleanedCount >= baselineCount else {
+        for term in vocabulary.filter(\.isEnabled).map(\.value) where baseline.localizedCaseInsensitiveContains(term) {
+            guard trimmed.localizedCaseInsensitiveContains(term) else {
                 throw ProviderError.cleanupRejected("vocabulary term removed")
             }
         }
@@ -99,12 +97,12 @@ public enum CleanupSafetyValidator {
                   ),
                   String(raw[range]) == span.text,
                   isSourceBoundary(range.lowerBound, in: raw),
-                  let cue = withdrawalCue(after: range.upperBound, in: raw),
-                  cueAllows(span.text, cue: cue)
+                  let cueRange = withdrawalCue(after: range.upperBound, in: raw),
+                  cueAllows(span.text, cue: String(raw[cueRange]))
             else {
                 throw ProviderError.cleanupRejected("invalid or unverified withdrawn span")
             }
-            return range
+            return range.lowerBound..<cueRange.upperBound
         }.sorted { $0.lowerBound < $1.lowerBound }
 
         for (previous, next) in zip(verifiedRanges, verifiedRanges.dropFirst())
@@ -129,18 +127,17 @@ public enum CleanupSafetyValidator {
         return ".!?;:\n".contains(preceding)
     }
 
-    private static func withdrawalCue(after index: String.Index, in raw: String) -> String? {
-        let suffix = String(raw[index...])
+    private static func withdrawalCue(after index: String.Index, in raw: String) -> Range<String.Index>? {
         guard let expression = try? NSRegularExpression(
             pattern: withdrawalCuePattern,
             options: [.caseInsensitive]
         ) else { return nil }
-        let searchRange = NSRange(suffix.startIndex..., in: suffix)
-        guard let match = expression.firstMatch(in: suffix, range: searchRange),
-              match.range.location == 0,
-              let range = Range(match.range, in: suffix)
+        let searchRange = NSRange(index..., in: raw)
+        guard let match = expression.firstMatch(in: raw, range: searchRange),
+              match.range.location == searchRange.location,
+              let range = Range(match.range, in: raw)
         else { return nil }
-        return String(suffix[range])
+        return range
     }
 
     private static func cueAllows(_ withdrawnText: String, cue: String) -> Bool {
@@ -160,13 +157,4 @@ public enum CleanupSafetyValidator {
         values.reduce(into: [:]) { counts, value in counts[value, default: 0] += 1 }
     }
 
-    private static func caseInsensitiveOccurrenceCount(of value: String, in text: String) -> Int {
-        guard !value.isEmpty,
-              let expression = try? NSRegularExpression(
-                pattern: NSRegularExpression.escapedPattern(for: value),
-                options: [.caseInsensitive]
-              )
-        else { return 0 }
-        return expression.numberOfMatches(in: text, range: NSRange(text.startIndex..., in: text))
-    }
 }
