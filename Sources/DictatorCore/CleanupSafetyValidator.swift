@@ -35,8 +35,10 @@ public enum CleanupSafetyValidator {
         guard !trimmed.contains("```") else { throw ProviderError.cleanupRejected("markdown fence") }
 
         let baseline = try retainedBaseline(raw: raw, withdrawnSpans: withdrawnSpans)
-        let ratio = Double(trimmed.count) / Double(max(baseline.count, 1))
-        guard (0.45...1.65).contains(ratio) else {
+        let shortenedBaseline = applyingSpokenTokenShortening(baseline)
+        let lowerRatio = Double(trimmed.count) / Double(max(shortenedBaseline.count, 1))
+        let upperRatio = Double(trimmed.count) / Double(max(baseline.count, 1))
+        guard lowerRatio >= 0.45, upperRatio <= 1.65 else {
             throw ProviderError.cleanupRejected("unexpected length change")
         }
 
@@ -80,6 +82,25 @@ public enum CleanupSafetyValidator {
             guard trimmed.count <= max(selectedText.count * 8, selectedText.count + 4_000) else {
                 throw ProviderError.cleanupRejected("unexpected length change")
             }
+        }
+    }
+
+    // The cleanup prompt allows rendering spoken symbol names ("underscore" -> "_") and emoji
+    // names ("emoji heart" -> a single emoji) as single characters. Shorten those phrases the
+    // same way before the lower length-ratio bound so valid conversions are not rejected.
+    private static let spokenTokenShorteningPatterns = [
+        #"\bemoji\s+\S+"#,
+        #"\S+\s+emoji\b"#,
+        #"\b(?:dot|underscore|dash|hyphen|slash)\b"#
+    ]
+
+    private static func applyingSpokenTokenShortening(_ baseline: String) -> String {
+        spokenTokenShorteningPatterns.reduce(baseline) { result, pattern in
+            guard let expression = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+                return result
+            }
+            let range = NSRange(result.startIndex..., in: result)
+            return expression.stringByReplacingMatches(in: result, range: range, withTemplate: "x")
         }
     }
 

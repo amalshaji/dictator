@@ -195,6 +195,46 @@ final class CleanupProcessingTests: XCTestCase {
         XCTAssertTrue(prompt.contains("never convert these words in ordinary prose"))
     }
 
+    func testValidatorAcceptsSymbolRenderingBelowRawLengthBound() {
+        XCTAssertNoThrow(try CleanupSafetyValidator.validate(
+            raw: "foo underscore bar",
+            cleaned: "foo_bar",
+            vocabulary: []
+        ))
+    }
+
+    func testValidatorAcceptsEmojiRenderingBelowRawLengthBound() {
+        XCTAssertNoThrow(try CleanupSafetyValidator.validate(
+            raw: "emoji heart",
+            cleaned: "❤️",
+            vocabulary: []
+        ))
+    }
+
+    func testValidatorStillRejectsShrinkWithoutSpokenTokens() {
+        XCTAssertThrowsError(try CleanupSafetyValidator.validate(
+            raw: "please write down every single thing I told you about yesterday",
+            cleaned: "ok",
+            vocabulary: []
+        ))
+    }
+
+    func testResponseDecoderAcceptsSymbolAndEmojiRenderings() throws {
+        let symbol = #"{"intent":"transcription","text":"so c.customer_email was generated","withdrawnSpans":[]}"#
+        let symbolOutput = try CleanupResponseDecoder.decode(
+            symbol,
+            for: .init(input: .transcription("so C dot customer underscore email was generated"))
+        )
+        XCTAssertEqual(symbolOutput, .transcription("so c.customer_email was generated"))
+
+        let emoji = #"{"intent":"transcription","text":"Great job ❤️","withdrawnSpans":[]}"#
+        let emojiOutput = try CleanupResponseDecoder.decode(
+            emoji,
+            for: .init(input: .transcription("great job heart emoji"))
+        )
+        XCTAssertEqual(emojiOutput, .transcription("Great job ❤️"))
+    }
+
     func testPromptRendersSpokenEmojiNamesAsEmoji() {
         let prompt = CleanupPrompt.system(request: .init(input: .transcription("hello")))
         XCTAssertTrue(prompt.contains(#""emoji heart" or "heart emoji""#))
