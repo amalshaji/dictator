@@ -6,6 +6,11 @@ Dictator is a native macOS menu-bar app for dictation and screen-aware writing. 
 
 ![Dictator's Providers screen on macOS](docs/images/dictator-providers.jpg)
 
+## Requirements
+
+- macOS 14.0 or later
+- Apple Silicon or Intel Mac
+
 ## Shortcuts
 
 - Hold `Fn`: record dictation
