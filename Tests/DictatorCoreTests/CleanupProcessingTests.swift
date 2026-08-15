@@ -211,6 +211,22 @@ final class CleanupProcessingTests: XCTestCase {
         ))
     }
 
+    func testValidatorKeepsShrinkGuardWhenOutputContainsNoEmoji() {
+        XCTAssertThrowsError(try CleanupSafetyValidator.validate(
+            raw: "emoji accessibility and emoji rendering and emoji keyboards",
+            cleaned: "Emoji topics.",
+            vocabulary: []
+        ))
+    }
+
+    func testValidatorKeepsShrinkGuardWhenOutputContainsNoMatchingSymbol() {
+        XCTAssertThrowsError(try CleanupSafetyValidator.validate(
+            raw: "underscore underscore underscore underscore underscore",
+            cleaned: "Many underscores",
+            vocabulary: []
+        ))
+    }
+
     func testValidatorStillRejectsShrinkWithoutSpokenTokens() {
         XCTAssertThrowsError(try CleanupSafetyValidator.validate(
             raw: "please write down every single thing I told you about yesterday",

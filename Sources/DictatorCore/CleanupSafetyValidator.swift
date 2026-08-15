@@ -35,7 +35,7 @@ public enum CleanupSafetyValidator {
         guard !trimmed.contains("```") else { throw ProviderError.cleanupRejected("markdown fence") }
 
         let baseline = try retainedBaseline(raw: raw, withdrawnSpans: withdrawnSpans)
-        let shortenedBaseline = applyingSpokenTokenShortening(baseline)
+        let shortenedBaseline = applyingSpokenTokenShortening(baseline, cleaned: trimmed)
         let lowerRatio = Double(trimmed.count) / Double(max(shortenedBaseline.count, 1))
         let upperRatio = Double(trimmed.count) / Double(max(baseline.count, 1))
         guard lowerRatio >= 0.45, upperRatio <= 1.65 else {
@@ -87,20 +87,50 @@ public enum CleanupSafetyValidator {
 
     // The cleanup prompt allows rendering spoken symbol names ("underscore" -> "_") and emoji
     // names ("emoji heart" -> a single emoji) as single characters. Shorten those phrases the
-    // same way before the lower length-ratio bound so valid conversions are not rejected.
-    private static let spokenTokenShorteningPatterns = [
-        #"\bemoji\s+\S+"#,
-        #"\S+\s+emoji\b"#,
-        #"\b(?:dot|underscore|dash|hyphen|slash)\b"#
+    // same way before the lower length-ratio bound so valid conversions are not rejected, but
+    // only as many phrases as the cleaned text contains matching characters — speech that
+    // merely discusses emojis or symbols must keep the full shrink guard.
+    private static let emojiPhrasePattern = #"\bemoji\s+\S+|\S+\s+emoji\b"#
+    private static let spokenSymbolWords: [(word: String, symbol: Character)] = [
+        ("dot", "."), ("underscore", "_"), ("dash", "-"), ("hyphen", "-"), ("slash", "/")
     ]
 
-    private static func applyingSpokenTokenShortening(_ baseline: String) -> String {
-        spokenTokenShorteningPatterns.reduce(baseline) { result, pattern in
-            guard let expression = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
-                return result
-            }
-            let range = NSRange(result.startIndex..., in: result)
-            return expression.stringByReplacingMatches(in: result, range: range, withTemplate: "x")
+    private static func applyingSpokenTokenShortening(_ baseline: String, cleaned: String) -> String {
+        var result = baseline
+        var emojiBudget = cleaned.filter(isEmojiCharacter).count
+        result = replacingMatches(of: emojiPhrasePattern, in: result, budget: &emojiBudget)
+
+        var symbolBudgets = [Character: Int]()
+        for (_, symbol) in spokenSymbolWords where symbolBudgets[symbol] == nil {
+            symbolBudgets[symbol] = cleaned.filter { $0 == symbol }.count
+        }
+        for (word, symbol) in spokenSymbolWords {
+            var budget = symbolBudgets[symbol, default: 0]
+            result = replacingMatches(of: #"\b"# + word + #"\b"#, in: result, budget: &budget)
+            symbolBudgets[symbol] = budget
+        }
+        return result
+    }
+
+    private static func replacingMatches(of pattern: String, in text: String, budget: inout Int) -> String {
+        guard budget > 0,
+              let expression = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+        else { return text }
+        let range = NSRange(text.startIndex..., in: text)
+        let matches = expression.matches(in: text, range: range).prefix(budget)
+        var result = text
+        for match in matches.reversed() {
+            guard let matchRange = Range(match.range, in: result) else { continue }
+            result.replaceSubrange(matchRange, with: "x")
+        }
+        budget -= matches.count
+        return result
+    }
+
+    private static func isEmojiCharacter(_ character: Character) -> Bool {
+        guard !character.isASCII else { return false }
+        return character.unicodeScalars.contains {
+            $0.properties.isEmojiPresentation || $0.properties.isEmoji
         }
     }
 
