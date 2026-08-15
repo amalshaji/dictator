@@ -211,6 +211,28 @@ final class CleanupProcessingTests: XCTestCase {
         ))
     }
 
+    func testValidatorAcceptsMultiwordEmojiNameInBothWordOrders() {
+        XCTAssertNoThrow(try CleanupSafetyValidator.validate(
+            raw: "emoji red heart",
+            cleaned: "❤️",
+            vocabulary: []
+        ))
+        XCTAssertNoThrow(try CleanupSafetyValidator.validate(
+            raw: "face with tears of joy emoji",
+            cleaned: "😂",
+            vocabulary: []
+        ))
+    }
+
+    func testResponseDecoderAcceptsMultiwordEmojiRendering() throws {
+        let response = #"{"intent":"transcription","text":"Nice work ❤️","withdrawnSpans":[]}"#
+        let output = try CleanupResponseDecoder.decode(
+            response,
+            for: .init(input: .transcription("nice work emoji red heart"))
+        )
+        XCTAssertEqual(output, .transcription("Nice work ❤️"))
+    }
+
     func testValidatorKeepsShrinkGuardWhenOutputContainsNoEmoji() {
         XCTAssertThrowsError(try CleanupSafetyValidator.validate(
             raw: "emoji accessibility and emoji rendering and emoji keyboards",

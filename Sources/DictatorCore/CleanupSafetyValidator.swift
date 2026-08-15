@@ -90,7 +90,10 @@ public enum CleanupSafetyValidator {
     // same way before the lower length-ratio bound so valid conversions are not rejected, but
     // only as many phrases as the cleaned text contains matching characters — speech that
     // merely discusses emojis or symbols must keep the full shrink guard.
-    private static let emojiPhrasePattern = #"\bemoji\s+\S+|\S+\s+emoji\b"#
+    // Emoji names may span several words ("emoji red heart", "face with tears of joy emoji").
+    // Over-eating prose here only loosens the lower bound for phrases already licensed by an
+    // emoji character in the cleaned output, so a generous word cap is safe.
+    private static let emojiPhrasePattern = #"\bemoji(?:\s+\S+){1,5}|(?:\S+\s+){1,5}emoji\b"#
     private static let spokenSymbolWords: [(word: String, symbol: Character)] = [
         ("dot", "."), ("underscore", "_"), ("dash", "-"), ("hyphen", "-"), ("slash", "/")
     ]
