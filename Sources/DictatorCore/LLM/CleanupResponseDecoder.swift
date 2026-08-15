@@ -11,12 +11,42 @@ enum CleanupResponseDecoder {
         case .transcription: .transcription(text)
         case .transformation: .transformation(text)
         }
-        try CleanupSafetyValidator.validate(request: request, output: output)
+        try CleanupSafetyValidator.validate(
+            request: request,
+            output: output,
+            withdrawnSpans: payload.withdrawnSpans.map {
+                CleanupSafetyValidator.WithdrawnSpan(
+                    startUTF16: $0.startUTF16,
+                    endUTF16: $0.endUTF16,
+                    text: $0.text
+                )
+            }
+        )
         return output
     }
 
     private struct Payload: Decodable {
         let intent: CleanupIntent
+        let text: String
+        let withdrawnSpans: [WithdrawnSpan]
+
+        private enum CodingKeys: String, CodingKey {
+            case intent
+            case text
+            case withdrawnSpans
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            intent = try container.decode(CleanupIntent.self, forKey: .intent)
+            text = try container.decode(String.self, forKey: .text)
+            withdrawnSpans = try container.decodeIfPresent([WithdrawnSpan].self, forKey: .withdrawnSpans) ?? []
+        }
+    }
+
+    private struct WithdrawnSpan: Decodable {
+        let startUTF16: Int
+        let endUTF16: Int
         let text: String
     }
 }

@@ -17,6 +17,153 @@ final class CleanupProcessingTests: XCTestCase {
         XCTAssertThrowsError(try CleanupSafetyValidator.validate(raw: "Use port 8080, then retry port 8080.", cleaned: "Use port 8080, then retry.", vocabulary: []))
     }
 
+    func testValidatorAllowsDeduplicatingRepeatedVocabularyTerm() {
+        XCTAssertNoThrow(try CleanupSafetyValidator.validate(raw: "Dictator Dictator", cleaned: "Dictator", vocabulary: [.init(value: "Dictator")]))
+    }
+
+    func testResponseDecoderAllowsVerifiedMultiSentenceRetraction() throws {
+        let withdrawn = "I want to name my child XYZ, or maybe just YZ. I think my wife would love YZ, but I am going with XYZ."
+        let raw = "\(withdrawn) I retract all of that. I'll just name my child YZ."
+        let response = try transcriptionResponse(
+            text: "I'll just name my child YZ.",
+            raw: raw,
+            withdrawnRanges: [(raw as NSString).range(of: withdrawn)]
+        )
+
+        let output = try CleanupResponseDecoder.decode(response, for: .init(input: .transcription(raw)))
+
+        XCTAssertEqual(output, .transcription("I'll just name my child YZ."))
+    }
+
+    func testVerifiedRetractionExemptsOnlyProtectedValuesInsideItsSpan() throws {
+        let retained = "Keep owner@example.com, https://keep.example/path, 42, `keepCode`, and Dictator."
+        let withdrawn = " Send LegacyTool 17 to old@example.com at https://old.example/path using `legacyCode`."
+        let raw = "\(retained)\(withdrawn) I take back that instruction. Finalize it."
+        let range = (raw as NSString).range(of: withdrawn)
+        let vocabulary = [VocabularyEntry(value: "Dictator"), VocabularyEntry(value: "LegacyTool")]
+        let valid = "\(retained) Finalize it."
+
+        let response = try transcriptionResponse(text: valid, raw: raw, withdrawnRanges: [range])
+        let output = try CleanupResponseDecoder.decode(
+            response,
+            for: .init(input: .transcription(raw), vocabulary: vocabulary)
+        )
+        XCTAssertEqual(output, .transcription(valid))
+
+        let unsafeOutputs = [
+            valid.replacingOccurrences(of: "owner@example.com", with: "other@example.com"),
+            valid.replacingOccurrences(of: "https://keep.example/path", with: "https://other.example/path"),
+            valid.replacingOccurrences(of: "42", with: "43"),
+            valid.replacingOccurrences(of: "`keepCode`", with: "`otherCode`"),
+            valid.replacingOccurrences(of: "Dictator", with: "Dictation")
+        ]
+        for unsafe in unsafeOutputs {
+            let unsafeResponse = try transcriptionResponse(text: unsafe, raw: raw, withdrawnRanges: [range])
+            XCTAssertThrowsError(
+                try CleanupResponseDecoder.decode(
+                    unsafeResponse,
+                    for: .init(input: .transcription(raw), vocabulary: vocabulary)
+                )
+            )
+        }
+    }
+
+    func testResponseDecoderRejectsMalformedUnverifiedAndOverlappingWithdrawnSpans() throws {
+        let raw = "Remove 17. I take back that instruction. Keep 42."
+        let range = (raw as NSString).range(of: "Remove 17.")
+
+        let mismatched = try transcriptionResponse(
+            text: "Keep 42.",
+            raw: raw,
+            withdrawnRanges: [range],
+            claimedTexts: ["Remove 18."]
+        )
+        XCTAssertThrowsError(try CleanupResponseDecoder.decode(mismatched, for: .init(input: .transcription(raw))))
+
+        let outOfBounds = try transcriptionResponse(
+            text: "Keep 42.",
+            raw: raw,
+            withdrawnRanges: [NSRange(location: range.location, length: raw.utf16.count + 1)],
+            claimedTexts: ["Remove 17."]
+        )
+        XCTAssertThrowsError(try CleanupResponseDecoder.decode(outOfBounds, for: .init(input: .transcription(raw))))
+
+        let overlapping = try transcriptionResponse(
+            text: "Keep 42.",
+            raw: raw,
+            withdrawnRanges: [range, range]
+        )
+        XCTAssertThrowsError(try CleanupResponseDecoder.decode(overlapping, for: .init(input: .transcription(raw))))
+
+        let noWithdrawalLanguage = "Remove 17. Then keep 42."
+        let unverified = try transcriptionResponse(
+            text: "Keep 42.",
+            raw: noWithdrawalLanguage,
+            withdrawnRanges: [(noWithdrawalLanguage as NSString).range(of: "Remove 17.")]
+        )
+        XCTAssertThrowsError(
+            try CleanupResponseDecoder.decode(unverified, for: .init(input: .transcription(noWithdrawalLanguage)))
+        )
+    }
+
+    func testRepeatedProtectedTokenOutsideClaimedOccurrenceRemainsMandatory() throws {
+        let withdrawn = "Use port 8080."
+        let raw = "\(withdrawn) I take back that instruction. Use port 8080 for production."
+        let range = (raw as NSString).range(of: withdrawn)
+
+        let valid = try transcriptionResponse(
+            text: "Use port 8080 for production.",
+            raw: raw,
+            withdrawnRanges: [range]
+        )
+        XCTAssertNoThrow(try CleanupResponseDecoder.decode(valid, for: .init(input: .transcription(raw))))
+
+        let substituted = try transcriptionResponse(
+            text: "Use port 9090 for production.",
+            raw: raw,
+            withdrawnRanges: [range]
+        )
+        XCTAssertThrowsError(try CleanupResponseDecoder.decode(substituted, for: .init(input: .transcription(raw))))
+    }
+
+    func testCueLookalikeContinuingIntoOrdinarySpeechDoesNotAuthorizeWithdrawal() throws {
+        let raw = "Wipe the cache at https://example.com. Scratch that disk and reboot."
+        let response = try transcriptionResponse(
+            text: "Scratch that disk and reboot.",
+            raw: raw,
+            withdrawnRanges: [(raw as NSString).range(of: "Wipe the cache at https://example.com.")]
+        )
+
+        XCTAssertThrowsError(try CleanupResponseDecoder.decode(response, for: .init(input: .transcription(raw))))
+    }
+
+    func testWithdrawnCueIsExcludedFromLengthBaseline() throws {
+        let raw = "Email old@example.com. Scratch that. Hi."
+        let response = try transcriptionResponse(
+            text: "Hi.",
+            raw: raw,
+            withdrawnRanges: [(raw as NSString).range(of: "Email old@example.com.")]
+        )
+
+        let output = try CleanupResponseDecoder.decode(response, for: .init(input: .transcription(raw)))
+
+        XCTAssertEqual(output, .transcription("Hi."))
+    }
+
+    func testLegacyRetractionFlagCannotBypassProtectedTokenValidation() {
+        let raw = "Email owner@example.com and keep version 42."
+        let response = #"{"intent":"transcription","text":"Please keep version 42 for the release.","retractionApplied":true}"#
+
+        XCTAssertThrowsError(try CleanupResponseDecoder.decode(response, for: .init(input: .transcription(raw))))
+    }
+
+    func testResponseDecoderKeepsStrictValidationWithoutVerifiedRetraction() {
+        let raw = "I want to name my child XYZ, or maybe just YZ. I think my wife would love YZ, but I am going with XYZ."
+        let response = #"{"intent":"transcription","text":"I'll name my child YZ.","withdrawnSpans":[]}"#
+
+        XCTAssertThrowsError(try CleanupResponseDecoder.decode(response, for: .init(input: .transcription(raw))))
+    }
+
     func testPromptRoutesSelectionEditsWithoutInventingCheckboxes() throws {
         let prompt = CleanupPrompt.system(request: .init(input: .transcription("hello")))
         XCTAssertTrue(prompt.contains("transcription"))
@@ -28,6 +175,17 @@ final class CleanupProcessingTests: XCTestCase {
         )
         XCTAssertTrue(user.contains("make it lowercase"))
         XCTAssertTrue(user.contains("HELLO WORLD"))
+    }
+
+    func testPromptResolvesExplicitRetractionsWithoutCollapsingOrdinaryIdeation() {
+        let prompt = CleanupPrompt.system(request: .init(input: .transcription("hello")))
+
+        XCTAssertTrue(prompt.contains("semantically determine"))
+        XCTAssertTrue(prompt.contains("final intended wording"))
+        XCTAssertTrue(prompt.contains("Brainstorming alternatives alone is not a retraction"))
+        XCTAssertTrue(prompt.contains("withdrawnSpans"))
+        XCTAssertTrue(prompt.contains("end-exclusive UTF-16"))
+        XCTAssertFalse(prompt.contains("retractionApplied"))
     }
 
     func testPromptIncludesCustomInstructionForTranscriptionOnly() {
@@ -135,6 +293,42 @@ final class CleanupProcessingTests: XCTestCase {
         XCTAssertThrowsError(try CleanupResponseDecoder.decode(response, for: .init(input: .contextual(spokenText: "make it lowercase", selectedText: "")))) { error in
             XCTAssertEqual(error as? ProviderError, .cleanupRejected("transformation requires selected text"))
         }
+    }
+
+    private func transcriptionResponse(
+        text: String,
+        raw: String,
+        withdrawnRanges: [NSRange],
+        claimedTexts: [String]? = nil
+    ) throws -> String {
+        let source = raw as NSString
+        let spans = try withdrawnRanges.enumerated().map { index, range -> [String: Any] in
+            let claimedText: String
+            if let claimedTexts {
+                claimedText = claimedTexts[index]
+            } else {
+                guard range.location != NSNotFound,
+                      range.location >= 0,
+                      range.length >= 0,
+                      NSMaxRange(range) <= source.length
+                else {
+                    throw ProviderError.invalidResponse
+                }
+                claimedText = source.substring(with: range)
+            }
+            return [
+                "startUTF16": range.location,
+                "endUTF16": NSMaxRange(range),
+                "text": claimedText
+            ]
+        }
+        let payload: [String: Any] = [
+            "intent": "transcription",
+            "text": text,
+            "withdrawnSpans": spans
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload)
+        return try XCTUnwrap(String(data: data, encoding: .utf8))
     }
 }
 
