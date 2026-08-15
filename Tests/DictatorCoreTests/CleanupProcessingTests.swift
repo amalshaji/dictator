@@ -188,6 +188,20 @@ final class CleanupProcessingTests: XCTestCase {
         XCTAssertFalse(prompt.contains("retractionApplied"))
     }
 
+    func testPromptRendersSpokenSymbolNamesInsideDictatedIdentifiers() {
+        let prompt = CleanupPrompt.system(request: .init(input: .transcription("hello")))
+        XCTAssertTrue(prompt.contains(#""dot" as ".""#))
+        XCTAssertTrue(prompt.contains(#""underscore" as "_""#))
+        XCTAssertTrue(prompt.contains("never convert these words in ordinary prose"))
+    }
+
+    func testPromptRendersSpokenEmojiNamesAsEmoji() {
+        let prompt = CleanupPrompt.system(request: .init(input: .transcription("hello")))
+        XCTAssertTrue(prompt.contains(#""emoji heart" or "heart emoji""#))
+        XCTAssertTrue(prompt.contains("matching emoji character"))
+        XCTAssertTrue(prompt.contains("talking about emojis rather than dictating one"))
+    }
+
     func testPromptIncludesCustomInstructionForTranscriptionOnly() {
         let input = CleanupInput.transcription("hello")
         let prompt = CleanupPrompt.system(request: .init(input: input, customInstruction: "Prefer British spelling"))
