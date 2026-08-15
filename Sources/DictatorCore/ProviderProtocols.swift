@@ -77,8 +77,9 @@ public struct CleanupPrompt: Sendable {
         - Do not invent Markdown, lists, checkboxes, headings, or other structure unless the speaker explicitly requests that formatting.
         - When the speaker spells out an identifier, filename, or other technical token by naming its symbols, render the named symbols as characters, such as "dot" as ".", "underscore" as "_", "dash" as "-", and "slash" as "/". Apply this only where the surrounding speech clearly dictates such a token; never convert these words in ordinary prose.
         - When the speaker names an emoji as "emoji" followed by its name or its name followed by "emoji", such as "emoji heart" or "heart emoji", replace that phrase with the matching emoji character, such as ❤️. Keep the words unchanged when the speaker is talking about emojis rather than dictating one.
+        - Report every symbol or emoji rendering in renderedSpans. Each entry must contain zero-based, end-exclusive UTF-16 offsets startUTF16 and endUTF16, text copied exactly from spokenText at that range, and rendered holding the single character that replaced it. A symbol span covers exactly one spoken word such as "underscore"; an emoji span covers the full name phrase such as "emoji red heart". Return an empty array when nothing was rendered, and always for transformations.
         - For transcription, preserve meaning, tone, order, level of detail, URLs, email addresses, numbers, code, and identifiers exactly. Do not summarize, answer, elaborate, or add information.
-        - Return only JSON matching {"intent":"transcription|transformation","text":"<result>","withdrawnSpans":[{"startUTF16":0,"endUTF16":10,"text":"<exact spokenText substring>"}]}.
+        - Return only JSON matching {"intent":"transcription|transformation","text":"<result>","withdrawnSpans":[{"startUTF16":0,"endUTF16":10,"text":"<exact spokenText substring>"}],"renderedSpans":[{"startUTF16":0,"endUTF16":11,"text":"<exact spokenText substring>","rendered":"❤️"}]}.
         \(vocabularyRule)
         \(styleRule)
         \(customRule)
