@@ -31,6 +31,8 @@ Homebrew is the recommended installation method:
 brew install --cask amalshaji/taps/dictator
 ```
 
+To uninstall, run `brew uninstall --cask dictator`.
+
 Dictator checks for updates once a day with [Sparkle](https://sparkle-project.org). It shows the release notes and always asks before installing. Automatic checks can be disabled under **Settings → Updates**, and **Check for Updates…** is also available from the app and menu-bar menus.
 
 Stable updates are the default. Enable **Receive canary updates** under **Settings → Updates** to test early builds published after successful merges to `main`. Canary builds may be unstable. Disabling the setting keeps the installed build until a newer stable version is available; it does not downgrade the app.
