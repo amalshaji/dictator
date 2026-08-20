@@ -20,6 +20,14 @@ enum CleanupResponseDecoder {
                     endUTF16: $0.endUTF16,
                     text: $0.text
                 )
+            },
+            renderedSpans: payload.renderedSpans.map {
+                CleanupSafetyValidator.RenderedSpan(
+                    startUTF16: $0.startUTF16,
+                    endUTF16: $0.endUTF16,
+                    text: $0.text,
+                    rendered: $0.rendered
+                )
             }
         )
         return output
@@ -29,11 +37,13 @@ enum CleanupResponseDecoder {
         let intent: CleanupIntent
         let text: String
         let withdrawnSpans: [WithdrawnSpan]
+        let renderedSpans: [RenderedSpan]
 
         private enum CodingKeys: String, CodingKey {
             case intent
             case text
             case withdrawnSpans
+            case renderedSpans
         }
 
         init(from decoder: Decoder) throws {
@@ -41,6 +51,7 @@ enum CleanupResponseDecoder {
             intent = try container.decode(CleanupIntent.self, forKey: .intent)
             text = try container.decode(String.self, forKey: .text)
             withdrawnSpans = try container.decodeIfPresent([WithdrawnSpan].self, forKey: .withdrawnSpans) ?? []
+            renderedSpans = try container.decodeIfPresent([RenderedSpan].self, forKey: .renderedSpans) ?? []
         }
     }
 
@@ -48,5 +59,12 @@ enum CleanupResponseDecoder {
         let startUTF16: Int
         let endUTF16: Int
         let text: String
+    }
+
+    private struct RenderedSpan: Decodable {
+        let startUTF16: Int
+        let endUTF16: Int
+        let text: String
+        let rendered: String
     }
 }

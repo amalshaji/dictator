@@ -24,19 +24,44 @@ public enum CleanupSafetyValidator {
     private static let broadWithdrawalCuePattern = #"\b(?:all\s+of\s+that|everything\s+i\s+(?:just\s+)?said)\b"#
     private static let sentenceEndingPattern = #"[.!?](?=\s|$)"#
 
+    public struct RenderedSpan: Equatable, Sendable {
+        public let startUTF16: Int
+        public let endUTF16: Int
+        public let text: String
+        public let rendered: String
+
+        public init(startUTF16: Int, endUTF16: Int, text: String, rendered: String) {
+            self.startUTF16 = startUTF16
+            self.endUTF16 = endUTF16
+            self.text = text
+            self.rendered = rendered
+        }
+    }
+
     public static func validate(
         raw: String,
         cleaned: String,
         vocabulary: [VocabularyEntry],
-        withdrawnSpans: [WithdrawnSpan] = []
+        withdrawnSpans: [WithdrawnSpan] = [],
+        renderedSpans: [RenderedSpan] = []
     ) throws {
         let trimmed = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw ProviderError.cleanupRejected("empty output") }
         guard !trimmed.contains("```") else { throw ProviderError.cleanupRejected("markdown fence") }
 
-        let baseline = try retainedBaseline(raw: raw, withdrawnSpans: withdrawnSpans)
-        let ratio = Double(trimmed.count) / Double(max(baseline.count, 1))
-        guard (0.45...1.65).contains(ratio) else {
+        let withdrawnRanges = try verifiedWithdrawnRanges(raw: raw, withdrawnSpans: withdrawnSpans)
+        let renderedReplacements = try verifiedRenderedReplacements(raw: raw, cleaned: trimmed, spans: renderedSpans)
+        try ensureNonOverlapping(withdrawnRanges + renderedReplacements.map(\.range))
+
+        let removals = withdrawnRanges.map { (range: $0, replacement: "") }
+        let baseline = replacing(raw: raw, replacements: removals)
+        let convertedBaseline = replacing(
+            raw: raw,
+            replacements: removals + renderedReplacements.map { ($0.range, String($0.rendered)) }
+        )
+        let lowerRatio = Double(trimmed.count) / Double(max(convertedBaseline.count, 1))
+        let upperRatio = Double(trimmed.count) / Double(max(baseline.count, 1))
+        guard lowerRatio >= 0.45, upperRatio <= 1.65 else {
             throw ProviderError.cleanupRejected("unexpected length change")
         }
 
@@ -58,7 +83,8 @@ public enum CleanupSafetyValidator {
     public static func validate(
         request: CleanupRequest,
         output: CleanupOutput,
-        withdrawnSpans: [WithdrawnSpan] = []
+        withdrawnSpans: [WithdrawnSpan] = [],
+        renderedSpans: [RenderedSpan] = []
     ) throws {
         switch output {
         case .transcription(let text):
@@ -66,11 +92,15 @@ public enum CleanupSafetyValidator {
                 raw: request.input.spokenText,
                 cleaned: text,
                 vocabulary: request.vocabulary,
-                withdrawnSpans: withdrawnSpans
+                withdrawnSpans: withdrawnSpans,
+                renderedSpans: renderedSpans
             )
         case .transformation(let text):
             guard withdrawnSpans.isEmpty else {
                 throw ProviderError.cleanupRejected("transformation cannot withdraw source spans")
+            }
+            guard renderedSpans.isEmpty else {
+                throw ProviderError.cleanupRejected("transformation cannot report rendered spans")
             }
             guard case .contextual(_, let selectedText) = request.input, !selectedText.isEmpty else {
                 throw ProviderError.cleanupRejected("transformation requires selected text")
@@ -83,11 +113,75 @@ public enum CleanupSafetyValidator {
         }
     }
 
-    private static func retainedBaseline(raw: String, withdrawnSpans: [WithdrawnSpan]) throws -> String {
-        guard !withdrawnSpans.isEmpty else { return raw }
+    // The cleanup prompt allows rendering spoken symbol names ("underscore" -> "_") and emoji
+    // names ("emoji red heart" -> a single emoji) as single characters, and requires the model
+    // to report each conversion in renderedSpans. Every claimed span is verified locally —
+    // exact source text at exact offsets, a plausible spoken name, and the rendered character
+    // actually present in the cleaned output — before it may loosen the lower length bound.
+    private static let spokenSymbolCharacters: [String: Character] = [
+        "dot": ".", "underscore": "_", "dash": "-", "hyphen": "-", "slash": "/"
+    ]
+
+    private static func verifiedRenderedReplacements(
+        raw: String,
+        cleaned: String,
+        spans: [RenderedSpan]
+    ) throws -> [(range: Range<String.Index>, rendered: Character)] {
+        guard !spans.isEmpty else { return [] }
 
         let rawUTF16Count = raw.utf16.count
-        let verifiedRanges = try withdrawnSpans.map { span -> Range<String.Index> in
+        let replacements = try spans.map { span -> (range: Range<String.Index>, rendered: Character) in
+            guard span.startUTF16 >= 0,
+                  span.endUTF16 > span.startUTF16,
+                  span.endUTF16 <= rawUTF16Count,
+                  let range = Range(
+                    NSRange(location: span.startUTF16, length: span.endUTF16 - span.startUTF16),
+                    in: raw
+                  ),
+                  String(raw[range]) == span.text,
+                  span.rendered.count == 1,
+                  let rendered = span.rendered.first,
+                  isAllowedRendering(source: span.text, rendered: rendered)
+            else {
+                throw ProviderError.cleanupRejected("invalid or unverified rendered span")
+            }
+            return (range, rendered)
+        }
+
+        let claimed = occurrenceCounts(replacements.map { String($0.rendered) })
+        for (value, count) in claimed {
+            guard cleaned.filter({ String($0) == value }).count >= count else {
+                throw ProviderError.cleanupRejected("rendered character missing from output")
+            }
+        }
+        return replacements
+    }
+
+    private static func isAllowedRendering(source: String, rendered: Character) -> Bool {
+        let words = source.lowercased().split(whereSeparator: \.isWhitespace)
+        if words.count == 1, let symbol = spokenSymbolCharacters[String(words[0])] {
+            return rendered == symbol
+        }
+        return words.count <= 6
+            && words.contains(where: { $0 == "emoji" })
+            && isEmojiCharacter(rendered)
+    }
+
+    private static func isEmojiCharacter(_ character: Character) -> Bool {
+        guard !character.isASCII else { return false }
+        return character.unicodeScalars.contains {
+            $0.properties.isEmojiPresentation || $0.properties.isEmoji
+        }
+    }
+
+    private static func verifiedWithdrawnRanges(
+        raw: String,
+        withdrawnSpans: [WithdrawnSpan]
+    ) throws -> [Range<String.Index>] {
+        guard !withdrawnSpans.isEmpty else { return [] }
+
+        let rawUTF16Count = raw.utf16.count
+        return try withdrawnSpans.map { span -> Range<String.Index> in
             guard span.startUTF16 >= 0,
                   span.endUTF16 > span.startUTF16,
                   span.endUTF16 <= rawUTF16Count,
@@ -103,21 +197,29 @@ public enum CleanupSafetyValidator {
                 throw ProviderError.cleanupRejected("invalid or unverified withdrawn span")
             }
             return range.lowerBound..<cueRange.upperBound
-        }.sorted { $0.lowerBound < $1.lowerBound }
-
-        for (previous, next) in zip(verifiedRanges, verifiedRanges.dropFirst())
-            where previous.upperBound > next.lowerBound {
-            throw ProviderError.cleanupRejected("overlapping withdrawn spans")
         }
+    }
 
-        var baseline = ""
-        var retainedStart = raw.startIndex
-        for range in verifiedRanges {
-            baseline.append(contentsOf: raw[retainedStart..<range.lowerBound])
-            retainedStart = range.upperBound
+    private static func ensureNonOverlapping(_ ranges: [Range<String.Index>]) throws {
+        let sorted = ranges.sorted { $0.lowerBound < $1.lowerBound }
+        for (previous, next) in zip(sorted, sorted.dropFirst()) where previous.upperBound > next.lowerBound {
+            throw ProviderError.cleanupRejected("overlapping spans")
         }
-        baseline.append(contentsOf: raw[retainedStart...])
-        return baseline
+    }
+
+    private static func replacing(
+        raw: String,
+        replacements: [(range: Range<String.Index>, replacement: String)]
+    ) -> String {
+        var result = ""
+        var cursor = raw.startIndex
+        for (range, replacement) in replacements.sorted(by: { $0.range.lowerBound < $1.range.lowerBound }) {
+            result += raw[cursor..<range.lowerBound]
+            result += replacement
+            cursor = range.upperBound
+        }
+        result += raw[cursor...]
+        return result
     }
 
     private static func isSourceBoundary(_ index: String.Index, in raw: String) -> Bool {

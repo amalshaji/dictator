@@ -188,6 +188,131 @@ final class CleanupProcessingTests: XCTestCase {
         XCTAssertFalse(prompt.contains("retractionApplied"))
     }
 
+    func testPromptRendersSpokenSymbolNamesInsideDictatedIdentifiers() {
+        let prompt = CleanupPrompt.system(request: .init(input: .transcription("hello")))
+        XCTAssertTrue(prompt.contains(#""dot" as ".""#))
+        XCTAssertTrue(prompt.contains(#""underscore" as "_""#))
+        XCTAssertTrue(prompt.contains("never convert these words in ordinary prose"))
+    }
+
+    func testValidatorAcceptsSymbolRenderingWithVerifiedSpan() {
+        XCTAssertNoThrow(try CleanupSafetyValidator.validate(
+            raw: "foo underscore bar",
+            cleaned: "foo_bar",
+            vocabulary: [],
+            renderedSpans: [.init(startUTF16: 4, endUTF16: 14, text: "underscore", rendered: "_")]
+        ))
+    }
+
+    func testValidatorAcceptsEmojiRenderingWithVerifiedSpan() {
+        XCTAssertNoThrow(try CleanupSafetyValidator.validate(
+            raw: "emoji heart",
+            cleaned: "❤️",
+            vocabulary: [],
+            renderedSpans: [.init(startUTF16: 0, endUTF16: 11, text: "emoji heart", rendered: "❤️")]
+        ))
+    }
+
+    func testValidatorAcceptsMultiwordEmojiNameInBothWordOrders() {
+        XCTAssertNoThrow(try CleanupSafetyValidator.validate(
+            raw: "emoji red heart",
+            cleaned: "❤️",
+            vocabulary: [],
+            renderedSpans: [.init(startUTF16: 0, endUTF16: 15, text: "emoji red heart", rendered: "❤️")]
+        ))
+        XCTAssertNoThrow(try CleanupSafetyValidator.validate(
+            raw: "face with tears of joy emoji",
+            cleaned: "😂",
+            vocabulary: [],
+            renderedSpans: [.init(startUTF16: 0, endUTF16: 28, text: "face with tears of joy emoji", rendered: "😂")]
+        ))
+    }
+
+    func testValidatorKeepsShrinkGuardWhenNoRenderedSpansClaimed() {
+        XCTAssertThrowsError(try CleanupSafetyValidator.validate(
+            raw: "emoji accessibility and emoji rendering and emoji keyboards",
+            cleaned: "Emoji topics.",
+            vocabulary: []
+        ))
+        XCTAssertThrowsError(try CleanupSafetyValidator.validate(
+            raw: "underscore underscore underscore underscore underscore",
+            cleaned: "Many underscores",
+            vocabulary: []
+        ))
+    }
+
+    func testValidatorStillRejectsShrinkWithoutSpokenTokens() {
+        XCTAssertThrowsError(try CleanupSafetyValidator.validate(
+            raw: "please write down every single thing I told you about yesterday",
+            cleaned: "ok",
+            vocabulary: []
+        ))
+    }
+
+    func testValidatorRejectsUnverifiedRenderedSpans() {
+        let raw = "emoji heart underscore red heart"
+
+        // source text does not match the claimed offsets
+        XCTAssertThrowsError(try CleanupSafetyValidator.validate(
+            raw: raw, cleaned: "❤️ _ red heart", vocabulary: [],
+            renderedSpans: [.init(startUTF16: 0, endUTF16: 11, text: "emoji hearts", rendered: "❤️")]
+        ))
+        // rendered character absent from the cleaned output
+        XCTAssertThrowsError(try CleanupSafetyValidator.validate(
+            raw: raw, cleaned: "no heart present underscore red heart", vocabulary: [],
+            renderedSpans: [.init(startUTF16: 0, endUTF16: 11, text: "emoji heart", rendered: "❤️")]
+        ))
+        // span text is neither a symbol word nor an emoji name phrase
+        XCTAssertThrowsError(try CleanupSafetyValidator.validate(
+            raw: raw, cleaned: "emoji heart underscore ❤️", vocabulary: [],
+            renderedSpans: [.init(startUTF16: 23, endUTF16: 32, text: "red heart", rendered: "❤️")]
+        ))
+        // symbol word paired with the wrong character
+        XCTAssertThrowsError(try CleanupSafetyValidator.validate(
+            raw: raw, cleaned: "emoji heart - red heart", vocabulary: [],
+            renderedSpans: [.init(startUTF16: 12, endUTF16: 22, text: "underscore", rendered: "-")]
+        ))
+        // rendered must be a single character
+        XCTAssertThrowsError(try CleanupSafetyValidator.validate(
+            raw: raw, cleaned: "<3 underscore red heart", vocabulary: [],
+            renderedSpans: [.init(startUTF16: 0, endUTF16: 11, text: "emoji heart", rendered: "<3")]
+        ))
+    }
+
+    func testResponseDecoderAcceptsSymbolAndEmojiRenderings() throws {
+        let symbol = #"{"intent":"transcription","text":"so c.customer_email was generated","withdrawnSpans":[],"renderedSpans":[{"startUTF16":5,"endUTF16":8,"text":"dot","rendered":"."},{"startUTF16":18,"endUTF16":28,"text":"underscore","rendered":"_"}]}"#
+        let symbolOutput = try CleanupResponseDecoder.decode(
+            symbol,
+            for: .init(input: .transcription("so C dot customer underscore email was generated"))
+        )
+        XCTAssertEqual(symbolOutput, .transcription("so c.customer_email was generated"))
+
+        let emoji = #"{"intent":"transcription","text":"Great job ❤️","withdrawnSpans":[],"renderedSpans":[{"startUTF16":10,"endUTF16":21,"text":"heart emoji","rendered":"❤️"}]}"#
+        let emojiOutput = try CleanupResponseDecoder.decode(
+            emoji,
+            for: .init(input: .transcription("great job heart emoji"))
+        )
+        XCTAssertEqual(emojiOutput, .transcription("Great job ❤️"))
+    }
+
+    func testResponseDecoderAcceptsMultiwordEmojiRendering() throws {
+        let response = #"{"intent":"transcription","text":"Nice work ❤️","withdrawnSpans":[],"renderedSpans":[{"startUTF16":10,"endUTF16":25,"text":"emoji red heart","rendered":"❤️"}]}"#
+        let output = try CleanupResponseDecoder.decode(
+            response,
+            for: .init(input: .transcription("nice work emoji red heart"))
+        )
+        XCTAssertEqual(output, .transcription("Nice work ❤️"))
+    }
+
+    func testPromptRendersSpokenEmojiNamesAsEmoji() {
+        let prompt = CleanupPrompt.system(request: .init(input: .transcription("hello")))
+        XCTAssertTrue(prompt.contains(#""emoji heart" or "heart emoji""#))
+        XCTAssertTrue(prompt.contains("matching emoji character"))
+        XCTAssertTrue(prompt.contains("talking about emojis rather than dictating one"))
+        XCTAssertTrue(prompt.contains("renderedSpans"))
+        XCTAssertTrue(prompt.contains("the single character that replaced it"))
+    }
+
     func testPromptIncludesCustomInstructionForTranscriptionOnly() {
         let input = CleanupInput.transcription("hello")
         let prompt = CleanupPrompt.system(request: .init(input: input, customInstruction: "Prefer British spelling"))
