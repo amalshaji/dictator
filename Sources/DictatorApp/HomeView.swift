@@ -1,18 +1,26 @@
 import DictatorCore
+import Foundation
 import SwiftUI
 
 struct HomeView: View {
     @ObservedObject var model: AppModel
     @State private var selectedTranscript: TranscriptRecord?
+    @State private var transcriptQuery = ""
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 header
-                metrics
+                dashboardOverview
                 Divider().padding(.vertical, 28)
-                Text("Recent transcripts").font(.dictatorDisplay(20))
-                if model.data.transcripts.isEmpty { emptyState } else { transcriptList }
+                transcriptSectionHeader
+                if model.data.transcripts.isEmpty {
+                    emptyState
+                } else if displayedTranscripts.isEmpty {
+                    searchEmptyState
+                } else {
+                    transcriptList
+                }
             }
             .frame(maxWidth: DictatorDesign.contentWidth, alignment: .leading)
             .padding(.horizontal, 42)
@@ -41,60 +49,70 @@ struct HomeView: View {
         }
     }
 
-    private var metrics: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            statisticsSection(
-                title: "LAST 7 DAYS",
-                words: wordCount(in: weeklyTranscripts),
-                averageWPM: averageWPM(in: weeklyTranscripts),
-                averageLatency: averageLatency(in: weeklyTranscripts)
-            )
-            statisticsSection(
-                title: "ALL TIME",
-                words: model.data.lifetimeStatistics.words,
-                averageWPM: model.data.lifetimeStatistics.averageWPM,
-                averageLatency: model.data.lifetimeStatistics.averagePipelineLatency
-            )
-        }
-        .padding(.top, 34)
-    }
-
-    private func statisticsSection(
-        title: String,
-        words: Int,
-        averageWPM: Int?,
-        averageLatency: TimeInterval?
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title)
-                .font(.dictatorUtility(9))
-                .foregroundStyle(DictatorDesign.ink.opacity(0.42))
-                .accessibilityAddTraits(.isHeader)
-            HStack(spacing: 0) {
-                metric(value: "\(words)", label: "words")
-                metric(value: averageWPM.map(String.init) ?? "—", label: "average wpm")
-                metric(value: averageLatency.map { String(format: "%.0f ms", $0 * 1_000) } ?? "—", label: "pipeline latency")
-            }
-        }
-    }
-
-    private func metric(value: String, label: String) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(value).font(.dictatorDisplay(22))
-            Text(label).font(.dictatorBody(11, weight: .medium)).foregroundStyle(DictatorDesign.ink.opacity(0.48))
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
+    private var dashboardOverview: some View {
+        HomeDashboardOverview(
+            activity: HomeDashboardAnalytics.activity(in: model.data.transcripts),
+            words: wordCount(in: weeklyTranscripts),
+            averageWPM: averageWPM(in: weeklyTranscripts),
+            averageLatency: averageLatency(in: weeklyTranscripts),
+            lifetimeStatistics: model.data.lifetimeStatistics,
+            topApplication: HomeDashboardAnalytics.topApplication(in: model.data.transcripts)
+        )
+        .padding(.top, 26)
     }
 
     private var transcriptList: some View {
         LazyVStack(alignment: .leading, spacing: 0) {
-            ForEach(model.data.transcripts) { record in
-                Button { selectedTranscript = record } label: { TranscriptRow(record: record) }.buttonStyle(.plain)
+            ForEach(displayedTranscripts) { record in
+                Button { selectedTranscript = record } label: { HomeTranscriptRow(record: record) }.buttonStyle(.plain)
                 Divider()
             }
         }
         .padding(.top, 12)
     }
+
+    private var transcriptSectionHeader: some View {
+        HStack(spacing: 20) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(isSearching ? "Transcripts" : "Recent transcripts")
+                    .font(.dictatorDisplay(20))
+                if isSearching {
+                    Text("\(displayedTranscripts.count) \(displayedTranscripts.count == 1 ? "match" : "matches")")
+                        .font(.dictatorBody(10.5))
+                        .foregroundStyle(DictatorDesign.muted)
+                }
+            }
+            Spacer(minLength: 12)
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(DictatorDesign.muted)
+                    .accessibilityHidden(true)
+                TextField("Search transcripts", text: $transcriptQuery)
+                    .textFieldStyle(.plain)
+                    .font(.dictatorBody(12.5))
+                if !transcriptQuery.isEmpty {
+                    Button {
+                        transcriptQuery = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(DictatorDesign.muted)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Clear transcript search")
+                }
+            }
+            .padding(.horizontal, 10)
+            .frame(width: 238, height: 34)
+            .background(DictatorDesign.control, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(DictatorDesign.border)
+            }
+        }
+    }
+
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Your first transcript will appear here.").font(.dictatorBody(15, weight: .medium))
@@ -102,6 +120,30 @@ struct HomeView: View {
                 .font(.dictatorBody(13)).foregroundStyle(DictatorDesign.ink.opacity(0.52))
         }
         .padding(.vertical, 42)
+    }
+
+    private var searchEmptyState: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("No matching transcripts")
+                .font(.dictatorBody(14, weight: .medium))
+            Text("Try another word or phrase. Your local transcript history covers the last 30 days.")
+                .font(.dictatorBody(12.5))
+                .foregroundStyle(DictatorDesign.muted)
+        }
+        .padding(.vertical, 32)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var isSearching: Bool {
+        !transcriptQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var displayedTranscripts: [TranscriptRecord] {
+        let matches = HomeDashboardAnalytics.transcripts(
+            matching: transcriptQuery,
+            in: model.data.transcripts
+        )
+        return isSearching ? matches : Array(matches.prefix(5))
     }
 
     private var weeklyTranscripts: [TranscriptRecord] {
@@ -127,48 +169,5 @@ struct HomeView: View {
 
     private func providerDisplayName(_ kind: ProviderKind) -> String {
         ProviderRegistry.sttMetadata(includeAppleSpeech: true).first { $0.kind == kind }?.displayName ?? kind.rawValue
-    }
-}
-
-enum TranscriptMetadataFormatter {
-    static func pipelineSegments(for record: TranscriptRecord) -> [String] {
-        var segments = ["STT: \(sttDisplayName(for: record.sttProvider)), \(milliseconds(record.sttLatency))"]
-        if let execution = record.llmExecution {
-            let providerName = llmDisplayName(for: execution.provider)
-            let label = execution.purpose == .cleanup ? "Cleanup" : "Screen aware"
-            segments.append("\(label): \(providerName), \(milliseconds(execution.latency))")
-        }
-        segments.append(record.pipelineLatency.map { "Total: \(milliseconds($0))" } ?? "Total: —")
-        return segments
-    }
-
-    private static func sttDisplayName(for kind: ProviderKind) -> String {
-        ProviderRegistry.sttMetadata(includeAppleSpeech: true).first { $0.kind == kind }?.displayName ?? kind.rawValue
-    }
-
-    private static func llmDisplayName(for kind: ProviderKind) -> String {
-        CleanupProviderRegistry.metadata.first { $0.kind == kind }?.displayName ?? kind.rawValue
-    }
-
-    private static func milliseconds(_ latency: TimeInterval) -> String {
-        String(format: "%.0f ms", latency * 1_000)
-    }
-}
-
-private struct TranscriptRow: View {
-    let record: TranscriptRecord
-    var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            Text(record.currentText).font(.dictatorBody(14)).lineLimit(3).textSelection(.enabled)
-            HStack(spacing: 10) {
-                Text(record.createdAt.dictatorTimestamp)
-                ForEach(TranscriptMetadataFormatter.pipelineSegments(for: record), id: \.self) { segment in
-                    Text(segment)
-                }
-            }
-            .font(.dictatorUtility(10)).foregroundStyle(DictatorDesign.ink.opacity(0.42))
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 13)
     }
 }
