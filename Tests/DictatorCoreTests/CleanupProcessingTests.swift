@@ -188,6 +188,26 @@ final class CleanupProcessingTests: XCTestCase {
         XCTAssertFalse(prompt.contains("retractionApplied"))
     }
 
+    func testPromptFormatsSpokenComparisonsAndOrderedLists() {
+        let prompt = CleanupPrompt.system(request: .init(input: .transcription("hello")))
+
+        XCTAssertTrue(prompt.contains(#""greater than or equal to" as ">=""#))
+        XCTAssertTrue(prompt.contains(#""greater there or equal to""#))
+        XCTAssertTrue(prompt.contains("ordered or numbered list"))
+        XCTAssertTrue(prompt.contains("one item per line"))
+        XCTAssertTrue(prompt.contains("Preserve every item and its order"))
+    }
+
+    func testPromptResolvesInlineCorrectionsToFinalIntendedWording() {
+        let prompt = CleanupPrompt.system(request: .init(input: .transcription("hello")))
+
+        XCTAssertTrue(prompt.contains("correctionSpans"))
+        XCTAssertTrue(prompt.contains("I want to order some flowers. No, no, no, lilies"))
+        XCTAssertTrue(prompt.contains("I want to order some lilies."))
+        XCTAssertTrue(prompt.contains("smallest abandoned word or phrase"))
+        XCTAssertTrue(prompt.contains("Do not enumerate correction cue phrases"))
+    }
+
     func testPromptRendersSpokenSymbolNamesInsideDictatedIdentifiers() {
         let prompt = CleanupPrompt.system(request: .init(input: .transcription("hello")))
         XCTAssertTrue(prompt.contains(#""dot" as ".""#))
@@ -201,6 +221,130 @@ final class CleanupProcessingTests: XCTestCase {
             cleaned: "foo_bar",
             vocabulary: [],
             renderedSpans: [.init(startUTF16: 4, endUTF16: 14, text: "underscore", rendered: "_")]
+        ))
+    }
+
+    func testResponseDecoderAcceptsSpokenComparisonRendering() throws {
+        let raw = "Exceeding the maximum number of tokens allowed: 5674 greater there or equal to 1024."
+        let source = "greater there or equal to"
+        let range = (raw as NSString).range(of: source)
+        let response = try responseJSON([
+            "intent": "transcription",
+            "text": "Exceeding the maximum number of tokens allowed: 5674 >= 1024.",
+            "withdrawnSpans": [],
+            "renderedSpans": [[
+                "startUTF16": range.location,
+                "endUTF16": NSMaxRange(range),
+                "text": source,
+                "rendered": ">="
+            ]]
+        ])
+
+        let output = try CleanupResponseDecoder.decode(response, for: .init(input: .transcription(raw)))
+
+        XCTAssertEqual(output, .transcription("Exceeding the maximum number of tokens allowed: 5674 >= 1024."))
+    }
+
+    func testResponseDecoderAcceptsScopedInlineCorrection() throws {
+        let raw = "Use 5674 tokens. No, no, no, use 1024 tokens."
+        let response = try correctionResponse(
+            text: "Use 1024 tokens.",
+            raw: raw,
+            abandoned: "Use 5674 tokens",
+            replacement: "use 1024 tokens"
+        )
+
+        let output = try CleanupResponseDecoder.decode(response, for: .init(input: .transcription(raw)))
+
+        XCTAssertEqual(output, .transcription("Use 1024 tokens."))
+    }
+
+    func testResponseDecoderAcceptsExplicitCorrectionCommand() throws {
+        let raw = "Use 5674 tokens. Correction, use 1024 tokens."
+        let response = try correctionResponse(
+            text: "Use 1024 tokens.",
+            raw: raw,
+            abandoned: "Use 5674 tokens",
+            replacement: "use 1024 tokens"
+        )
+
+        let output = try CleanupResponseDecoder.decode(response, for: .init(input: .transcription(raw)))
+
+        XCTAssertEqual(output, .transcription("Use 1024 tokens."))
+    }
+
+    func testResponseDecoderKeepsSentenceContextForFlowersCorrection() throws {
+        let raw = "I want to order some flowers. No, no, no, lilies."
+        let response = try correctionResponse(
+            text: "I want to order some lilies.",
+            raw: raw,
+            abandoned: "flowers",
+            replacement: "lilies"
+        )
+
+        let output = try CleanupResponseDecoder.decode(response, for: .init(input: .transcription(raw)))
+
+        XCTAssertEqual(output, .transcription("I want to order some lilies."))
+    }
+
+    func testResponseDecoderAcceptsExplicitOrderedListFormatting() throws {
+        let raw = "Make an ordered list: first, connect the microphone; second, start dictating; third, review the transcript."
+        let text = """
+        1. Connect the microphone.
+        2. Start dictating.
+        3. Review the transcript.
+        """
+        let response = try responseJSON([
+            "intent": "transcription",
+            "text": text,
+            "withdrawnSpans": [],
+            "correctionSpans": [],
+            "renderedSpans": []
+        ])
+
+        let output = try CleanupResponseDecoder.decode(response, for: .init(input: .transcription(raw)))
+
+        XCTAssertEqual(output, .transcription(text))
+    }
+
+    func testCorrectionSpanCannotRemoveProtectedValuesOutsideItsRange() throws {
+        let raw = "Keep owner@example.com and https://keep.example. Use 5674 tokens. No, no, use 1024 tokens."
+        let unsafeOutputs = [
+            "Keep someone@example.com and https://keep.example. Use 1024 tokens.",
+            "Keep owner@example.com and https://other.example. Use 1024 tokens.",
+            "Keep owner@example.com and https://keep.example. Use 2048 tokens."
+        ]
+
+        for text in unsafeOutputs {
+            let response = try correctionResponse(
+                text: text,
+                raw: raw,
+                abandoned: "Use 5674 tokens",
+                replacement: "use 1024 tokens"
+            )
+
+            XCTAssertThrowsError(try CleanupResponseDecoder.decode(response, for: .init(input: .transcription(raw))))
+        }
+    }
+
+    func testCorrectionSpanRejectsOrdinarySequenceAsCorrectionCue() throws {
+        let raw = "Use 5674 tokens and use 1024 tokens."
+        let response = try correctionResponse(
+            text: "Use 1024 tokens.",
+            raw: raw,
+            abandoned: "Use 5674 tokens",
+            replacement: "use 1024 tokens"
+        )
+
+        XCTAssertThrowsError(try CleanupResponseDecoder.decode(response, for: .init(input: .transcription(raw))))
+    }
+
+    func testValidatorRejectsUnverifiedComparisonRendering() {
+        XCTAssertThrowsError(try CleanupSafetyValidator.validate(
+            raw: "We have greater expectations.",
+            cleaned: "We have > expectations.",
+            vocabulary: [],
+            renderedSpans: [.init(startUTF16: 8, endUTF16: 15, text: "greater", rendered: ">")]
         ))
     }
 
@@ -310,7 +454,7 @@ final class CleanupProcessingTests: XCTestCase {
         XCTAssertTrue(prompt.contains("matching emoji character"))
         XCTAssertTrue(prompt.contains("talking about emojis rather than dictating one"))
         XCTAssertTrue(prompt.contains("renderedSpans"))
-        XCTAssertTrue(prompt.contains("the single character that replaced it"))
+        XCTAssertTrue(prompt.contains("the exact symbol, operator, or emoji that replaced it"))
     }
 
     func testPromptIncludesCustomInstructionForTranscriptionOnly() {
@@ -418,6 +562,59 @@ final class CleanupProcessingTests: XCTestCase {
         XCTAssertThrowsError(try CleanupResponseDecoder.decode(response, for: .init(input: .contextual(spokenText: "make it lowercase", selectedText: "")))) { error in
             XCTAssertEqual(error as? ProviderError, .cleanupRejected("transformation requires selected text"))
         }
+    }
+
+    func testResponseDecoderRejectsCorrectionSpanForTransformation() throws {
+        let response = try responseJSON([
+            "intent": "transformation",
+            "text": "hello",
+            "correctionSpans": [[
+                "startUTF16": 0,
+                "endUTF16": 4,
+                "text": "make",
+                "replacementStartUTF16": 5,
+                "replacementEndUTF16": 7,
+                "replacementText": "it"
+            ]]
+        ])
+
+        XCTAssertThrowsError(
+            try CleanupResponseDecoder.decode(
+                response,
+                for: .init(input: .contextual(spokenText: "make it lowercase", selectedText: "HELLO"))
+            )
+        ) { error in
+            XCTAssertEqual(error as? ProviderError, .cleanupRejected("transformation cannot report correction spans"))
+        }
+    }
+
+    private func responseJSON(_ payload: [String: Any]) throws -> String {
+        let data = try JSONSerialization.data(withJSONObject: payload)
+        return try XCTUnwrap(String(data: data, encoding: .utf8))
+    }
+
+    private func correctionResponse(
+        text: String,
+        raw: String,
+        abandoned: String,
+        replacement: String
+    ) throws -> String {
+        let abandonedRange = (raw as NSString).range(of: abandoned)
+        let replacementRange = (raw as NSString).range(of: replacement)
+        return try responseJSON([
+            "intent": "transcription",
+            "text": text,
+            "withdrawnSpans": [],
+            "renderedSpans": [],
+            "correctionSpans": [[
+                "startUTF16": abandonedRange.location,
+                "endUTF16": NSMaxRange(abandonedRange),
+                "text": abandoned,
+                "replacementStartUTF16": replacementRange.location,
+                "replacementEndUTF16": NSMaxRange(replacementRange),
+                "replacementText": replacement
+            ]]
+        ])
     }
 
     private func transcriptionResponse(
