@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import XCTest
 @testable import Dictator
@@ -50,5 +51,64 @@ final class SettingsLayoutTests: XCTestCase {
         }
         XCTFail("Control drew nothing")
         return 0
+    }
+}
+
+@MainActor
+final class ShortcutRecorderTests: XCTestCase {
+    func testForwardsKeyEventsFromGlobalMonitor() throws {
+        var localHandler: ((NSEvent) -> NSEvent?)?
+        var globalHandler: ((NSEvent) -> Void)?
+        let monitors = ShortcutRecorder.EventMonitors(
+            addLocal: { _, handler in
+                localHandler = handler
+                return NSObject()
+            },
+            addGlobal: { _, handler in
+                globalHandler = handler
+                return NSObject()
+            },
+            remove: { _ in }
+        )
+        var capturedKeyCode: UInt16?
+        monitors.start { event in
+            capturedKeyCode = event.keyCode
+            return nil
+        }
+        let event = try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [.control],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: "D",
+            charactersIgnoringModifiers: "D",
+            isARepeat: false,
+            keyCode: 2
+        ))
+
+        XCTAssertNotNil(localHandler)
+        globalHandler?(event)
+        XCTAssertEqual(capturedKeyCode, 2)
+    }
+
+    func testRemovesBothEventMonitors() {
+        let localToken = NSObject()
+        let globalToken = NSObject()
+        var removedTokens = [NSObject]()
+        let monitors = ShortcutRecorder.EventMonitors(
+            addLocal: { _, _ in localToken },
+            addGlobal: { _, _ in globalToken },
+            remove: { token in
+                if let token = token as? NSObject { removedTokens.append(token) }
+            }
+        )
+
+        monitors.start { $0 }
+        monitors.stop()
+
+        XCTAssertTrue(removedTokens.contains { $0 === localToken })
+        XCTAssertTrue(removedTokens.contains { $0 === globalToken })
     }
 }

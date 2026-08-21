@@ -3,12 +3,54 @@ import CoreGraphics
 import SwiftUI
 
 struct ShortcutRecorder: View {
+    final class EventMonitors {
+        typealias EventHandler = (NSEvent) -> NSEvent?
+        typealias AddLocal = (NSEvent.EventTypeMask, @escaping EventHandler) -> Any?
+        typealias AddGlobal = (NSEvent.EventTypeMask, @escaping (NSEvent) -> Void) -> Any?
+        typealias Remove = (Any) -> Void
+
+        private let addLocal: AddLocal
+        private let addGlobal: AddGlobal
+        private let remove: Remove
+        private var localMonitor: Any?
+        private var globalMonitor: Any?
+
+        init(
+            addLocal: @escaping AddLocal = { mask, handler in
+                NSEvent.addLocalMonitorForEvents(matching: mask, handler: handler)
+            },
+            addGlobal: @escaping AddGlobal = { mask, handler in
+                NSEvent.addGlobalMonitorForEvents(matching: mask, handler: handler)
+            },
+            remove: @escaping Remove = { NSEvent.removeMonitor($0) }
+        ) {
+            self.addLocal = addLocal
+            self.addGlobal = addGlobal
+            self.remove = remove
+        }
+
+        func start(handler: @escaping EventHandler) {
+            stop()
+            let mask: NSEvent.EventTypeMask = [.keyDown, .flagsChanged]
+            // Each monitor excludes the other's event scope, so recording needs both.
+            localMonitor = addLocal(mask, handler)
+            globalMonitor = addGlobal(mask) { event in _ = handler(event) }
+        }
+
+        func stop() {
+            if let localMonitor { remove(localMonitor) }
+            if let globalMonitor { remove(globalMonitor) }
+            localMonitor = nil
+            globalMonitor = nil
+        }
+    }
+
     let shortcut: GlobalShortcut
     var allowsFunctionModifier = false
     let onChange: (GlobalShortcut) -> Bool
 
     @State private var isRecording = false
-    @State private var monitor: Any?
+    @State private var eventMonitors = EventMonitors()
     @State private var hint: String?
 
     var body: some View {
@@ -31,33 +73,35 @@ struct ShortcutRecorder: View {
         stopRecording()
         hint = "Press Esc to cancel"
         isRecording = true
-        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
-            if event.type == .flagsChanged {
-                if allowsFunctionModifier, event.keyCode == 63, event.modifierFlags.contains(.function) {
-                    accept(.dictate)
-                    return nil
-                }
-                return event
-            }
+        eventMonitors.start { event in handle(event) }
+    }
 
-            if event.keyCode == 53 {
-                stopRecording()
+    private func handle(_ event: NSEvent) -> NSEvent? {
+        if event.type == .flagsChanged {
+            if allowsFunctionModifier, event.keyCode == 63, event.modifierFlags.contains(.function) {
+                accept(.dictate)
                 return nil
             }
+            return event
+        }
 
-            let modifiers = cgModifiers(from: event.modifierFlags)
-            guard !modifiers.isEmpty || isFunctionKey(event.keyCode) else {
-                hint = "Add a modifier, or use an F-key"
-                return nil
-            }
-            let captured = GlobalShortcut(
-                keyCode: Int64(event.keyCode),
-                modifiers: modifiers,
-                keyLabel: keyLabel(for: event)
-            )
-            accept(captured)
+        if event.keyCode == 53 {
+            stopRecording()
             return nil
         }
+
+        let modifiers = cgModifiers(from: event.modifierFlags)
+        guard !modifiers.isEmpty || isFunctionKey(event.keyCode) else {
+            hint = "Add a modifier, or use an F-key"
+            return nil
+        }
+        let captured = GlobalShortcut(
+            keyCode: Int64(event.keyCode),
+            modifiers: modifiers,
+            keyLabel: keyLabel(for: event)
+        )
+        accept(captured)
+        return nil
     }
 
     private func accept(_ captured: GlobalShortcut) {
@@ -69,8 +113,7 @@ struct ShortcutRecorder: View {
     }
 
     private func stopRecording() {
-        if let monitor { NSEvent.removeMonitor(monitor) }
-        monitor = nil
+        eventMonitors.stop()
         isRecording = false
         hint = nil
     }
