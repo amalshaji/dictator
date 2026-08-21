@@ -160,7 +160,9 @@ fi
 OLD_VERSION="$current_version" NEW_VERSION="$next_version" perl -0pi -e \
   's/(^[[:space:]]*MARKETING_VERSION: )\Q$ENV{OLD_VERSION}\E$/${1}$ENV{NEW_VERSION}/m' \
   project.yml
-"$xcodegen_bin" generate
+# Keep stdout clean: callers capture this script's output, and XcodeGen
+# writes progress lines to stdout.
+"$xcodegen_bin" generate >&2
 
 changed_files=$(
   {
