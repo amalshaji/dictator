@@ -5,8 +5,9 @@ import SwiftUI
 enum Destination: String, CaseIterable, Identifiable {
     case home = "Home"
     case providers = "Providers"
+    case cleanup = "Cleanup"
     case vocabulary = "Vocabulary"
-    case rules = "Styles & snippets"
+    case snippets = "Snippets"
     case clipboard = "Clipboard"
     case usage = "Usage"
     case settings = "Settings"
@@ -15,8 +16,9 @@ enum Destination: String, CaseIterable, Identifiable {
         switch self {
         case .home: "waveform.path"
         case .providers: "point.3.connected.trianglepath.dotted"
+        case .cleanup: "wand.and.stars"
         case .vocabulary: "text.book.closed"
-        case .rules: "wand.and.stars"
+        case .snippets: "curlybraces"
         case .clipboard: "doc.on.clipboard"
         case .usage: "chart.bar.xaxis"
         case .settings: "slider.horizontal.3"
@@ -102,8 +104,9 @@ struct MainView: View {
         switch destination {
         case .home: HomeView(model: model)
         case .providers: ProvidersView(model: model)
+        case .cleanup: CleanupView(model: model)
         case .vocabulary: VocabularyView(model: model)
-        case .rules: StylesSnippetsView(model: model)
+        case .snippets: SnippetsView(model: model)
         case .clipboard: ClipboardView(model: model)
         case .usage: UsageView(model: model)
         case .settings: SettingsView(model: model)

@@ -11,14 +11,15 @@ struct ProvidersView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Providers").font(.dictatorDisplay(30))
                     Text("Choose speech, cleanup, and screen-aware models independently. Focused-window images are sent only for screen-aware dictation and are never saved.")
-                        .font(.dictatorBody(14)).foregroundStyle(DictatorDesign.ink.opacity(0.56))
+                        .font(.dictatorBody(14)).foregroundStyle(DictatorDesign.inkSecondary)
                 }
                 providerTypeSelector
 
                 if tab == 0 {
                     providerList(model.sttMetadata, purpose: .speechToText)
                 } else if tab == 1 {
-                    cleanupControl
+                    Text("Cleanup behavior—styles, per-app overrides, and custom instructions—lives in Cleanup. Connect the model that runs it here.")
+                        .font(.dictatorBody(11)).foregroundStyle(DictatorDesign.muted)
                     providerList(CleanupProviderRegistry.metadata, purpose: .cleanup)
                 } else {
                     screenAwareControl
@@ -40,34 +41,6 @@ struct ProvidersView: View {
             ],
             selection: $tab
         )
-    }
-
-    private var cleanupControl: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 16) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Clean up transcripts").font(.dictatorBody(13, weight: .semibold))
-                    Text("Improve punctuation and apply your selected style.").font(.dictatorBody(11)).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Toggle("", isOn: $model.cleanupEnabled).labelsHidden().toggleStyle(.switch).tint(DictatorDesign.signalInk)
-            }
-            Divider().overlay(DictatorDesign.border)
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Custom instructions").font(.dictatorBody(11, weight: .semibold)).foregroundStyle(DictatorDesign.ink.opacity(0.72))
-                Text("Optional. Tell the model how to polish transcripts—grammar, tone, phrasing. Applied on top of your selected style. Up to \(AppModel.maximumCleanupInstructionLength) characters.")
-                    .font(.dictatorBody(11)).foregroundStyle(.secondary)
-                TextEditor(text: Binding(
-                    get: { model.cleanupCustomInstruction },
-                    set: { model.setCleanupCustomInstruction($0) }
-                ))
-                .font(.dictatorBody(13)).frame(minHeight: 64)
-                .dictatorEditor()
-            }
-        }
-        .padding(14)
-        .background(DictatorDesign.control, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).stroke(DictatorDesign.border))
     }
 
     private var screenAwareControl: some View {
@@ -95,8 +68,7 @@ struct ProvidersView: View {
             }
         }
         .padding(14)
-        .background(DictatorDesign.control, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).stroke(DictatorDesign.border))
+        .dictatorCard()
     }
 
     private func providerList(_ providers: [ProviderMetadata], purpose: ProviderPurpose) -> some View {
@@ -110,9 +82,7 @@ struct ProvidersView: View {
                 if provider.kind != providers.last?.kind { Divider() }
             }
         }
-        .background(DictatorDesign.control, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(DictatorDesign.border))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .dictatorCard()
     }
 }
 

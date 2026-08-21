@@ -10,33 +10,48 @@ struct VocabularyView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                Text("Vocabulary").font(.dictatorDisplay(30))
-                Text("Names, product terms, and jargon are sent only to your selected providers.")
-                    .font(.dictatorBody(14)).foregroundStyle(.secondary)
-                HStack {
-                    TextField("Add a word or phrase", text: $newTerm).textFieldStyle(DictatorTextFieldStyle()).onSubmit(add)
-                    Button("Add", action: add).dictatorButton()
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Vocabulary").font(.dictatorDisplay(30))
+                    Text("Names, product terms, and jargon are sent only to your selected providers.")
+                        .font(.dictatorBody(14)).foregroundStyle(DictatorDesign.inkSecondary)
                 }
-                if let addError { Text(addError).font(.dictatorBody(11, weight: .medium)).foregroundStyle(.red) }
-                VStack(spacing: 0) {
-                    ForEach(model.data.vocabulary) { entry in
-                        HStack {
-                            Toggle("", isOn: Binding(get: { entry.isEnabled }, set: { model.setVocabularyEnabled(entry.id, $0) }))
-                                .labelsHidden().toggleStyle(.switch)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(entry.value).font(.dictatorBody(14, weight: .medium))
-                                if !entry.variants.isEmpty { Text(entry.variants.joined(separator: ", ")).font(.dictatorBody(11)).foregroundStyle(.secondary) }
-                            }.opacity(entry.isEnabled ? 1 : 0.5)
-                            Spacer()
-                            Button("Edit") { editing = entry }.dictatorButton(.ghost)
-                            Button(role: .destructive) { model.deleteVocabulary(entry.id) } label: { Image(systemName: "trash") }.dictatorButton(.destructive)
-                        }.padding(.vertical, 13)
-                        Divider()
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        TextField("Add a word or phrase", text: $newTerm).textFieldStyle(DictatorTextFieldStyle()).onSubmit(add)
+                        Button("Add", action: add).dictatorButton()
                     }
+                    if let addError { Text(addError).font(.dictatorBody(11, weight: .medium)).foregroundStyle(.red) }
                 }
-                if model.data.vocabulary.isEmpty { Text("Add terms that transcription models often miss.").foregroundStyle(.secondary).padding(.top, 20) }
+                if model.data.vocabulary.isEmpty {
+                    DictatorEmptyState(
+                        icon: "text.book.closed",
+                        title: "No vocabulary yet",
+                        detail: "Add terms that transcription models often miss."
+                    )
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(Array(model.data.vocabulary.enumerated()), id: \.element.id) { index, entry in
+                            if index > 0 { Divider().padding(.leading, 14) }
+                            HStack {
+                                Toggle("", isOn: Binding(get: { entry.isEnabled }, set: { model.setVocabularyEnabled(entry.id, $0) }))
+                                    .labelsHidden().toggleStyle(.switch).tint(DictatorDesign.signalInk)
+                                    .accessibilityLabel("Enable \(entry.value)")
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(entry.value).font(.dictatorBody(14, weight: .medium))
+                                    if !entry.variants.isEmpty { Text(entry.variants.joined(separator: ", ")).font(.dictatorBody(11)).foregroundStyle(.secondary) }
+                                }.opacity(entry.isEnabled ? 1 : 0.5)
+                                Spacer()
+                                Button("Edit") { editing = entry }.dictatorButton(.ghost)
+                                Button(role: .destructive) { model.deleteVocabulary(entry.id) } label: { Image(systemName: "trash") }.dictatorButton(.destructive)
+                                    .accessibilityLabel("Delete \(entry.value)")
+                            }.padding(.horizontal, 14).padding(.vertical, 11)
+                        }
+                    }
+                    .dictatorCard()
+                }
             }
-            .frame(maxWidth: DictatorDesign.contentWidth, alignment: .leading).padding(42)
+            .frame(maxWidth: DictatorDesign.contentWidth, alignment: .leading)
+            .padding(.horizontal, 42).padding(.vertical, 36)
         }
         .sheet(item: $editing) { entry in VocabularyEditor(model: model, entry: entry) }
     }
@@ -89,25 +104,36 @@ struct ClipboardView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                Text("Dictator clipboard").font(.dictatorDisplay(30))
-                Text("Transcripts land here when no editable field is focused. \(model.pasteLatestShortcut.displayName) pastes the latest item.")
-                    .font(.dictatorBody(14)).foregroundStyle(.secondary)
-                LazyVStack(spacing: 0) {
-                    ForEach(model.data.clipboard) { entry in
-                        HStack(alignment: .top, spacing: 16) {
-                            VStack(alignment: .leading, spacing: 7) {
-                                Text(entry.text).font(.dictatorBody(14)).textSelection(.enabled)
-                                Text(entry.createdAt.dictatorTimestamp).font(.dictatorUtility(9)).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Button("Paste") { Task { await model.pasteClipboard(entry) } }.dictatorButton(.secondary)
-                        }.padding(.vertical, 15)
-                        Divider()
-                    }
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Dictator clipboard").font(.dictatorDisplay(30))
+                    Text("Transcripts land here when no editable field is focused. \(model.pasteLatestShortcut.displayName) pastes the latest item.")
+                        .font(.dictatorBody(14)).foregroundStyle(DictatorDesign.inkSecondary)
                 }
-                if model.data.clipboard.isEmpty { Text("Nothing saved yet.").foregroundStyle(.secondary).padding(.top, 20) }
+                if model.data.clipboard.isEmpty {
+                    DictatorEmptyState(
+                        icon: "doc.on.clipboard",
+                        title: "Nothing saved yet",
+                        detail: "Dictate while no text field is focused and the transcript is saved here."
+                    )
+                } else {
+                    LazyVStack(spacing: 0) {
+                        ForEach(Array(model.data.clipboard.enumerated()), id: \.element.id) { index, entry in
+                            if index > 0 { Divider().padding(.leading, 14) }
+                            HStack(alignment: .top, spacing: 16) {
+                                VStack(alignment: .leading, spacing: 7) {
+                                    Text(entry.text).font(.dictatorBody(14)).textSelection(.enabled)
+                                    Text(entry.createdAt.dictatorTimestamp).font(.dictatorUtility(9)).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Button("Paste") { Task { await model.pasteClipboard(entry) } }.dictatorButton(.secondary)
+                            }.padding(.horizontal, 14).padding(.vertical, 13)
+                        }
+                    }
+                    .dictatorCard()
+                }
             }
-            .frame(maxWidth: DictatorDesign.contentWidth, alignment: .leading).padding(42)
+            .frame(maxWidth: DictatorDesign.contentWidth, alignment: .leading)
+            .padding(.horizontal, 42).padding(.vertical, 36)
         }
     }
 }
@@ -272,7 +298,8 @@ struct SettingsView: View {
                         .padding(12).frame(maxWidth: .infinity, alignment: .leading).background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
                 }
             }
-            .frame(maxWidth: DictatorDesign.contentWidth, alignment: .leading).padding(42)
+            .frame(maxWidth: DictatorDesign.contentWidth, alignment: .leading)
+            .padding(.horizontal, 42).padding(.vertical, 36)
         }
     }
 

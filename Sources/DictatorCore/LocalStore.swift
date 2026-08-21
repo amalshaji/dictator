@@ -7,17 +7,19 @@ public struct PersistedData: Codable, Equatable, Sendable {
     public var clipboard: [ClipboardEntry]
     public var styles: [WritingStyle]
     public var snippets: [SnippetEntry]
+    public var appStyleOverrides: [String: UUID]
 
-    public init(transcripts: [TranscriptRecord] = [], lifetimeStatistics: LifetimeStatistics = LifetimeStatistics(), vocabulary: [VocabularyEntry] = [], clipboard: [ClipboardEntry] = [], styles: [WritingStyle] = [], snippets: [SnippetEntry] = []) {
+    public init(transcripts: [TranscriptRecord] = [], lifetimeStatistics: LifetimeStatistics = LifetimeStatistics(), vocabulary: [VocabularyEntry] = [], clipboard: [ClipboardEntry] = [], styles: [WritingStyle] = [], snippets: [SnippetEntry] = [], appStyleOverrides: [String: UUID] = [:]) {
         self.transcripts = transcripts
         self.lifetimeStatistics = lifetimeStatistics
         self.vocabulary = vocabulary
         self.clipboard = clipboard
         self.styles = styles
         self.snippets = snippets
+        self.appStyleOverrides = appStyleOverrides
     }
 
-    private enum CodingKeys: String, CodingKey { case transcripts, lifetimeStatistics, vocabulary, clipboard, styles, snippets }
+    private enum CodingKeys: String, CodingKey { case transcripts, lifetimeStatistics, vocabulary, clipboard, styles, snippets, appStyleOverrides }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         transcripts = try values.decodeIfPresent([TranscriptRecord].self, forKey: .transcripts) ?? []
@@ -26,6 +28,7 @@ public struct PersistedData: Codable, Equatable, Sendable {
         clipboard = try values.decodeIfPresent([ClipboardEntry].self, forKey: .clipboard) ?? []
         styles = try values.decodeIfPresent([WritingStyle].self, forKey: .styles) ?? []
         snippets = try values.decodeIfPresent([SnippetEntry].self, forKey: .snippets) ?? []
+        appStyleOverrides = try values.decodeIfPresent([String: UUID].self, forKey: .appStyleOverrides) ?? [:]
     }
 }
 

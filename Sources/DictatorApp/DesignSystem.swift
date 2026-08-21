@@ -11,6 +11,7 @@ enum DictatorDesign {
     static let border = Color(red: 217/255, green: 213/255, blue: 207/255)
     static let muted = Color(red: 111/255, green: 106/255, blue: 115/255)
     static let focus = Color(red: 110/255, green: 76/255, blue: 135/255)
+    static let inkSecondary = ink.opacity(0.56)
 
     static let sidebarWidth: CGFloat = 184
     static let contentWidth: CGFloat = 760
@@ -151,7 +152,7 @@ struct DictatorMenuField: View {
             .padding(.horizontal, 11)
             .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
             .contentShape(Rectangle())
-            .background(DictatorDesign.fog.opacity(0.72), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(DictatorDesign.control, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(DictatorDesign.border))
         }
         .buttonStyle(.plain)
@@ -163,6 +164,38 @@ struct DictatorMenuField: View {
 
     private var selectedLabel: String {
         options.first(where: { $0.value == selection })?.label ?? selection
+    }
+}
+
+struct DictatorCardChrome: ViewModifier {
+    var radius: CGFloat = 12
+
+    func body(content: Content) -> some View {
+        content
+            .background(DictatorDesign.control, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).stroke(DictatorDesign.border))
+            .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+    }
+}
+
+struct DictatorEmptyState: View {
+    let icon: String
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon).font(.system(size: 12, weight: .semibold)).foregroundStyle(DictatorDesign.focus)
+                .frame(width: 30, height: 30).background(DictatorDesign.orchid.opacity(0.38), in: Circle())
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(.dictatorBody(13, weight: .semibold))
+                Text(detail).font(.dictatorBody(11)).foregroundStyle(DictatorDesign.muted)
+            }
+            Spacer()
+        }
+        .padding(14)
+        .modifier(DictatorCardChrome())
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -179,6 +212,7 @@ struct DictatorEditorChrome: ViewModifier {
 extension View {
     func dictatorButton(_ kind: DictatorButtonKind = .primary) -> some View { buttonStyle(DictatorButtonStyle(kind: kind)) }
     func dictatorEditor() -> some View { modifier(DictatorEditorChrome()) }
+    func dictatorCard(radius: CGFloat = 12) -> some View { modifier(DictatorCardChrome(radius: radius)) }
 }
 
 extension Font {

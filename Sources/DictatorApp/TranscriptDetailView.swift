@@ -155,9 +155,21 @@ struct TranscriptDetailView: View {
                 Divider()
                 Button("Teach Dictator…") { presentation = .teach }
             } label: {
-                Text("More")
+                HStack(spacing: 5) {
+                    Text("More")
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(DictatorDesign.muted)
+                }
+                .font(.dictatorBody(12.5, weight: .semibold))
+                .foregroundStyle(DictatorDesign.ink)
+                .padding(.horizontal, 13)
+                .frame(minHeight: 34)
+                .background(DictatorDesign.control, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(DictatorDesign.border))
             }
             .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
             .fixedSize()
             .accessibilityHint("Shows raw-copy and vocabulary teaching actions")
         }
