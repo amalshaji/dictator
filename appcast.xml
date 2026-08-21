@@ -6,6 +6,27 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>Dictator</title>
         <item>
+            <title>0.6.1-canary.110</title>
+            <pubDate>Fri, 21 Aug 2026 04:38:51 +0000</pubDate>
+            <link>https://github.com/amalshaji/dictator</link>
+            <sparkle:channel>canary</sparkle:channel>
+            <sparkle:version>110</sparkle:version>
+            <sparkle:shortVersionString>0.6.1-canary.110</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[## What's Changed
+* Sign and notarize macOS releases by @amalshaji in https://github.com/amalshaji/dictator/pull/53
+* Add custom cleanup instructions and semantic retractions by @amalshaji in https://github.com/amalshaji/dictator/pull/52
+* Render spoken symbol and emoji names in cleanup by @amalshaji in https://github.com/amalshaji/dictator/pull/58
+* Fix shortcut recorder event capture by @amalshaji in https://github.com/amalshaji/dictator/pull/59
+* Redesign Home with speech activity and transcript search by @amalshaji in https://github.com/amalshaji/dictator/pull/60
+* Fix notarization by re-signing Sparkle helpers by @amalshaji in https://github.com/amalshaji/dictator/pull/61
+
+
+**Full Changelog**: https://github.com/amalshaji/dictator/compare/canary-0.6.1-b98-62ea218e...canary-0.6.1-b110-7c6743da
+]]></description>
+            <enclosure url="https://github.com/amalshaji/dictator/releases/download/canary-0.6.1-b110-7c6743da/Dictator-0.6.1-canary.110-universal.dmg" length="5894689" type="application/octet-stream" sparkle:edSignature="9xU3Vx/18O3WryzR+ZdbQm0tQdCQqzpm0azClkNCuCpUlIe6BABBqiDJe6PV5d9emX4YkQaWs+bxak79hjM/BQ=="/>
+        </item>
+        <item>
             <title>0.6.1-canary.98</title>
             <pubDate>Wed, 12 Aug 2026 11:31:21 +0000</pubDate>
             <link>https://github.com/amalshaji/dictator</link>
@@ -36,22 +57,6 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
 **Full Changelog**: https://github.com/amalshaji/dictator/compare/canary-0.6.1-b94-0468d51a...canary-0.6.1-b96-09e385fc
 ]]></description>
             <enclosure url="https://github.com/amalshaji/dictator/releases/download/canary-0.6.1-b96-09e385fc/Dictator-0.6.1-canary.96-universal.dmg" length="5562948" type="application/octet-stream" sparkle:edSignature="U95xxDCqf0juiM3mp2CKWC/mv149lZXdEtqmuoL40B71fma8CKZapFfI5ESZNIzj4SdoMnkG6Bsh6v5CbDWrDA=="/>
-        </item>
-        <item>
-            <title>0.6.1-canary.94</title>
-            <pubDate>Fri, 07 Aug 2026 06:42:48 +0000</pubDate>
-            <link>https://github.com/amalshaji/dictator</link>
-            <sparkle:channel>canary</sparkle:channel>
-            <sparkle:version>94</sparkle:version>
-            <sparkle:shortVersionString>0.6.1-canary.94</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="markdown"><![CDATA[## What's Changed
-* Add toggle activation for the dictate shortcut by @amalshaji in https://github.com/amalshaji/dictator/pull/49
-
-
-**Full Changelog**: https://github.com/amalshaji/dictator/compare/canary-0.6.1-b92-8c1ece98...canary-0.6.1-b94-0468d51a
-]]></description>
-            <enclosure url="https://github.com/amalshaji/dictator/releases/download/canary-0.6.1-b94-0468d51a/Dictator-0.6.1-canary.94-universal.dmg" length="5562336" type="application/octet-stream" sparkle:edSignature="wjoz+t6c2za2juel70aUxSA6k2dQPRTfESb2NrNN2bJQs/g8msgySaTV1h0rwVUAqPtxFEOWVnHZebbcFAseBw=="/>
         </item>
         <item>
             <title>0.6.1</title>
@@ -109,6 +114,6 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: hZRNrgM90tMBMCoBrPwreTZdTKRLOBWnO5BlZbdx/OsKbP1Ju+q3JhkzIv40TGKj5z0vniP0FDZINGJ4o8cgCA==
-length: 7393
+edSignature: s7U5lVPbc9GpiSZCZOgnB0p6t0P6Jnf1MKnCUvABqR5DHLXrBjxXHJ/jL8o26kTtNgq3N9Ccs5/U+sa4X82bAA==
+length: 7955
 -->
