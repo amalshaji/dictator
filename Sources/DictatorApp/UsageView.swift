@@ -70,24 +70,29 @@ struct UsageView: View {
         }
         .frame(maxWidth: DictatorDesign.contentWidth, alignment: .leading)
         .padding(.horizontal, 42)
-        .padding(.vertical, 30)
+        .padding(.vertical, 36)
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
     private var header: some View {
         HStack {
-            VStack(alignment: .leading, spacing: 7) {
+            VStack(alignment: .leading, spacing: 8) {
                 Text("Usage").font(.dictatorDisplay(30))
                 Text("Local consumption and estimated USD costs. STT and LLM usage are reported separately.")
-                    .font(.dictatorBody(13)).foregroundStyle(.secondary)
+                    .font(.dictatorBody(14)).foregroundStyle(DictatorDesign.inkSecondary)
             }
             Spacer()
-            Picker("Range", selection: $days) {
-                Text("7 days").tag(7)
-                Text("30 days").tag(30)
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 180)
+            DictatorSegmentedSwitcher(
+                label: "Usage range",
+                options: [
+                    .init(title: "7 days", icon: "7.circle"),
+                    .init(title: "30 days", icon: "30.circle")
+                ],
+                selection: Binding(
+                    get: { days == 7 ? 0 : 1 },
+                    set: { days = $0 == 0 ? 7 : 30 }
+                )
+            )
         }
     }
 
@@ -141,8 +146,7 @@ struct UsageView: View {
             content()
         }
         .padding(16)
-        .background(DictatorDesign.control, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(DictatorDesign.border))
+        .dictatorCard()
     }
 
     private func metricGrid(_ values: [(String, String)]) -> some View {

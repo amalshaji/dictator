@@ -6,6 +6,7 @@ struct HomeView: View {
     @ObservedObject var model: AppModel
     @State private var selectedTranscript: TranscriptRecord?
     @State private var transcriptQuery = ""
+    @FocusState private var searchFocused: Bool
 
     var body: some View {
         ScrollView {
@@ -37,7 +38,7 @@ struct HomeView: View {
                 Text(model.dictateActivationMode == .hold
                     ? "Hold \(model.dictateShortcut.displayName), speak naturally, then release."
                     : "Press \(model.dictateShortcut.displayName), speak naturally, then press it again.")
-                    .font(.dictatorBody(15)).foregroundStyle(DictatorDesign.ink.opacity(0.58))
+                    .font(.dictatorBody(15)).foregroundStyle(DictatorDesign.inkSecondary)
             }
             Spacer()
             HStack(spacing: 8) {
@@ -90,6 +91,7 @@ struct HomeView: View {
                     .accessibilityHidden(true)
                 TextField("Search transcripts", text: $transcriptQuery)
                     .textFieldStyle(.plain)
+                    .focused($searchFocused)
                     .font(.dictatorBody(12.5))
                 if !transcriptQuery.isEmpty {
                     Button {
@@ -108,8 +110,9 @@ struct HomeView: View {
             .background(DictatorDesign.control, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(DictatorDesign.border)
+                    .stroke(searchFocused ? DictatorDesign.focus : DictatorDesign.border, lineWidth: searchFocused ? 1.5 : 1)
             }
+            .animation(.easeOut(duration: 0.12), value: searchFocused)
         }
     }
 
@@ -117,7 +120,7 @@ struct HomeView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Your first transcript will appear here.").font(.dictatorBody(15, weight: .medium))
             Text("Dictator keeps text locally for 30 days and never stores recordings after transcription. Apple processing stays on-device; cloud processing sends audio only to your selected provider.")
-                .font(.dictatorBody(13)).foregroundStyle(DictatorDesign.ink.opacity(0.52))
+                .font(.dictatorBody(13)).foregroundStyle(DictatorDesign.inkSecondary)
         }
         .padding(.vertical, 42)
     }

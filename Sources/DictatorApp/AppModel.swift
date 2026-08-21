@@ -441,7 +441,7 @@ final class AppModel: ObservableObject {
                     if mode == .offline { hud.show(.offline) }
                 }
             )
-            let cleanup = transcription.allowsCleanup ? try cleanupConfiguration() : nil
+            let cleanup = transcription.allowsCleanup ? try cleanupConfiguration(forApp: target?.bundleIdentifier) : nil
             if cleanup != nil { hud.show(.cleaning) }
             let processed = await transcriptProcessor.process(
                 rawText: transcription.result.text,
@@ -637,7 +637,19 @@ final class AppModel: ObservableObject {
 
     func deleteStyle(_ id: UUID) {
         data.styles.removeAll { $0.id == id }
+        data.appStyleOverrides = data.appStyleOverrides.filter { $0.value != id }
         if selectedStyleID == id { selectedStyleID = nil }
+        schedulePersistence()
+    }
+
+    func assignStyle(_ styleID: UUID, toApp bundleID: String) {
+        guard data.styles.contains(where: { $0.id == styleID }) else { return }
+        data.appStyleOverrides[bundleID] = styleID
+        schedulePersistence()
+    }
+
+    func removeAppStyleOverride(_ bundleID: String) {
+        data.appStyleOverrides.removeValue(forKey: bundleID)
         schedulePersistence()
     }
 
@@ -694,7 +706,7 @@ final class AppModel: ObservableObject {
             record: record,
             vocabulary: data.vocabulary,
             snippets: data.snippets,
-            cleanup: try cleanupConfiguration()
+            cleanup: try cleanupConfiguration(forApp: record.sourceBundleID)
         )
     }
 
@@ -931,7 +943,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func cleanupConfiguration() throws -> TranscriptCleanupConfiguration? {
+    private func cleanupConfiguration(forApp bundleID: String? = nil) throws -> TranscriptCleanupConfiguration? {
         guard cleanupEnabled else { return nil }
         guard let provider = CleanupProviderRegistry.provider(for: selectedLLM) else {
             throw ProviderError.unsupported("Cleanup provider is not available")
@@ -940,7 +952,12 @@ final class AppModel: ObservableObject {
             throw ProviderError.missingCredential("\(provider.metadata.displayName) cleanup API key")
         }
         let model = configuredModel(for: .cleanup, provider: selectedLLM) ?? provider.metadata.defaultModel
-        let style = data.styles.first { $0.id == selectedStyleID && $0.isEnabled }?.instruction
+        let style = StyleResolver.instruction(
+            forApp: bundleID,
+            overrides: data.appStyleOverrides,
+            styles: data.styles,
+            globalStyleID: selectedStyleID
+        )
         let custom = cleanupCustomInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
         return TranscriptCleanupConfiguration(
             provider: provider,
