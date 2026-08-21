@@ -6,6 +6,45 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>Dictator</title>
         <item>
+            <title>0.7.0</title>
+            <pubDate>Fri, 21 Aug 2026 05:13:36 +0000</pubDate>
+            <link>https://github.com/amalshaji/dictator</link>
+            <sparkle:version>117</sparkle:version>
+            <sparkle:shortVersionString>0.7.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[## What's Changed
+* Dismiss transient HUD panels by @amalshaji in https://github.com/amalshaji/dictator/pull/36
+* Recover recording after audio device changes by @amalshaji in https://github.com/amalshaji/dictator/pull/37
+* Build releases before creating tags by @amalshaji in https://github.com/amalshaji/dictator/pull/38
+* Reset audio engine after system wake by @amalshaji in https://github.com/amalshaji/dictator/pull/41
+* Add release version selection by @amalshaji in https://github.com/amalshaji/dictator/pull/39
+* Fix Fn recording with input-only audio capture by @amalshaji in https://github.com/amalshaji/dictator/pull/42
+* Fix zero-length Fn recordings by @amalshaji in https://github.com/amalshaji/dictator/pull/43
+* Fix Fn microphone sample delivery by @amalshaji in https://github.com/amalshaji/dictator/pull/44
+* Recover Apple speech availability by @amalshaji in https://github.com/amalshaji/dictator/pull/46
+* Add lifetime overview statistics by @amalshaji in https://github.com/amalshaji/dictator/pull/47
+* Re-anchor floating HUD on display changes by @amalshaji in https://github.com/amalshaji/dictator/pull/48
+* Add toggle activation for the dictate shortcut by @amalshaji in https://github.com/amalshaji/dictator/pull/49
+* Align Settings shortcut controls to the right margin by @amalshaji in https://github.com/amalshaji/dictator/pull/50
+* Add custom instructions for LLM cleanup by @amalshaji in https://github.com/amalshaji/dictator/pull/51
+* Sign and notarize macOS releases by @amalshaji in https://github.com/amalshaji/dictator/pull/53
+* Add custom cleanup instructions and semantic retractions by @amalshaji in https://github.com/amalshaji/dictator/pull/52
+* Render spoken symbol and emoji names in cleanup by @amalshaji in https://github.com/amalshaji/dictator/pull/58
+* Fix shortcut recorder event capture by @amalshaji in https://github.com/amalshaji/dictator/pull/59
+* Redesign Home with speech activity and transcript search by @amalshaji in https://github.com/amalshaji/dictator/pull/60
+* Fix notarization by re-signing Sparkle helpers by @amalshaji in https://github.com/amalshaji/dictator/pull/61
+* Add per-app cleanup styles and polish screens by @amalshaji in https://github.com/amalshaji/dictator/pull/62
+* Keep version selection stdout machine-readable by @amalshaji in https://github.com/amalshaji/dictator/pull/63
+* Prepare 0.7.0 release by @github-actions[bot] in https://github.com/amalshaji/dictator/pull/64
+
+## New Contributors
+* @github-actions[bot] made their first contribution in https://github.com/amalshaji/dictator/pull/64
+
+**Full Changelog**: https://github.com/amalshaji/dictator/compare/v0.6.1...v0.7.0
+]]></description>
+            <enclosure url="https://github.com/amalshaji/dictator/releases/download/v0.7.0/Dictator-0.7.0-universal.dmg" length="6006520" type="application/octet-stream" sparkle:edSignature="pj/GB9HzDyk7FP4lmeYC8xfMW8Vc/Ubrt4L739t2OLIoRdDqNsfnTzuq5d8ADhBdiNoCOiDBe/DQ6zegnUn8BA=="/>
+        </item>
+        <item>
             <title>0.6.1-canary.114</title>
             <pubDate>Fri, 21 Aug 2026 04:59:02 +0000</pubDate>
             <link>https://github.com/amalshaji/dictator</link>
@@ -20,43 +59,6 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
 **Full Changelog**: https://github.com/amalshaji/dictator/compare/canary-0.6.1-b112-a3a7b743...canary-0.6.1-b114-5992f307
 ]]></description>
             <enclosure url="https://github.com/amalshaji/dictator/releases/download/canary-0.6.1-b114-5992f307/Dictator-0.6.1-canary.114-universal.dmg" length="6006558" type="application/octet-stream" sparkle:edSignature="26JbEuIEE5+bw0Yxh8L2pr3Uy7B0uQbh3jfI+PFS2RIG3j0RLhyTBMIU5y9QmlofQ7XtyldsswRJPPBN4XvFCw=="/>
-        </item>
-        <item>
-            <title>0.6.1-canary.112</title>
-            <pubDate>Fri, 21 Aug 2026 04:45:37 +0000</pubDate>
-            <link>https://github.com/amalshaji/dictator</link>
-            <sparkle:channel>canary</sparkle:channel>
-            <sparkle:version>112</sparkle:version>
-            <sparkle:shortVersionString>0.6.1-canary.112</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="markdown"><![CDATA[## What's Changed
-* Add per-app cleanup styles and polish screens by @amalshaji in https://github.com/amalshaji/dictator/pull/62
-
-
-**Full Changelog**: https://github.com/amalshaji/dictator/compare/canary-0.6.1-b110-7c6743da...canary-0.6.1-b112-a3a7b743
-]]></description>
-            <enclosure url="https://github.com/amalshaji/dictator/releases/download/canary-0.6.1-b112-a3a7b743/Dictator-0.6.1-canary.112-universal.dmg" length="6006587" type="application/octet-stream" sparkle:edSignature="/KufHbetHT20uNRFtDSDJV8q19NhQZZi+vwJV5gFU/AE0nj/kQQyWyDCGmNxubuuHxHMCxmRduWIpoHZVSyeBw=="/>
-        </item>
-        <item>
-            <title>0.6.1-canary.110</title>
-            <pubDate>Fri, 21 Aug 2026 04:38:51 +0000</pubDate>
-            <link>https://github.com/amalshaji/dictator</link>
-            <sparkle:channel>canary</sparkle:channel>
-            <sparkle:version>110</sparkle:version>
-            <sparkle:shortVersionString>0.6.1-canary.110</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="markdown"><![CDATA[## What's Changed
-* Sign and notarize macOS releases by @amalshaji in https://github.com/amalshaji/dictator/pull/53
-* Add custom cleanup instructions and semantic retractions by @amalshaji in https://github.com/amalshaji/dictator/pull/52
-* Render spoken symbol and emoji names in cleanup by @amalshaji in https://github.com/amalshaji/dictator/pull/58
-* Fix shortcut recorder event capture by @amalshaji in https://github.com/amalshaji/dictator/pull/59
-* Redesign Home with speech activity and transcript search by @amalshaji in https://github.com/amalshaji/dictator/pull/60
-* Fix notarization by re-signing Sparkle helpers by @amalshaji in https://github.com/amalshaji/dictator/pull/61
-
-
-**Full Changelog**: https://github.com/amalshaji/dictator/compare/canary-0.6.1-b98-62ea218e...canary-0.6.1-b110-7c6743da
-]]></description>
-            <enclosure url="https://github.com/amalshaji/dictator/releases/download/canary-0.6.1-b110-7c6743da/Dictator-0.6.1-canary.110-universal.dmg" length="5894689" type="application/octet-stream" sparkle:edSignature="9xU3Vx/18O3WryzR+ZdbQm0tQdCQqzpm0azClkNCuCpUlIe6BABBqiDJe6PV5d9emX4YkQaWs+bxak79hjM/BQ=="/>
         </item>
         <item>
             <title>0.6.1</title>
@@ -92,28 +94,9 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
 ]]></description>
             <enclosure url="https://github.com/amalshaji/dictator/releases/download/v0.6.0/Dictator-0.6.0-universal.dmg" length="5456668" type="application/octet-stream" sparkle:edSignature="+Kn6IvjpTCCCeip4h8YLAniGAJyHXN+i0o3DoMxVAPeoiHf17NGj5zxyp7H3clofBotjcPfaIdV5C4mjCxJTAg=="/>
         </item>
-        <item>
-            <title>0.5.0</title>
-            <pubDate>Thu, 16 Jul 2026 07:00:00 +0000</pubDate>
-            <link>https://github.com/amalshaji/dictator</link>
-            <sparkle:version>8</sparkle:version>
-            <sparkle:shortVersionString>0.5.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="markdown"><![CDATA[## What's Changed
-* Add early-development warning to README by @amalshaji in https://github.com/amalshaji/dictator/pull/24
-* Fix provider configuration status by @amalshaji in https://github.com/amalshaji/dictator/pull/25
-* Add screen-aware dictation by @amalshaji in https://github.com/amalshaji/dictator/pull/26
-* Restore floating status pill setting by @amalshaji in https://github.com/amalshaji/dictator/pull/27
-* Prepare 0.5.0 release by @amalshaji in https://github.com/amalshaji/dictator/pull/28
-
-
-**Full Changelog**: https://github.com/amalshaji/dictator/compare/v0.4.1...v0.5.0
-]]></description>
-            <enclosure url="https://github.com/amalshaji/dictator/releases/download/v0.5.0/Dictator-0.5.0-universal.dmg" length="5454227" type="application/octet-stream" sparkle:edSignature="G1LtXuzx+1OLmYJYMSCcIROx7h4QawuuvLOMnaz9p2mlIveN90hhsBl/1mLEVIOMB7ItSdLGdzMuSERcqFcEAw=="/>
-        </item>
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: QEw3dtcUGp6d/BYVSYh26cQRnDqzNhJd0ynVTA1YXvM3Xnvb0qfmgbWgeg5pBfwIe0diHFkzPJbCVokY1kOJDA==
-length: 7969
+edSignature: xXkzgC6cwPrqi4W+Ja02lHlUPdCP9wHR0z2/ecYQbYVSWuu4dSzNVLHMlLAjjIMpS+X7eZm/btnpCxyqNn3lAw==
+length: 7249
 -->
