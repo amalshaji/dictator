@@ -6,6 +6,25 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>Dictator</title>
         <item>
+            <title>0.7.0-canary.118</title>
+            <pubDate>Fri, 21 Aug 2026 05:42:37 +0000</pubDate>
+            <link>https://github.com/amalshaji/dictator</link>
+            <sparkle:channel>canary</sparkle:channel>
+            <sparkle:version>118</sparkle:version>
+            <sparkle:shortVersionString>0.7.0-canary.118</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[## What's Changed
+* Prepare 0.7.0 release by @github-actions[bot] in https://github.com/amalshaji/dictator/pull/64
+* Add clipboard delivery mode for skipped Accessibility by @amalshaji in https://github.com/amalshaji/dictator/pull/66
+
+## New Contributors
+* @github-actions[bot] made their first contribution in https://github.com/amalshaji/dictator/pull/64
+
+**Full Changelog**: https://github.com/amalshaji/dictator/compare/canary-0.6.1-b114-5992f307...canary-0.7.0-b118-a97f062b
+]]></description>
+            <enclosure url="https://github.com/amalshaji/dictator/releases/download/canary-0.7.0-b118-a97f062b/Dictator-0.7.0-canary.118-universal.dmg" length="6028725" type="application/octet-stream" sparkle:edSignature="trQL3UnDR7no1hsb4noW9OOboqLNP+RCeEysPMOlyeagKldvPS7mregRJ7JXAbmM+xD1uoYcEkYvqQrJuqTyCA=="/>
+        </item>
+        <item>
             <title>0.7.0</title>
             <pubDate>Fri, 21 Aug 2026 05:13:36 +0000</pubDate>
             <link>https://github.com/amalshaji/dictator</link>
@@ -97,6 +116,6 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: xXkzgC6cwPrqi4W+Ja02lHlUPdCP9wHR0z2/ecYQbYVSWuu4dSzNVLHMlLAjjIMpS+X7eZm/btnpCxyqNn3lAw==
-length: 7249
+edSignature: oKBiSHRMTs3L5xv4SO4wzw3q0iRc2dH2m4wG9xCmAZd8tACNCLRGAR+HYqoU7goJeYt8CcSyNsQBVblGXU9uCQ==
+length: 8591
 -->
