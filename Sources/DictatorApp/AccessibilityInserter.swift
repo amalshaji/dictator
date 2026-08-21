@@ -53,15 +53,25 @@ enum PasteDestination: Equatable {
 
 enum InsertionResult: Equatable {
     case pasteCommandPosted(PasteDestination)
+    case copiedToClipboard
     case privateClipboard(String)
 
     var label: String {
         switch self {
         case .pasteCommandPosted(.capturedField): "Paste command sent to captured field"
         case .pasteCommandPosted(.activeApplication): "Paste command sent to active application"
+        case .copiedToClipboard: "Copied to the system clipboard"
         case .privateClipboard(let reason): "Saved to private clipboard: \(reason)"
         }
     }
+}
+
+/// How dictation results reach the user. `.insert` pastes into the focused
+/// field through Accessibility; `.clipboard` skips that permission and leaves
+/// the result on the system clipboard for a manual paste.
+enum InsertionMode: String {
+    case insert
+    case clipboard
 }
 
 @MainActor
@@ -70,6 +80,7 @@ protocol FocusedTargetInserting: AnyObject {
     func captureFocusedWindow(for target: FocusedTarget) -> FocusedWindowSnapshot?
     func insert(_ insertion: TextInsertion, into target: FocusedTarget?) async -> InsertionResult
     func pasteIntoFrontmostApp(_ text: String) async -> Bool
+    func copyToSystemClipboard(_ text: String) -> Bool
 }
 
 enum TargetCandidate {
@@ -376,5 +387,13 @@ final class AccessibilityInserter: FocusedTargetInserting {
     /// destination selection and no captured Accessibility target is required.
     func pasteIntoFrontmostApp(_ text: String) async -> Bool {
         await paster.paste(text)
+    }
+
+    /// Clipboard delivery intentionally replaces the pasteboard contents and
+    /// never restores them—the user pastes the result themselves.
+    func copyToSystemClipboard(_ text: String) -> Bool {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        return pasteboard.setString(text, forType: .string)
     }
 }

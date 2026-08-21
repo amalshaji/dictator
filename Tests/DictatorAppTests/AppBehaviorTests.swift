@@ -1307,6 +1307,113 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertEqual(result, .privateClipboard("no editable field was focused"))
     }
 
+    func testClipboardModeCopiesResultInsteadOfInserting() async throws {
+        let suiteName = "ai.dictator.tests.clipboard-mode.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(InsertionMode.clipboard.rawValue, forKey: "insertionMode")
+
+        let recorder = TestAudioRecorder()
+        recorder.recordedAudio = .init(wavData: Data([1]), duration: 1)
+        let target = ApplicationTarget(
+            element: AXUIElementCreateApplication(4242),
+            name: "Mail",
+            bundleIdentifier: "com.apple.mail",
+            processIdentifier: 4242
+        )
+        let window = FocusedWindowSnapshot(
+            processIdentifier: 4242,
+            applicationName: "Mail",
+            bundleIdentifier: "com.apple.mail",
+            title: "Reply",
+            frame: CGRect(x: 10, y: 10, width: 800, height: 600)
+        )
+        let inserter = TestTargetInserter(target: .application(target), window: window)
+        let transcription = TestTranscriptionCoordinator(result: .init(
+            result: .init(text: "Copied not inserted", provider: .groq, model: "whisper", latency: 0.1),
+            mode: .online
+        ))
+        let model = AppModel(
+            keychain: HUDTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor(),
+            recorder: recorder,
+            transcriptionCoordinator: transcription,
+            inserter: inserter
+        )
+
+        await model.startDictation()
+        await model.stopDictation()
+
+        XCTAssertEqual(model.phase, .idle)
+        XCTAssertEqual(inserter.copiedText, "Copied not inserted")
+        XCTAssertNil(inserter.insertedText)
+        XCTAssertEqual(model.data.clipboard.first?.text, "Copied not inserted")
+        let record = try XCTUnwrap(model.data.transcripts.first)
+        XCTAssertEqual(record.insertionOutcome, InsertionResult.copiedToClipboard.label)
+    }
+
+    func testClipboardModePasteLatestCopiesInsteadOfPosting() async throws {
+        let suiteName = "ai.dictator.tests.clipboard-mode-paste-latest.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(InsertionMode.clipboard.rawValue, forKey: "insertionMode")
+
+        let target = ApplicationTarget(
+            element: AXUIElementCreateApplication(4242),
+            name: "Mail",
+            bundleIdentifier: "com.apple.mail",
+            processIdentifier: 4242
+        )
+        let window = FocusedWindowSnapshot(
+            processIdentifier: 4242,
+            applicationName: "Mail",
+            bundleIdentifier: "com.apple.mail",
+            title: "Reply",
+            frame: CGRect(x: 10, y: 10, width: 800, height: 600)
+        )
+        let inserter = TestTargetInserter(target: .application(target), window: window)
+        let model = AppModel(
+            keychain: HUDTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor(),
+            recorder: TestAudioRecorder(),
+            inserter: inserter
+        )
+        model.data.clipboard = [.init(text: "latest entry", rawText: "latest entry", sourceBundleID: nil)]
+
+        await model.pasteClipboard()
+        await model.pasteTranscriptText("transcript text")
+
+        XCTAssertEqual(inserter.copiedText, "transcript text")
+        XCTAssertNil(inserter.pastedText)
+    }
+
+    func testInsertionModePersistsAcrossLaunches() throws {
+        let suiteName = "ai.dictator.tests.insertion-mode-persistence.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let first = AppModel(
+            keychain: HUDTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor()
+        )
+        XCTAssertEqual(first.insertionMode, .insert)
+        first.setInsertionMode(.clipboard)
+
+        let second = AppModel(
+            keychain: HUDTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor()
+        )
+        XCTAssertEqual(second.insertionMode, .clipboard)
+    }
+
     func testResolverPrefersExactEditableTarget() {
         let fixture = InsertionFixture()
 
@@ -1712,6 +1819,8 @@ private final class TestTargetInserter: FocusedTargetInserting {
     let target: FocusedTarget
     let window: FocusedWindowSnapshot
     private(set) var insertedText: String?
+    private(set) var copiedText: String?
+    private(set) var pastedText: String?
 
     init(target: FocusedTarget, window: FocusedWindowSnapshot) {
         self.target = target
@@ -1724,7 +1833,14 @@ private final class TestTargetInserter: FocusedTargetInserting {
         insertedText = insertion.text
         return .pasteCommandPosted(.activeApplication)
     }
-    func pasteIntoFrontmostApp(_ text: String) async -> Bool { true }
+    func pasteIntoFrontmostApp(_ text: String) async -> Bool {
+        pastedText = text
+        return true
+    }
+    func copyToSystemClipboard(_ text: String) -> Bool {
+        copiedText = text
+        return true
+    }
 }
 
 private struct TestScreenAwareProvider: ScreenAwareLLMProvider {
