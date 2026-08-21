@@ -78,10 +78,25 @@ struct OnboardingView: View {
             Text("macOS controls these individually. Grant them, then return here—Dictator detects changes automatically.")
                 .font(.dictatorBody(14)).foregroundStyle(.secondary)
             permissionRow("Microphone", detail: "Records only while Fn is held", granted: model.microphoneGranted)
-            permissionRow("Accessibility", detail: "Inserts text into the focused field", granted: model.accessibilityGranted)
+            permissionRow(
+                "Accessibility",
+                detail: model.insertionMode == .clipboard
+                    ? "Skipped—results are copied to the clipboard instead"
+                    : "Inserts text into the focused field",
+                granted: model.accessibilityGranted || model.insertionMode == .clipboard
+            )
             permissionRow("Input Monitoring", detail: "Detects Fn while another app is active", granted: model.inputMonitoringGranted)
             Button("Grant permissions") { Task { await model.requestOnboardingPermissions() } }
                 .dictatorButton()
+            if !model.accessibilityGranted {
+                Button(model.insertionMode == .clipboard
+                    ? "Use Accessibility insertion instead"
+                    : "Can't grant Accessibility? Copy results to the clipboard instead") {
+                    model.setInsertionMode(model.insertionMode == .clipboard ? .insert : .clipboard)
+                }
+                .dictatorButton(.ghost)
+                .padding(.leading, -8)
+            }
             if !permissionsReady {
                 Text("If System Settings opens, enable Dictator in the displayed list and come back here.")
                     .font(.dictatorBody(12)).foregroundStyle(.orange)
@@ -273,7 +288,10 @@ struct OnboardingView: View {
     }
 
     private var permissionsReady: Bool {
-        model.microphoneGranted && model.accessibilityGranted && model.inputMonitoringGranted && model.shortcutsAvailable
+        model.microphoneGranted
+            && (model.accessibilityGranted || model.insertionMode == .clipboard)
+            && model.inputMonitoringGranted
+            && model.shortcutsAvailable
     }
 
     private func permissionRow(_ title: String, detail: String, granted: Bool) -> some View {

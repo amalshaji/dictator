@@ -125,7 +125,9 @@ struct ClipboardView: View {
                                     Text(entry.createdAt.dictatorTimestamp).font(.dictatorUtility(9)).foregroundStyle(.secondary)
                                 }
                                 Spacer()
-                                Button("Paste") { Task { await model.pasteClipboard(entry) } }.dictatorButton(.secondary)
+                                Button(model.insertionMode == .clipboard ? "Copy" : "Paste") {
+                                    Task { await model.pasteClipboard(entry) }
+                                }.dictatorButton(.secondary)
                             }.padding(.horizontal, 14).padding(.vertical, 13)
                         }
                     }
@@ -199,8 +201,32 @@ struct SettingsView: View {
                 settingsSection("Permissions") {
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
+                            Text("Result delivery").font(.dictatorBody(14, weight: .medium))
+                            Text(model.insertionMode == .clipboard
+                                ? "Results are copied to the clipboard—press ⌘V to paste. No Accessibility permission needed."
+                                : "Results are inserted into the focused field. Requires Accessibility.")
+                                .font(.dictatorBody(12)).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        DictatorSegmentedSwitcher(
+                            label: "Result delivery",
+                            options: [
+                                .init(title: "Insert", icon: "text.cursor"),
+                                .init(title: "Copy", icon: "doc.on.clipboard"),
+                            ],
+                            selection: Binding(
+                                get: { model.insertionMode == .insert ? 0 : 1 },
+                                set: { model.setInsertionMode($0 == 0 ? .insert : .clipboard) }
+                            )
+                        )
+                    }.padding(.vertical, 11)
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
                             Text("Accessibility").font(.dictatorBody(14, weight: .medium))
-                            Text("Required to identify and type into the focused field.").font(.dictatorBody(12)).foregroundStyle(.secondary)
+                            Text(model.insertionMode == .clipboard
+                                ? "Not needed while results are delivered through the clipboard."
+                                : "Required to identify and type into the focused field.")
+                                .font(.dictatorBody(12)).foregroundStyle(.secondary)
                         }
                         Spacer()
                         Button(AXIsProcessTrusted() ? "Granted" : "Open settings") { model.requestAccessibilityPermission() }

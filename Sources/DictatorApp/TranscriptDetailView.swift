@@ -132,10 +132,12 @@ struct TranscriptDetailView: View {
             }
             .dictatorButton(.secondary)
 
-            Button { Task { await model.pasteTranscriptText(record.currentText) } } label: {
-                Label("Paste", systemImage: "doc.on.clipboard")
+            if model.insertionMode == .insert {
+                Button { Task { await model.pasteTranscriptText(record.currentText) } } label: {
+                    Label("Paste", systemImage: "doc.on.clipboard")
+                }
+                .dictatorButton(.secondary)
             }
-            .dictatorButton(.secondary)
 
             Button { presentation = .edit(record.currentText) } label: {
                 Label("Edit", systemImage: "pencil")

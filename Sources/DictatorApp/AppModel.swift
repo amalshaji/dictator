@@ -48,6 +48,7 @@ final class AppModel: ObservableObject {
     @Published var microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     @Published var screenCaptureGranted = CGPreflightScreenCaptureAccess()
     @Published var onboardingComplete = UserDefaults.standard.bool(forKey: "onboardingComplete")
+    @Published private(set) var insertionMode = InsertionMode.insert
     @Published private(set) var dictateShortcut = GlobalShortcut.dictate
     @Published private(set) var dictateActivationMode = HotkeyActivationMode.hold
     @Published private(set) var pasteLatestShortcut = GlobalShortcut.pasteLatest
@@ -154,6 +155,7 @@ final class AppModel: ObservableObject {
         }
         selectedStyleID = defaults.string(forKey: "selectedStyleID").flatMap(UUID.init(uuidString:))
         cleanupCustomInstruction = String((defaults.string(forKey: "cleanupCustomInstruction") ?? "").prefix(Self.maximumCleanupInstructionLength))
+        insertionMode = InsertionMode(rawValue: defaults.string(forKey: "insertionMode") ?? "") ?? .insert
         dictateShortcut = loadShortcut(forKey: "shortcut.dictate", fallback: .dictate)
         dictateActivationMode = HotkeyActivationMode(
             rawValue: defaults.string(forKey: "dictateActivationMode") ?? ""
@@ -466,9 +468,11 @@ final class AppModel: ObservableObject {
                 return
             }
 
+            // Clipboard delivery never touches the target selection, so a
+            // transformation intent degrades to copying the transformed text.
             guard let insertion = requestedInsertion(
                 text: finalText,
-                replacesSelection: cleanupResult?.intent == .transformation,
+                replacesSelection: insertionMode == .insert && cleanupResult?.intent == .transformation,
                 target: target
             ) else { return }
             await completeDictation(
@@ -509,8 +513,18 @@ final class AppModel: ObservableObject {
         cleanupFallbackReason: String?,
         pipelineStarted: ContinuousClock.Instant
     ) async {
-        let outcome = await inserter.insert(insertion, into: target)
-        if case .privateClipboard = outcome {
+        let outcome: InsertionResult
+        if insertionMode == .clipboard {
+            outcome = inserter.copyToSystemClipboard(finalText)
+                ? .copiedToClipboard
+                : .privateClipboard("the system clipboard could not be updated")
+        } else {
+            outcome = await inserter.insert(insertion, into: target)
+        }
+        switch outcome {
+        case .pasteCommandPosted:
+            break
+        case .copiedToClipboard, .privateClipboard:
             data.clipboard.insert(.init(
                 text: finalText,
                 rawText: transcription.result.text,
@@ -674,6 +688,15 @@ final class AppModel: ObservableObject {
     func pasteClipboard(_ entry: ClipboardEntry? = nil) async {
         let item = entry ?? data.clipboard.first
         guard let item else { return }
+        if insertionMode == .clipboard {
+            if inserter.copyToSystemClipboard(item.text) {
+                hud.show(.success("Copied — press ⌘V"))
+                hud.hideAfterDelay()
+            } else {
+                showError("Could not update the system clipboard")
+            }
+            return
+        }
         if await inserter.pasteIntoFrontmostApp(item.text) {
             hud.show(.success("Paste sent"))
             hud.hideAfterDelay()
@@ -688,6 +711,10 @@ final class AppModel: ObservableObject {
     }
 
     func pasteTranscriptText(_ text: String) async {
+        if insertionMode == .clipboard {
+            if !inserter.copyToSystemClipboard(text) { showError("Could not update the system clipboard") }
+            return
+        }
         if !(await inserter.pasteIntoFrontmostApp(text)) { showError("Could not post the paste shortcut") }
     }
 
@@ -722,6 +749,12 @@ final class AppModel: ObservableObject {
             return
         }
         try saveVocabulary(.init(value: correct, variants: [incorrect]))
+    }
+
+    func setInsertionMode(_ mode: InsertionMode) {
+        guard mode != insertionMode else { return }
+        insertionMode = mode
+        defaults.set(mode.rawValue, forKey: "insertionMode")
     }
 
     func requestAccessibilityPermission() {
@@ -980,22 +1013,24 @@ final class AppModel: ObservableObject {
         }
         lastError = nil
         if offlineMode {
-            if case .privateClipboard = insertion {
-                hud.show(.success("Offline · Saved"))
-            } else {
-                hud.show(.success("Offline · Paste sent"))
+            switch insertion {
+            case .privateClipboard: hud.show(.success("Offline · Saved"))
+            case .copiedToClipboard: hud.show(.success("Offline · Copied"))
+            case .pasteCommandPosted: hud.show(.success("Offline · Paste sent"))
             }
             return
         }
-        if case .privateClipboard = insertion {
-            hud.show(.clipboard)
-        } else {
-            hud.show(.success("Paste sent"))
+        switch insertion {
+        case .privateClipboard: hud.show(.clipboard)
+        case .copiedToClipboard: hud.show(.success("Copied — press ⌘V"))
+        case .pasteCommandPosted: hud.show(.success("Paste sent"))
         }
     }
 
     private func requestRequiredPermissions() {
-        if !AXIsProcessTrusted() {
+        // Clipboard delivery works without Accessibility, so the user who
+        // chose it is not re-prompted on every launch.
+        if insertionMode == .insert, !AXIsProcessTrusted() {
             AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
         }
         if !CGPreflightListenEventAccess() { _ = CGRequestListenEventAccess() }

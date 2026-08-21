@@ -54,8 +54,10 @@ private struct MenuBarContent: View {
         Button("Open Dictator") { openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true) }
         Divider()
         Text(model.phase == .listening ? "Listening…" : model.dictateInstruction)
-        Button("Paste latest Dictator clipboard") { Task { await model.pasteClipboard() } }
-            .disabled(model.data.clipboard.isEmpty)
+        Button(model.insertionMode == .clipboard ? "Copy latest Dictator clipboard" : "Paste latest Dictator clipboard") {
+            Task { await model.pasteClipboard() }
+        }
+        .disabled(model.data.clipboard.isEmpty)
         Divider()
         Button("Check for Updates…") { updater.checkForUpdates() }
             .disabled(!updater.canCheckForUpdates)
