@@ -41,6 +41,13 @@ submission=$(
 if ! jq -e '.status == "Accepted"' >/dev/null <<<"$submission"; then
   jq -r '"Notarization failed: \(.status) (submission \(.id // "unknown"))"' \
     <<<"$submission" >&2
+  submission_id=$(jq -r '.id // empty' <<<"$submission")
+  if [[ -n $submission_id ]]; then
+    xcrun notarytool log "$submission_id" \
+      --apple-id "$APPLE_ID" \
+      --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+      --team-id "$APPLE_TEAM_ID" >&2 || true
+  fi
   exit 1
 fi
 

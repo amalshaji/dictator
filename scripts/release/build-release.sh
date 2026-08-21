@@ -61,7 +61,43 @@ sparkle="$app/Contents/Frameworks/Sparkle.framework"
 test -d "$app"
 test -d "$sparkle"
 test -L "$sparkle/Versions/Current"
+
+# The Sparkle SPM artifact ships adhoc-signed and Xcode only re-signs the
+# outer framework, so its nested executables must be re-signed with the
+# Developer ID identity or notarization rejects the app as Invalid.
+codesign --force --timestamp -o runtime --preserve-metadata=entitlements \
+  --sign "$APPLE_SIGNING_IDENTITY" \
+  "$sparkle/Versions/B/XPCServices/Installer.xpc"
+codesign --force --timestamp -o runtime --preserve-metadata=entitlements \
+  --sign "$APPLE_SIGNING_IDENTITY" \
+  "$sparkle/Versions/B/XPCServices/Downloader.xpc"
+codesign --force --timestamp -o runtime \
+  --sign "$APPLE_SIGNING_IDENTITY" \
+  "$sparkle/Versions/B/Autoupdate"
+codesign --force --timestamp -o runtime \
+  --sign "$APPLE_SIGNING_IDENTITY" \
+  "$sparkle/Versions/B/Updater.app"
+codesign --force --timestamp -o runtime \
+  --sign "$APPLE_SIGNING_IDENTITY" \
+  "$sparkle"
+codesign --force --timestamp -o runtime --preserve-metadata=entitlements \
+  --sign "$APPLE_SIGNING_IDENTITY" \
+  "$app"
+
 codesign --verify --deep --strict --verbose=2 "$app"
+while IFS= read -r nested; do
+  nested_details=$(codesign -dv "$nested" 2>&1)
+  if grep -Eq '^CodeDirectory .*flags=.*adhoc' <<<"$nested_details"; then
+    echo "Nested code is adhoc signed: $nested" >&2
+    exit 1
+  fi
+done < <(find "$app" \( -name '*.xpc' -o -name '*.app' -o -name '*.framework' \) ! -path "$app")
+for helper in "$sparkle/Versions/B/Autoupdate" "$executable"; do
+  if codesign -dv "$helper" 2>&1 | grep -Eq '^CodeDirectory .*flags=.*adhoc'; then
+    echo "Executable is adhoc signed: $helper" >&2
+    exit 1
+  fi
+done
 signature_details=$(codesign -dv --verbose=4 "$app" 2>&1)
 grep -Fq "Authority=$APPLE_SIGNING_IDENTITY" <<<"$signature_details"
 grep -Fq "TeamIdentifier=$APPLE_TEAM_ID" <<<"$signature_details"
