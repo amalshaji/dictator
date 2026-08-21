@@ -844,7 +844,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.6.1;
+				MARKETING_VERSION = 0.7.0;
 				PRODUCT_BUNDLE_IDENTIFIER = ai.dictator.app;
 				PRODUCT_NAME = Dictator;
 				SDKROOT = macosx;
@@ -1039,7 +1039,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.6.1;
+				MARKETING_VERSION = 0.7.0;
 				PRODUCT_BUNDLE_IDENTIFIER = ai.dictator.app;
 				PRODUCT_NAME = Dictator;
 				SDKROOT = macosx;
