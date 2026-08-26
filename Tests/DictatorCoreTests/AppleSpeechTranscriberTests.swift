@@ -48,15 +48,25 @@ final class AppleSpeechTranscriberTests: XCTestCase {
         XCTAssertEqual(readiness, .ready(.init(identifier: "en_US", engine: .dictationTranscriber)))
     }
 
-    func testReadinessReportsUnsupportedOnlyAfterTryingBothEngines() async {
+    func testReadinessOffersDownloadWhenAssetStatusIsUnsupportedForBothEngines() async {
         let runtime = FakeAppleSpeechRuntime(
             statuses: [.speechTranscriber: .unsupported, .dictationTranscriber: .unsupported]
         )
 
         let readiness = await AppleSpeechTranscriber(runtime: runtime).readiness(for: "en_US")
 
+        XCTAssertEqual(readiness, .downloadRequired(.init(identifier: "en_US", engine: .speechTranscriber)))
+    }
+
+    func testReadinessReportsUnavailableForUnsupportedLanguage() async {
+        let runtime = FakeAppleSpeechRuntime(
+            statuses: [.speechTranscriber: .installed, .dictationTranscriber: .installed]
+        )
+
+        let readiness = await AppleSpeechTranscriber(runtime: runtime).readiness(for: "fr_FR")
+
         guard case .unavailable = readiness else {
-            return XCTFail("Expected the locale to be unavailable")
+            return XCTFail("Expected the language to be unavailable")
         }
     }
 
@@ -72,6 +82,29 @@ final class AppleSpeechTranscriberTests: XCTestCase {
 
         XCTAssertEqual(readiness, .ready(.init(identifier: "en_US", engine: .dictationTranscriber)))
         XCTAssertEqual(progress.values, [0, 0.5, 1])
+    }
+
+    func testInstallationAttemptsRepairWhenAssetStatusIsUnsupported() async throws {
+        let runtime = FakeAppleSpeechRuntime(
+            statuses: [.speechTranscriber: .unsupported, .dictationTranscriber: .unsupported]
+        )
+
+        let readiness = try await AppleSpeechTranscriber(runtime: runtime).installAssets(for: "en_US") { _ in }
+
+        XCTAssertEqual(readiness, .ready(.init(identifier: "en_US", engine: .speechTranscriber)))
+    }
+
+    func testInstallationReportsFailureWhenAssetsNeverRegister() async throws {
+        let runtime = FakeAppleSpeechRuntime(
+            statuses: [.speechTranscriber: .supported, .dictationTranscriber: .supported],
+            installUpdatesStatus: false
+        )
+
+        let readiness = try await AppleSpeechTranscriber(runtime: runtime).installAssets(for: "en_US") { _ in }
+
+        guard case .failed = readiness else {
+            return XCTFail("Expected failed readiness when the install never registers")
+        }
     }
 
     func testOnlyFinalSegmentsAreCombinedInOrder() async throws {
@@ -144,16 +177,19 @@ private actor FakeAppleSpeechRuntime: AppleSpeechRuntime {
     private var statuses: [AppleTranscriptionEngine: AppleSpeechAssetStatus]
     private let segments: [AppleTranscriptionEngine: [AppleSpeechSegment]]
     private let transcriptionDelay: Duration?
+    private let installUpdatesStatus: Bool
     private(set) var transcribedEngines: [AppleTranscriptionEngine] = []
 
     init(
         statuses: [AppleTranscriptionEngine: AppleSpeechAssetStatus],
         segments: [AppleTranscriptionEngine: [AppleSpeechSegment]] = [:],
-        transcriptionDelay: Duration? = nil
+        transcriptionDelay: Duration? = nil,
+        installUpdatesStatus: Bool = true
     ) {
         self.statuses = statuses
         self.segments = segments
         self.transcriptionDelay = transcriptionDelay
+        self.installUpdatesStatus = installUpdatesStatus
     }
 
     func supportedLocaleIdentifiers(for engine: AppleTranscriptionEngine) async -> [String] {
@@ -171,7 +207,7 @@ private actor FakeAppleSpeechRuntime: AppleSpeechRuntime {
     func installAssets(for locale: AppleSpeechLocale, progress: @escaping @Sendable (Double) -> Void) async throws {
         progress(0)
         progress(0.5)
-        statuses[locale.engine] = .installed
+        if installUpdatesStatus { statuses[locale.engine] = .installed }
         progress(1)
     }
 

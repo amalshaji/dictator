@@ -81,8 +81,10 @@ public actor AppleSpeechTranscriber: LocalSpeechTranscribing {
             case .unsupported: continue
             }
         }
-        if let downloadable { return .downloadRequired(downloadable) }
-        return .unavailable("The selected Apple speech model is unavailable on this Mac.")
+        // Candidates only exist when an engine reports the locale as supported, so
+        // an .unsupported asset status here is an asset-registry desync (seen after
+        // macOS updates). Offer the download path — installing re-registers assets.
+        return .downloadRequired(downloadable ?? candidates[0])
     }
 
     public func installAssets(
@@ -103,27 +105,24 @@ public actor AppleSpeechTranscriber: LocalSpeechTranscribing {
             statuses.append((candidate, status))
         }
         var lastError: Error?
-        for (candidate, status) in statuses {
-            switch status {
-            case .unsupported:
-                continue
-            case .supported, .downloading:
-                do {
-                    try await runtime.installAssets(for: candidate, progress: progress)
-                    if case .installed = await runtime.assetStatus(for: candidate) {
-                        return .ready(candidate)
-                    }
-                } catch is CancellationError {
-                    throw CancellationError()
-                } catch {
-                    lastError = error
+        // Prefer candidates the asset inventory reports as downloadable, but still
+        // attempt .unsupported ones: that status can be an asset-registry desync
+        // (seen after macOS updates) that installing repairs.
+        let ordered = statuses.filter { $0.1 != .unsupported } + statuses.filter { $0.1 == .unsupported }
+        for (candidate, _) in ordered {
+            do {
+                try await runtime.installAssets(for: candidate, progress: progress)
+                if case .installed = await runtime.assetStatus(for: candidate) {
+                    return .ready(candidate)
                 }
-            case .installed:
-                break
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                lastError = error
             }
         }
         if let lastError { throw lastError }
-        return .unavailable("The selected Apple speech model is unavailable on this Mac.")
+        return .failed("The Apple speech model was downloaded but is not ready yet. Try again, or restart your Mac if this persists.")
     }
 
     public func transcribe(
@@ -281,17 +280,28 @@ private struct SystemAppleSpeechRuntime: AppleSpeechRuntime {
         progress: @escaping @Sendable (Double) -> Void
     ) async throws {
         let speechModule = module(for: locale)
-        guard let request = try await AssetInventory.assetInstallationRequest(supporting: [speechModule]) else {
-            return
+        let target = Locale(identifier: locale.identifier)
+        // Reservations are capped at AssetInventory.maximumReservedLocales; drop
+        // reservations left behind by previously selected locales.
+        for reserved in await AssetInventory.reservedLocales where reserved != target {
+            await AssetInventory.release(reservedLocale: reserved)
         }
-        let monitor = Task {
-            while !Task.isCancelled, request.progress.fractionCompleted < 1 {
-                progress(request.progress.fractionCompleted)
-                try? await Task.sleep(for: .milliseconds(100))
+        if let request = try await AssetInventory.assetInstallationRequest(supporting: [speechModule]) {
+            let monitor = Task {
+                while !Task.isCancelled, request.progress.fractionCompleted < 1 {
+                    progress(request.progress.fractionCompleted)
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
             }
+            defer { monitor.cancel() }
+            try await request.downloadAndInstall()
         }
-        defer { monitor.cancel() }
-        try await request.downloadAndInstall()
+        // After a macOS update the assets can remain on disk while the locale
+        // reservation is lost; the status then stays below .installed until the
+        // locale is reserved again.
+        if await assetStatus(for: locale) != .installed {
+            try await AssetInventory.reserve(locale: target)
+        }
         progress(1)
     }
 
