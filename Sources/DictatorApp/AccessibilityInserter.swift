@@ -80,7 +80,6 @@ protocol FocusedTargetInserting: AnyObject {
     func captureFocusedWindow(for target: FocusedTarget) -> FocusedWindowSnapshot?
     func insert(_ insertion: TextInsertion, into target: FocusedTarget?) async -> InsertionResult
     func pasteIntoFrontmostApp(_ text: String) async -> Bool
-    func copyToSystemClipboard(_ text: String) -> Bool
 }
 
 enum TargetCandidate {
@@ -389,11 +388,4 @@ final class AccessibilityInserter: FocusedTargetInserting {
         await paster.paste(text)
     }
 
-    /// Clipboard delivery intentionally replaces the pasteboard contents and
-    /// never restores them—the user pastes the result themselves.
-    func copyToSystemClipboard(_ text: String) -> Bool {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        return pasteboard.setString(text, forType: .string)
-    }
 }

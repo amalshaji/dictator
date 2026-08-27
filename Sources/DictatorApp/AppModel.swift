@@ -17,8 +17,18 @@ private struct ScreenAwareRun {
     let credentials: ProviderCredentials
 }
 
+private enum StandardDictationDelivery {
+    case clipboard
+    case focusedTarget(FocusedTarget?)
+
+    var target: FocusedTarget? {
+        guard case .focusedTarget(let target) = self else { return nil }
+        return target
+    }
+}
+
 private enum ActiveDictationRun {
-    case standard(target: FocusedTarget?)
+    case standard(StandardDictationDelivery)
     case screenAware(ScreenAwareRun)
 
     var isScreenAware: Bool {
@@ -71,6 +81,7 @@ final class AppModel: ObservableObject {
     private let screenCapture: any ScreenContextCapturing
     private let hotkeys: HotkeyLifecycleController
     private let inserter: any FocusedTargetInserting
+    private let clipboardWriter: any ClipboardWriting
     private let providerConnections: ProviderConnectionService
     private let transcriptProcessor = TranscriptProcessor()
     private let transcriptRepairService = TranscriptRepairService()
@@ -107,6 +118,7 @@ final class AppModel: ObservableObject {
         screenCapture: any ScreenContextCapturing = ScreenContextCaptureService(),
         transcriptionCoordinator: (any TranscriptionCoordinating)? = nil,
         inserter: any FocusedTargetInserting = AccessibilityInserter(),
+        clipboardWriter: any ClipboardWriting = SystemClipboardWriter(),
         screenAwareProvider: @escaping (ProviderKind) -> (any ScreenAwareLLMProvider)? = ScreenAwareProviderRegistry.provider
     ) {
         let runningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
@@ -119,6 +131,7 @@ final class AppModel: ObservableObject {
         self.recorder = recorder
         self.screenCapture = screenCapture
         self.inserter = inserter
+        self.clipboardWriter = clipboardWriter
         providerConnections = ProviderConnectionService(
             defaults: defaults,
             screenAwareProvider: screenAwareProvider
@@ -268,9 +281,14 @@ final class AppModel: ObservableObject {
             showError("Microphone permission is required")
             return
         }
-        let target = inserter.captureFocusedTarget(processIdentifier: targetProcessIdentifier)
+        let delivery: StandardDictationDelivery
+        if accessMode.deliversToClipboard || insertionMode == .clipboard {
+            delivery = .clipboard
+        } else {
+            delivery = .focusedTarget(inserter.captureFocusedTarget(processIdentifier: targetProcessIdentifier))
+        }
         let runID = UUID()
-        activeRun = .standard(target: target)
+        activeRun = .standard(delivery)
         activeRunID = runID
         phase = .listening
         hud.show(.listening)
@@ -390,8 +408,8 @@ final class AppModel: ObservableObject {
         switch run {
         case .screenAware(let screenAwareRun):
             await processScreenAware(audio, run: screenAwareRun, pipelineStarted: pipelineStarted)
-        case .standard(let target):
-            await process(audio, target: target, pipelineStarted: pipelineStarted)
+        case .standard(let delivery):
+            await process(audio, delivery: delivery, pipelineStarted: pipelineStarted)
         }
     }
 
@@ -449,7 +467,7 @@ final class AppModel: ObservableObject {
                 transcription: transcriptionRun,
                 finalText: result.text,
                 insertion: insertion,
-                target: run.target,
+                delivery: .focusedTarget(run.target),
                 llmExecution: .init(result: result),
                 cleanupFallbackReason: nil,
                 pipelineStarted: pipelineStarted
@@ -461,11 +479,12 @@ final class AppModel: ObservableObject {
 
     private func process(
         _ audio: RecordedAudio,
-        target: FocusedTarget?,
+        delivery: StandardDictationDelivery,
         pipelineStarted: ContinuousClock.Instant
     ) async {
         hud.show(.transcribing)
         do {
+            let target = delivery.target
             let transcription = try await transcriptionCoordinator.transcribe(
                 audio: audio,
                 selectedProvider: selectedSTT,
@@ -505,7 +524,7 @@ final class AppModel: ObservableObject {
             // transformation intent degrades to copying the transformed text.
             guard let insertion = requestedInsertion(
                 text: finalText,
-                replacesSelection: insertionMode == .insert && cleanupResult?.intent == .transformation,
+                replacesSelection: target != nil && cleanupResult?.intent == .transformation,
                 target: target
             ) else { return }
             await completeDictation(
@@ -513,7 +532,7 @@ final class AppModel: ObservableObject {
                 transcription: transcription,
                 finalText: finalText,
                 insertion: insertion,
-                target: target,
+                delivery: delivery,
                 llmExecution: cleanupResult.map(LLMExecution.init(result:)),
                 cleanupFallbackReason: cleanupFallbackReason,
                 pipelineStarted: pipelineStarted
@@ -541,17 +560,19 @@ final class AppModel: ObservableObject {
         transcription: TranscriptionRun,
         finalText: String,
         insertion: TextInsertion,
-        target: FocusedTarget?,
+        delivery: StandardDictationDelivery,
         llmExecution: LLMExecution?,
         cleanupFallbackReason: String?,
         pipelineStarted: ContinuousClock.Instant
     ) async {
+        let target = delivery.target
         let outcome: InsertionResult
-        if insertionMode == .clipboard {
-            outcome = inserter.copyToSystemClipboard(finalText)
+        switch delivery {
+        case .clipboard:
+            outcome = clipboardWriter.write(finalText)
                 ? .copiedToClipboard
                 : .privateClipboard("the system clipboard could not be updated")
-        } else {
+        case .focusedTarget(let target):
             outcome = await inserter.insert(insertion, into: target)
         }
         switch outcome {
@@ -722,7 +743,7 @@ final class AppModel: ObservableObject {
         let item = entry ?? data.clipboard.first
         guard let item else { return }
         if insertionMode == .clipboard {
-            if inserter.copyToSystemClipboard(item.text) {
+            if clipboardWriter.write(item.text) {
                 hud.show(.success("Copied — press ⌘V"))
                 hud.hideAfterDelay()
             } else {
@@ -739,13 +760,12 @@ final class AppModel: ObservableObject {
     }
 
     func copyTranscriptText(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
+        if !clipboardWriter.write(text) { showError("Could not update the system clipboard") }
     }
 
     func pasteTranscriptText(_ text: String) async {
         if insertionMode == .clipboard {
-            if !inserter.copyToSystemClipboard(text) { showError("Could not update the system clipboard") }
+            if !clipboardWriter.write(text) { showError("Could not update the system clipboard") }
             return
         }
         if !(await inserter.pasteIntoFrontmostApp(text)) { showError("Could not post the paste shortcut") }

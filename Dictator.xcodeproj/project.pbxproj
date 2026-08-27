@@ -51,6 +51,7 @@
 		584F494ADC7263D1EEB0E2B9 /* AppleSpeechTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A6CA50C1904214E7BC03845 /* AppleSpeechTranscriber.swift */; };
 		5C629C67FC6615B1CE1F6E18 /* TranscriptRepairServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6649573702A8D44CE185618A /* TranscriptRepairServiceTests.swift */; };
 		6204BEACACA936148EFF17D4 /* ConnectivityMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01D99656727AB0FCBB7269D3 /* ConnectivityMonitor.swift */; };
+		65280CF8F9609A1AF3BEC375 /* ClipboardWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01D04AEA68AEF822D90103B4 /* ClipboardWriter.swift */; };
 		6FE39E147AEDF1C7B7A0491A /* ScreenAwareProviderRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 158BCE95DEEE1BF6A7A2F58B /* ScreenAwareProviderRegistry.swift */; };
 		70A771361D42BE70AB310E1A /* CloudflareCleanupProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76DA46DD749F44062847C2AD /* CloudflareCleanupProvider.swift */; };
 		74ADE9CC3855110FEB0D3EC9 /* OfflineFallbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD3F369271169E07B6518301 /* OfflineFallbackTests.swift */; };
@@ -181,6 +182,7 @@
 /* Begin PBXFileReference section */
 		001EDA144D94E9EB529D26D3 /* OpenAICompatibleScreenAwareProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAICompatibleScreenAwareProvider.swift; sourceTree = "<group>"; };
 		00FE43DE1A13FEA653407E7C /* CleanupProcessingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CleanupProcessingTests.swift; sourceTree = "<group>"; };
+		01D04AEA68AEF822D90103B4 /* ClipboardWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardWriter.swift; sourceTree = "<group>"; };
 		01D99656727AB0FCBB7269D3 /* ConnectivityMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectivityMonitor.swift; sourceTree = "<group>"; };
 		03959262440339FBEA8822BD /* DictatorAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DictatorAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		084B4AC7C735F00DDFCF73E5 /* HTTPClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPClient.swift; sourceTree = "<group>"; };
@@ -476,6 +478,7 @@
 				0F0C8D622A74DCFF2D223C32 /* AudioRecorder.swift */,
 				F6164F5157D7BCD4559F907F /* CleanupView.swift */,
 				5177081DDA6B8B9C8E75267B /* ClipboardPaster.swift */,
+				01D04AEA68AEF822D90103B4 /* ClipboardWriter.swift */,
 				01D99656727AB0FCBB7269D3 /* ConnectivityMonitor.swift */,
 				D897F9B1FF3DAEE510FBFC5F /* DesignSystem.swift */,
 				7F24BA3CFD7AA9EF3829E8EE /* Dictator.entitlements */,
@@ -735,6 +738,7 @@
 				A0B378E8E84364D17E3EB2FF /* AudioRecorder.swift in Sources */,
 				B468E5F94DF7A9C7B314EF75 /* CleanupView.swift in Sources */,
 				11904835DEE27E148593D70A /* ClipboardPaster.swift in Sources */,
+				65280CF8F9609A1AF3BEC375 /* ClipboardWriter.swift in Sources */,
 				6204BEACACA936148EFF17D4 /* ConnectivityMonitor.swift in Sources */,
 				E5CDA8989C2503893C03952B /* DesignSystem.swift in Sources */,
 				9E9E6120943F6218F2D4D304 /* DictatorApp.swift in Sources */,
