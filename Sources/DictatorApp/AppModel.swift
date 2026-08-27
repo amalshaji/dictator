@@ -47,7 +47,8 @@ final class AppModel: ObservableObject {
     @Published var inputMonitoringGranted = CGPreflightListenEventAccess()
     @Published var microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     @Published var screenCaptureGranted = CGPreflightScreenCaptureAccess()
-    @Published var onboardingComplete = UserDefaults.standard.bool(forKey: "onboardingComplete")
+    @Published var onboardingComplete = false
+    @Published private(set) var accessMode: AppAccessMode = .leastPrivileges
     @Published private(set) var insertionMode = InsertionMode.insert
     @Published private(set) var dictateShortcut = GlobalShortcut.dictate
     @Published private(set) var dictateActivationMode = HotkeyActivationMode.hold
@@ -148,6 +149,13 @@ final class AppModel: ObservableObject {
         cleanupEnabled = defaults.bool(forKey: "cleanupEnabled")
         screenAwareEnabled = defaults.bool(forKey: "screenAwareEnabled")
         offlineFallbackEnabled = defaults.bool(forKey: "offlineFallbackEnabled")
+        onboardingComplete = defaults.bool(forKey: "onboardingComplete")
+        if let savedAccessMode = defaults.string(forKey: "accessMode").flatMap(AppAccessMode.init(rawValue:)) {
+            accessMode = savedAccessMode
+        } else {
+            accessMode = onboardingComplete ? .systemWide : .leastPrivileges
+            defaults.set(accessMode.rawValue, forKey: "accessMode")
+        }
         let savedHUDPosition = defaults.string(forKey: "hudPositionMode")
         hudPositionMode = HUDPositionMode(rawValue: savedHUDPosition ?? "") ?? .notch
         if savedHUDPosition != hudPositionMode.rawValue {
@@ -215,6 +223,11 @@ final class AppModel: ObservableObject {
                 if selectedSTT == .appleSpeech { await appleSpeech.refresh() }
             }
         }
+    }
+
+    func setAccessMode(_ mode: AppAccessMode) {
+        accessMode = mode
+        defaults.set(mode.rawValue, forKey: "accessMode")
     }
 
     private static func defaultAppleSpeechProvider() -> (any LocalSpeechTranscribing)? {

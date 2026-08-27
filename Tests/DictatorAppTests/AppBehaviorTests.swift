@@ -12,6 +12,67 @@ import XCTest
 
 @MainActor
 final class AppBehaviorTests: XCTestCase {
+    func testNewInstallationDefaultsToLeastPrivileges() throws {
+        let suiteName = "ai.dictator.tests.access-mode-new-install.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let model = AppModel(
+            keychain: HUDTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor()
+        )
+
+        XCTAssertEqual(model.accessMode, .leastPrivileges)
+    }
+
+    func testCompletedInstallationMigratesToSystemWideAccess() throws {
+        let suiteName = "ai.dictator.tests.access-mode-migration.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(true, forKey: "onboardingComplete")
+
+        let model = AppModel(
+            keychain: HUDTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor()
+        )
+
+        XCTAssertEqual(model.accessMode, .systemWide)
+        XCTAssertEqual(defaults.string(forKey: "accessMode"), AppAccessMode.systemWide.rawValue)
+    }
+
+    func testAccessModePersists() throws {
+        let suiteName = "ai.dictator.tests.access-mode-persistence.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = AppModel(
+            keychain: HUDTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor()
+        )
+
+        model.setAccessMode(.systemWide)
+
+        let restored = AppModel(
+            keychain: HUDTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor()
+        )
+        XCTAssertEqual(restored.accessMode, .systemWide)
+    }
+
+    func testLeastPrivilegesAccessCapabilitiesAreClipboardOnly() {
+        XCTAssertFalse(AppAccessMode.leastPrivileges.allowsGlobalShortcuts)
+        XCTAssertFalse(AppAccessMode.leastPrivileges.allowsFocusedInsertion)
+        XCTAssertFalse(AppAccessMode.leastPrivileges.allowsScreenAwareDictation)
+        XCTAssertTrue(AppAccessMode.leastPrivileges.deliversToClipboard)
+    }
+
     func testWindowChromeBackgroundMatchesSidebarAndContentAtEveryWidth() throws {
         for width in [920.0, 1_400.0] {
             let image = WindowChromeStyle.backgroundImage(windowWidth: width)

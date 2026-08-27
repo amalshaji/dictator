@@ -55,6 +55,7 @@
 		70A771361D42BE70AB310E1A /* CloudflareCleanupProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76DA46DD749F44062847C2AD /* CloudflareCleanupProvider.swift */; };
 		74ADE9CC3855110FEB0D3EC9 /* OfflineFallbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD3F369271169E07B6518301 /* OfflineFallbackTests.swift */; };
 		7ADC4F531BCDA49F77BB5F81 /* PricingSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9001A8ED7FE08B06D1778EA /* PricingSnapshot.swift */; };
+		7F17E704671B1041E1B3D5B3 /* AppAccessMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = A60288EA0B995B10C79ADBF9 /* AppAccessMode.swift */; };
 		81BB0C45A8AC32EA205EC325 /* UsageAnalyticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 605347E217D02C25BB513B5F /* UsageAnalyticsTests.swift */; };
 		826851528C02958FB5364952 /* LiveProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7EEE4712175A90F3E1B13529 /* LiveProviderTests.swift */; };
 		82DBB841BAAF3FE28593F903 /* XAISTTProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAD95F53240B8C3A0E51EEB3 /* XAISTTProvider.swift */; };
@@ -247,6 +248,7 @@
 		9DE7CC6940B6F95A081E1217 /* UsageAnalytics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageAnalytics.swift; sourceTree = "<group>"; };
 		A1516983F9B4D83DC8588AE4 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A2177B09D0A361293F057AEB /* DictatorIntegrationTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DictatorIntegrationTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A60288EA0B995B10C79ADBF9 /* AppAccessMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppAccessMode.swift; sourceTree = "<group>"; };
 		AD3F369271169E07B6518301 /* OfflineFallbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineFallbackTests.swift; sourceTree = "<group>"; };
 		AF09B459E4DE1804104CC24D /* LLMWireClients.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LLMWireClients.swift; sourceTree = "<group>"; };
 		B4E649F883F224BD1E3D28A4 /* GladiaSTTProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GladiaSTTProvider.swift; sourceTree = "<group>"; };
@@ -465,6 +467,7 @@
 			isa = PBXGroup;
 			children = (
 				C9CAFBE630B82E2DB2683D43 /* AccessibilityInserter.swift */,
+				A60288EA0B995B10C79ADBF9 /* AppAccessMode.swift */,
 				251D7142875D2A85DB812A67 /* AppleSpeechCoordinator.swift */,
 				39A5FC89D1BAE6BCD9BD769C /* AppleSpeechModelSetupView.swift */,
 				BA2E710185E50EE29D648637 /* AppModel.swift */,
@@ -724,6 +727,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				F82BEA1ADB238D21499D4FA6 /* AccessibilityInserter.swift in Sources */,
+				7F17E704671B1041E1B3D5B3 /* AppAccessMode.swift in Sources */,
 				BF995194E3386FE8DE6C5E32 /* AppModel.swift in Sources */,
 				F51BD26F2CE1DBEAB9022553 /* AppUpdater.swift in Sources */,
 				122521BCFEB26314EB50F3AE /* AppleSpeechCoordinator.swift in Sources */,
