@@ -100,3 +100,47 @@ final class AppPreferencesTests: XCTestCase {
         )
     }
 }
+
+struct ConfiguredProviderCredentialStore: CredentialStoring {
+    func save(_ credentials: ProviderCredentials, for purpose: ProviderPurpose, provider: ProviderKind) throws {}
+
+    func load(for purpose: ProviderPurpose, provider: ProviderKind) throws -> ProviderCredentials? {
+        guard case .cleanup = purpose, provider == .groq else { return nil }
+        return ProviderCredentials(apiKey: "test-key")
+    }
+}
+
+actor DelayedAppleSpeechProvider: LocalSpeechTranscribing {
+    private let locales = [
+        AppleSpeechLocale(identifier: "en_US", engine: .speechTranscriber),
+        AppleSpeechLocale(identifier: "fr_FR", engine: .speechTranscriber)
+    ]
+
+    func availableLocales() async -> [AppleSpeechLocale] { locales }
+
+    func readiness(for localeIdentifier: String) async -> AppleSpeechReadiness {
+        try? await Task.sleep(for: localeIdentifier == "en_US" ? .milliseconds(100) : .milliseconds(1))
+        return .ready(.init(identifier: localeIdentifier, engine: .speechTranscriber))
+    }
+
+    func installAssets(
+        for localeIdentifier: String,
+        progress: @escaping @Sendable (Double) -> Void
+    ) async throws -> AppleSpeechReadiness {
+        .ready(.init(identifier: localeIdentifier, engine: .speechTranscriber))
+    }
+
+    func transcribe(
+        audio: RecordedAudio,
+        localeIdentifier: String,
+        vocabulary: [VocabularyEntry]
+    ) async throws -> TranscriptionResult {
+        .init(
+            text: "test",
+            language: localeIdentifier,
+            provider: .appleSpeech,
+            model: AppleTranscriptionEngine.speechTranscriber.rawValue,
+            latency: 0
+        )
+    }
+}

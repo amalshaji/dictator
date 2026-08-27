@@ -170,3 +170,13 @@ final class ClipboardDeliveryTests: XCTestCase {
         XCTAssertEqual(second.insertionMode, .clipboard)
     }
 }
+
+@MainActor
+final class TestClipboardWriter: ClipboardWriting {
+    private(set) var text: String?
+
+    func write(_ text: String) -> Bool {
+        self.text = text
+        return true
+    }
+}

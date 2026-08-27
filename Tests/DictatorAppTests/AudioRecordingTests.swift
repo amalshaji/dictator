@@ -519,3 +519,124 @@ final class AudioRecordingTests: XCTestCase {
         XCTAssertEqual(session.stopCount, 2)
     }
 }
+
+final class AudioStartGate: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var started = false
+    private var released = false
+    private var respondedBeforeRelease = false
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+
+    var mainActorRespondedBeforeRelease: Bool {
+        condition.withLock { respondedBeforeRelease }
+    }
+
+    func waitUntilRelease() async {
+        await withCheckedContinuation { continuation in
+            var shouldResume = false
+            condition.lock()
+            started = true
+            condition.broadcast()
+            if released {
+                shouldResume = true
+            } else {
+                releaseContinuation = continuation
+            }
+            condition.unlock()
+            if shouldResume { continuation.resume() }
+        }
+    }
+
+    func waitUntilStarted() {
+        condition.lock()
+        while !started { condition.wait() }
+        condition.unlock()
+    }
+
+    func recordMainActorResponse() {
+        condition.withLock { respondedBeforeRelease = !released }
+    }
+
+    func release() {
+        let continuation: CheckedContinuation<Void, Never>?
+        condition.lock()
+        released = true
+        continuation = releaseContinuation
+        releaseContinuation = nil
+        condition.broadcast()
+        condition.unlock()
+        continuation?.resume()
+    }
+}
+
+final class TestAudioCaptureSession: AudioCaptureSession, @unchecked Sendable {
+    let recoveryNotification = Notification.Name("TestAudioCaptureSessionRecovery")
+    private(set) var recoverySourceObject = TestAudioConfigurationSource()
+    var recoverySourceIdentifier: ObjectIdentifier? {
+        ObjectIdentifier(recoverySourceObject)
+    }
+    var onStart: (() -> Void)?
+    var firstStartGate: AudioStartGate?
+    var stopGate: AudioStartGate?
+    var startFailuresRemaining = 0
+    private(set) var startCount = 0
+    private(set) var stopCount = 0
+    private var tapHandler: (@Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void)?
+
+    func start(
+        tapHandler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
+    ) async throws {
+        startCount += 1
+        self.tapHandler = tapHandler
+        recoverySourceObject = TestAudioConfigurationSource()
+        let shouldFail = startFailuresRemaining > 0
+        if shouldFail {
+            startFailuresRemaining -= 1
+        }
+        if startCount == 1 {
+            await firstStartGate?.waitUntilRelease()
+        }
+        if shouldFail {
+            throw AudioRecorderError.noInput
+        }
+        onStart?()
+    }
+
+    func stop() async {
+        stopCount += 1
+        recoverySourceObject = TestAudioConfigurationSource()
+        guard let stopGate, let tapHandler else { return }
+        await stopGate.waitUntilRelease()
+        guard let pcm = Self.makePendingBuffer() else { return }
+        tapHandler(pcm, AVAudioTime(hostTime: 0))
+    }
+
+    func cancel() {
+        stopCount += 1
+        recoverySourceObject = TestAudioConfigurationSource()
+    }
+
+    func emit(_ pcm: AVAudioPCMBuffer) {
+        tapHandler?(pcm, AVAudioTime(hostTime: 0))
+    }
+
+    private static func makePendingBuffer() -> AVAudioPCMBuffer? {
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1),
+              let pcm = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1_600),
+              let samples = pcm.floatChannelData?[0]
+        else { return nil }
+        pcm.frameLength = 1_600
+        for index in 0..<1_600 { samples[index] = 0.1 }
+        return pcm
+    }
+}
+
+final class TestAudioConfigurationSource: NSObject, @unchecked Sendable {}
+
+final class AudioLevelRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [Double] = []
+
+    var values: [Double] { lock.withLock { storage } }
+    func append(_ value: Double) { lock.withLock { storage.append(value) } }
+}

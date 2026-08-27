@@ -194,3 +194,95 @@ final class AccessibilityInsertionTests: XCTestCase {
         PostedKeyEvent(keyCode: 0x09, keyDown: false, flags: .maskCommand),
     ]
 }
+
+@MainActor
+final class InsertionFixture {
+    let targetPID: pid_t = 4242
+    let applicationElement = AXUIElementCreateApplication(4242)
+    let fieldElement = AXUIElementCreateApplication(4242)
+    let applicationState = TestApplicationState()
+    let clipboard = TestClipboard()
+    let events = TestEventRecorder()
+    let originalSelection = TextSelectionSnapshot(text: "SELECTED TEXT", location: 0, length: 13)
+    let application: ApplicationTarget
+    let inserter: AccessibilityInserter
+
+    init(bundleIdentifier: String = "com.example.editor") {
+        application = ApplicationTarget(
+            element: applicationElement,
+            name: "Test App",
+            bundleIdentifier: bundleIdentifier,
+            processIdentifier: targetPID
+        )
+        applicationState.frontmostPID = targetPID
+        applicationState.runningPIDs = [targetPID, 777]
+        applicationState.currentSelection = originalSelection
+
+        let state = applicationState
+        let eventRecorder = events
+        let environment = InsertionEnvironment(
+            frontmostProcessIdentifier: { state.frontmostPID },
+            isRunning: { state.runningPIDs.contains($0) },
+            activate: {
+                state.activatedPIDs.append($0)
+                return state.activationSucceeds
+            },
+            focus: { _ in
+                state.focusAttempts += 1
+                return state.focusSucceeds
+            },
+            selection: { _ in state.currentSelection },
+            delay: { _ in }
+        )
+        let paster = ClipboardPaster(
+            clipboard: clipboard,
+            postEvent: { eventRecorder.post($0) },
+            delay: { _ in }
+        )
+        inserter = AccessibilityInserter(environment: environment, paster: paster)
+    }
+}
+
+@MainActor
+final class TestApplicationState {
+    var frontmostPID: pid_t?
+    var runningPIDs: Set<pid_t> = []
+    var activatedPIDs: [pid_t] = []
+    var activationSucceeds = true
+    var focusSucceeds = true
+    var focusAttempts = 0
+    var currentSelection: TextSelectionSnapshot?
+}
+
+@MainActor
+final class TestClipboard: ClipboardAccess {
+    var ownsPreparedContents = true
+    var prepareSucceeds = true
+    var didRestore = false
+    private var preparedText: String?
+    private var preparedSessionID: String?
+    var lastPreparedText: String? { preparedText }
+
+    func snapshot() -> PasteboardSnapshot { PasteboardSnapshot(items: []) }
+    func prepare(text: String, sessionID: String) -> Bool {
+        preparedText = text
+        preparedSessionID = sessionID
+        return prepareSucceeds
+    }
+    func owns(text: String, sessionID: String) -> Bool {
+        ownsPreparedContents && text == preparedText && sessionID == preparedSessionID
+    }
+    func restore(_ snapshot: PasteboardSnapshot) { didRestore = true }
+}
+
+@MainActor
+final class TestEventRecorder {
+    var events: [PostedKeyEvent] = []
+    var failureIndex: Int?
+
+    func post(_ event: PostedKeyEvent) -> Bool {
+        let index = events.count
+        events.append(event)
+        return index != failureIndex
+    }
+}

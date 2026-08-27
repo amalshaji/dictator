@@ -294,3 +294,57 @@ final class ScreenAwareDictationTests: XCTestCase {
         XCTAssertEqual(model.data.lifetimeStatistics.pipelineLatencySamples, 1)
     }
 }
+
+struct SpeechOnlyGroqCredentialStore: CredentialStoring {
+    func save(_ credentials: ProviderCredentials, for purpose: ProviderPurpose, provider: ProviderKind) throws {}
+
+    func load(for purpose: ProviderPurpose, provider: ProviderKind) throws -> ProviderCredentials? {
+        guard purpose == .speechToText, provider == .groq else { return nil }
+        return ProviderCredentials(apiKey: "shared-key")
+    }
+}
+
+@MainActor
+final class TestScreenContextCapture: ScreenContextCapturing {
+    var permissionGranted = true
+    var capturedContext: CapturedScreenContext?
+    private(set) var captureCount = 0
+
+    func requestPermission() -> Bool { true }
+
+    func capture(_ window: FocusedWindowSnapshot) async throws -> CapturedScreenContext {
+        captureCount += 1
+        if let capturedContext { return capturedContext }
+        throw ScreenContextCaptureError.focusedWindowUnavailable
+    }
+}
+
+struct TestScreenAwareProvider: ScreenAwareLLMProvider {
+    let model: String
+    var metadata: ProviderMetadata {
+        ScreenAwareProviderRegistry.provider(for: .groq)!.metadata
+    }
+
+    func validate(credentials: ProviderCredentials) async throws {}
+    func listModels(credentials: ProviderCredentials) async throws -> [String] { [model] }
+    func generate(request: ScreenAwareRequest, model: String, credentials: ProviderCredentials) async throws -> ScreenAwareResult {
+        .init(
+            intent: .insert,
+            text: "Hi Sam,\n\nTuesday works for me.",
+            provider: .groq,
+            model: model,
+            inputTokens: 42,
+            outputTokens: 12,
+            latency: 0.2
+        )
+    }
+}
+
+struct ScreenAwareCredentialStore: CredentialStoring {
+    func save(_ credentials: ProviderCredentials, for purpose: ProviderPurpose, provider: ProviderKind) throws {}
+
+    func load(for purpose: ProviderPurpose, provider: ProviderKind) throws -> ProviderCredentials? {
+        guard purpose == .screenAware, provider == .groq else { return nil }
+        return ProviderCredentials(apiKey: "test-key")
+    }
+}
