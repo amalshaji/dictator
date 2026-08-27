@@ -293,21 +293,13 @@ struct SettingsView: View {
                     HStack(spacing: 20) {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Status pill").font(.dictatorBody(14, weight: .medium))
-                            Text("Choose where status appears in every dictation mode.")
+                            Text("Appears below the notch or menu bar on the display where recording starts.")
                                 .font(.dictatorBody(11)).foregroundStyle(.secondary)
                         }
                         Spacer()
-                        DictatorSegmentedSwitcher(
-                            label: "Status pill position",
-                            options: [
-                                .init(title: "Notch", icon: "rectangle.topthird.inset.filled"),
-                                .init(title: "Next to pointer", icon: "cursorarrow"),
-                            ],
-                            selection: Binding(
-                                get: { model.hudPositionMode == .notch ? 0 : 1 },
-                                set: { model.setHUDPositionMode($0 == 0 ? .notch : .pointer) }
-                            )
-                        )
+                        Label("Top center", systemImage: "rectangle.topthird.inset.filled")
+                            .font(.dictatorBody(12, weight: .semibold))
+                            .foregroundStyle(DictatorDesign.signalInk)
                     }
                     .padding(.vertical, 10)
                     .overlay(alignment: .bottom) { Divider() }

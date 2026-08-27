@@ -4,7 +4,6 @@ import SwiftUI
 
 enum HUDPositionMode: String, CaseIterable, Identifiable {
     case notch
-    case pointer
 
     var id: String { rawValue }
 }
@@ -33,45 +32,26 @@ enum HUDPhase: Equatable {
         case .error(let value): value
         }
     }
-
-    var tracksPointer: Bool {
-        self != .idle
-    }
 }
 
 enum HUDPositioning {
-    private static let pointerGap: CGFloat = 16
-    private static let screenInset: CGFloat = 8
+    private static let topGap: CGFloat = 4
 
-    static func notchFrame(size: NSSize, screenFrame: NSRect, topSafeAreaInset: CGFloat = 0) -> NSRect {
+    static func topExclusion(
+        screenFrame: NSRect,
+        visibleFrame: NSRect,
+        topSafeAreaInset: CGFloat
+    ) -> CGFloat {
+        max(topSafeAreaInset, max(0, screenFrame.maxY - visibleFrame.maxY))
+    }
+
+    static func notchFrame(size: NSSize, screenFrame: NSRect, topExclusion: CGFloat) -> NSRect {
         NSRect(
             x: screenFrame.midX - size.width / 2,
-            y: screenFrame.maxY - topSafeAreaInset - size.height,
+            y: screenFrame.maxY - topExclusion - topGap - size.height,
             width: size.width,
             height: size.height
         )
-    }
-
-    static func pointerFrame(size: NSSize, pointer: NSPoint, visibleFrame: NSRect) -> NSRect {
-        let bounds = visibleFrame.insetBy(dx: screenInset, dy: screenInset)
-        let constrainedSize = NSSize(
-            width: min(size.width, max(0, bounds.width)),
-            height: min(size.height, max(0, bounds.height))
-        )
-
-        var x = pointer.x + pointerGap
-        if x + constrainedSize.width > bounds.maxX {
-            x = pointer.x - pointerGap - constrainedSize.width
-        }
-
-        var y = pointer.y + pointerGap
-        if y + constrainedSize.height > bounds.maxY {
-            y = pointer.y - pointerGap - constrainedSize.height
-        }
-
-        x = min(max(x, bounds.minX), max(bounds.minX, bounds.maxX - constrainedSize.width))
-        y = min(max(y, bounds.minY), max(bounds.minY, bounds.maxY - constrainedSize.height))
-        return NSRect(origin: NSPoint(x: x, y: y), size: constrainedSize)
     }
 }
 
@@ -79,7 +59,6 @@ enum HUDPositioning {
 final class HUDModel: ObservableObject {
     @Published var phase: HUDPhase = .idle
     @Published var levels = Array(repeating: 0.12, count: 22)
-    @Published fileprivate(set) var positionMode: HUDPositionMode = .notch
 
     func push(level: Double) {
         levels.removeFirst()
@@ -90,23 +69,21 @@ final class HUDModel: ObservableObject {
 @MainActor
 final class FloatingPanelController {
     let model = HUDModel()
+    var onStop: (() -> Void)?
     private let panel: NSPanel
     private var hideTask: Task<Void, Never>?
-    private var pointerTrackingTask: Task<Void, Never>?
-    private var positionUpdateTask: Task<Void, Never>?
-    private var lastPointerLocation: NSPoint?
     private var screenObserver: NSObjectProtocol?
+    private var sessionDisplayID: NSNumber?
     private let transitionDuration = 0.24
-    private let pointerLocation: () -> NSPoint
 
-    init(pointerLocation: @escaping () -> NSPoint = { NSEvent.mouseLocation }) {
-        self.pointerLocation = pointerLocation
-        panel = NSPanel(
+    init() {
+        let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 280, height: 58),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
+        self.panel = panel
         panel.level = .statusBar
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.isOpaque = false
@@ -114,14 +91,16 @@ final class FloatingPanelController {
         panel.hasShadow = false
         panel.hidesOnDeactivate = false
         panel.ignoresMouseEvents = true
-        panel.contentView = NSHostingView(rootView: FloatingHUDView(model: model))
+        panel.becomesKeyOnlyIfNeeded = true
+        panel.contentView = NSHostingView(rootView: FloatingHUDView(
+            model: model,
+            onStop: { [weak self] in self?.stopFromPill() }
+        ))
         observeScreenChanges()
     }
 
     isolated deinit {
         hideTask?.cancel()
-        pointerTrackingTask?.cancel()
-        positionUpdateTask?.cancel()
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
         panel.close()
     }
@@ -140,37 +119,33 @@ final class FloatingPanelController {
     /// display leaves the HUD stranded wherever its old geometry landed.
     private func reanchorForScreenChange() {
         guard panel.isVisible else { return }
-        lastPointerLocation = nil
+        if screen(for: sessionDisplayID) == nil {
+            sessionDisplayID = displayID(for: fallbackScreen())
+        }
         resize(for: model.phase, animated: false)
     }
 
     func setPositionMode(_ mode: HUDPositionMode) {
-        guard model.positionMode != mode else { return }
-        model.positionMode = mode
-        positionUpdateTask?.cancel()
-        guard panel.isVisible else { return }
-        positionUpdateTask = Task { @MainActor [weak self] in
-            // Avoid resizing the hosting view during a SwiftUI AttributeGraph update.
-            await Task.yield()
-            guard let self,
-                  !Task.isCancelled,
-                  self.model.positionMode == mode,
-                  self.panel.isVisible
-            else { return }
-            self.resize(for: self.model.phase, animated: true)
-            self.updatePointerTracking(for: self.model.phase)
-        }
+        // The recording pill has one stable location below the notch or menu bar.
     }
 
     func show(_ phase: HUDPhase) {
         hideTask?.cancel()
+        guard phase != .idle else {
+            model.phase = .idle
+            panel.orderOut(nil)
+            return
+        }
+        if sessionDisplayID == nil {
+            sessionDisplayID = displayID(for: fallbackScreen())
+        }
         let shouldAnimate = panel.isVisible && model.phase != phase
         let animation: Animation? = shouldAnimate
             ? .spring(response: 0.3, dampingFraction: 1)
             : nil
         withAnimation(animation) { model.phase = phase }
+        panel.ignoresMouseEvents = phase != .listening
         resize(for: phase, animated: shouldAnimate)
-        updatePointerTracking(for: phase)
         panel.orderFrontRegardless()
     }
 
@@ -182,16 +157,21 @@ final class FloatingPanelController {
             guard let self else { return }
             let animation = Animation.spring(response: 0.3, dampingFraction: 1)
             withAnimation(animation) { self.model.phase = .idle }
-            self.updatePointerTracking(for: .idle)
-            self.resize(for: .idle, animated: true)
+            self.panel.ignoresMouseEvents = true
             self.panel.orderOut(nil)
+            self.sessionDisplayID = nil
         }
+    }
+
+    func stopFromPill() {
+        guard model.phase == .listening else { return }
+        onStop?()
     }
 
     private func resize(for phase: HUDPhase, animated: Bool) {
         let size = size(for: phase)
         guard let target = targetFrame(size: size, phase: phase) else { return }
-        guard animated, !usesPointerPlacement(for: phase) else {
+        guard animated else {
             panel.setFrame(target, display: true)
             return
         }
@@ -205,76 +185,51 @@ final class FloatingPanelController {
     private func size(for phase: HUDPhase) -> NSSize {
         switch phase {
         case .idle: NSSize(width: 54, height: 18)
-        case .listening, .transcribing, .offline, .cleaning, .understanding:
+        case .listening:
+            NSSize(width: 148, height: 34)
+        case .transcribing, .offline, .cleaning, .understanding:
             NSSize(width: 124, height: 32)
         case .success(let message):
-            NSSize(width: message.hasPrefix("Offline") ? 174 : 124, height: 32)
+            NSSize(width: message.contains("Copied") ? 196 : (message.hasPrefix("Offline") ? 174 : 124), height: 32)
         case .clipboard: NSSize(width: 190, height: 34)
         case .error: NSSize(width: 260, height: 36)
         }
     }
 
     private func targetFrame(size: NSSize, phase: HUDPhase) -> NSRect? {
-        if usesPointerPlacement(for: phase) {
-            let pointer = pointerLocation()
-            guard let screen = screen(containing: pointer) else { return nil }
-            return HUDPositioning.pointerFrame(size: size, pointer: pointer, visibleFrame: screen.visibleFrame)
-        }
-        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return nil }
+        guard let screen = screen(for: sessionDisplayID) ?? fallbackScreen() else { return nil }
+        let topExclusion = HUDPositioning.topExclusion(
+            screenFrame: screen.frame,
+            visibleFrame: screen.visibleFrame,
+            topSafeAreaInset: screen.safeAreaInsets.top
+        )
         return HUDPositioning.notchFrame(
             size: size,
             screenFrame: screen.frame,
-            topSafeAreaInset: screen.safeAreaInsets.top
+            topExclusion: topExclusion
         )
     }
 
-    private func usesPointerPlacement(for phase: HUDPhase) -> Bool {
-        model.positionMode == .pointer && phase.tracksPointer
+    private func fallbackScreen() -> NSScreen? {
+        let pointer = NSEvent.mouseLocation
+        return NSScreen.screens.first { $0.frame.contains(pointer) }
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
     }
 
-    private func updatePointerTracking(for phase: HUDPhase) {
-        guard usesPointerPlacement(for: phase) else {
-            pointerTrackingTask?.cancel()
-            pointerTrackingTask = nil
-            lastPointerLocation = nil
-            return
-        }
-        guard pointerTrackingTask == nil else { return }
-        lastPointerLocation = nil
-        pointerTrackingTask = Task { @MainActor [weak self] in
-            while !Task.isCancelled {
-                guard let self else { return }
-                self.updatePointerPosition()
-                do { try await Task.sleep(for: .milliseconds(16)) }
-                catch { return }
-            }
-        }
+    private func displayID(for screen: NSScreen?) -> NSNumber? {
+        screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
     }
 
-    private func updatePointerPosition() {
-        let pointer = pointerLocation()
-        guard pointer != lastPointerLocation else { return }
-        lastPointerLocation = pointer
-        guard let screen = screen(containing: pointer) else { return }
-        let target = HUDPositioning.pointerFrame(
-            size: size(for: model.phase),
-            pointer: pointer,
-            visibleFrame: screen.visibleFrame
-        )
-        if panel.frame.size == target.size {
-            panel.setFrameOrigin(target.origin)
-        } else {
-            panel.setFrame(target, display: true)
-        }
-    }
-
-    private func screen(containing point: NSPoint) -> NSScreen? {
-        NSScreen.screens.first { $0.frame.contains(point) } ?? NSScreen.main ?? NSScreen.screens.first
+    private func screen(for displayID: NSNumber?) -> NSScreen? {
+        guard let displayID else { return nil }
+        return NSScreen.screens.first { self.displayID(for: $0) == displayID }
     }
 }
 
 struct FloatingHUDView: View {
     @ObservedObject var model: HUDModel
+    let onStop: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -288,15 +243,8 @@ struct FloatingHUDView: View {
     }
 
     @ViewBuilder private var chrome: some View {
-        if model.positionMode == .pointer, model.phase.tracksPointer {
-            Capsule().fill(Color(red: 17/255, green: 16/255, blue: 20/255).opacity(0.97))
-            Capsule().stroke(Color.white.opacity(0.075), lineWidth: 0.75)
-        } else {
-            UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 14, bottomTrailingRadius: 14, topTrailingRadius: 0)
-                .fill(Color(red: 17/255, green: 16/255, blue: 20/255).opacity(0.97))
-            UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 14, bottomTrailingRadius: 14, topTrailingRadius: 0)
-                .stroke(Color.white.opacity(0.075), lineWidth: 0.75)
-        }
+        Capsule().fill(Color(red: 17/255, green: 16/255, blue: 20/255).opacity(0.97))
+        Capsule().stroke(Color.white.opacity(0.075), lineWidth: 0.75)
     }
 
     @ViewBuilder private var content: some View {
@@ -315,6 +263,15 @@ struct FloatingHUDView: View {
                 Circle().fill(DictatorDesign.orchid).frame(width: 4, height: 4)
             }
             waveform
+            Button(action: onStop) {
+                Image(systemName: "stop.fill")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 22, height: 22)
+                    .background(DictatorDesign.orchid, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Stop recording")
         }
         .padding(.horizontal, 8)
         .accessibilityLabel("Listening")

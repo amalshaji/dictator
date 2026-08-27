@@ -197,6 +197,9 @@ final class AppModel: ObservableObject {
         recorder.onLevel = { [weak self] level in
             Task { @MainActor in self?.hud.model.push(level: level) }
         }
+        hud.onStop = { [weak self] in
+            Task { @MainActor in await self?.stopDictation() }
+        }
         hotkeys.onPress = { [weak self] targetPID in
             Task { @MainActor in await self?.handleDictatePress(targetProcessIdentifier: targetPID) }
         }
