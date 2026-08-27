@@ -41,7 +41,7 @@ targets:
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         LSMinimumSystemVersion: "14.0"
         LSUIElement: false
-        NSMicrophoneUsageDescription: Dictator records only while you hold the dictation shortcut. Audio stays on this Mac with Apple On-Device or is sent to your selected cloud speech provider.
+        NSMicrophoneUsageDescription: Dictator uses the microphone only while you explicitly record audio for transcription. Audio stays on this Mac with Apple On-Device or is sent to your selected cloud speech provider.
         NSHumanReadableCopyright: "Copyright © 2026"
         SUFeedURL: https://amalshaji.github.io/dictator/appcast.xml
         SUPublicEDKey: Jd8IJcNidu3+W+wp+TcU+isDyeBn74y0UKXR2V62g7g=

@@ -1275,6 +1275,7 @@ final class AppBehaviorTests: XCTestCase {
         let suiteName = "ai.dictator.tests.screen-aware-capability.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(AppAccessMode.systemWide.rawValue, forKey: "accessMode")
         defaults.set(true, forKey: "screenAwareEnabled")
         defaults.set(ProviderKind.groq.rawValue, forKey: "selectedScreenAwareLLM")
         defaults.set("openai/gpt-oss-20b", forKey: "visionModel.groq")
@@ -1301,6 +1302,7 @@ final class AppBehaviorTests: XCTestCase {
         let suiteName = "ai.dictator.tests.screen-aware-happy-path.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(AppAccessMode.systemWide.rawValue, forKey: "accessMode")
         defaults.set(true, forKey: "screenAwareEnabled")
         defaults.set(ProviderKind.groq.rawValue, forKey: "selectedScreenAwareLLM")
         let modelName = "meta-llama/llama-4-scout-17b-16e-instruct"
@@ -1534,6 +1536,7 @@ final class AppBehaviorTests: XCTestCase {
         let suiteName = "ai.dictator.tests.insertion-mode-persistence.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(AppAccessMode.systemWide.rawValue, forKey: "accessMode")
 
         let first = AppModel(
             keychain: HUDTestCredentialStore(),
