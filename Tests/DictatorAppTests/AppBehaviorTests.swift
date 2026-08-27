@@ -12,6 +12,15 @@ import XCTest
 
 @MainActor
 final class AppBehaviorTests: XCTestCase {
+    func testMenuBarRecordingControlTracksRecordingPhase() {
+        XCTAssertEqual(MenuBarRecordingControl(phase: .idle).title, "Start Recording")
+        XCTAssertTrue(MenuBarRecordingControl(phase: .idle).isEnabled)
+        XCTAssertEqual(MenuBarRecordingControl(phase: .listening).title, "Stop Recording")
+        XCTAssertTrue(MenuBarRecordingControl(phase: .listening).isEnabled)
+        XCTAssertEqual(MenuBarRecordingControl(phase: .processing).title, "Transcribing…")
+        XCTAssertFalse(MenuBarRecordingControl(phase: .processing).isEnabled)
+    }
+
     func testNewInstallationDefaultsToLeastPrivileges() throws {
         let suiteName = "ai.dictator.tests.access-mode-new-install.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
