@@ -93,7 +93,7 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertEqual(AppAccessMode.systemWide.statusTitle, "System-wide enabled")
     }
 
-    func testSwitchingToLeastPrivilegesDisablesPrivilegedBehavior() throws {
+    func testSwitchingAccessModesPreservesSystemWidePreferences() throws {
         let suiteName = "ai.dictator.tests.access-mode-restriction.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -111,7 +111,13 @@ final class AppBehaviorTests: XCTestCase {
         model.setAccessMode(.leastPrivileges)
 
         XCTAssertEqual(model.insertionMode, .clipboard)
-        XCTAssertFalse(model.screenAwareEnabled)
+        XCTAssertEqual(defaults.string(forKey: "insertionMode"), InsertionMode.insert.rawValue)
+        XCTAssertTrue(model.screenAwareEnabled)
+
+        model.setAccessMode(.systemWide)
+
+        XCTAssertEqual(model.insertionMode, .insert)
+        XCTAssertTrue(model.screenAwareEnabled)
     }
 
     func testLeastPrivilegesOnboardingRequiresOnlyMicrophone() throws {

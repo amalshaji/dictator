@@ -41,3 +41,26 @@ enum AppAccessMode: String, CaseIterable, Identifiable {
         }
     }
 }
+
+struct AppAccessConfiguration: Equatable {
+    let mode: AppAccessMode
+    let systemWideInsertionMode: InsertionMode
+
+    var insertionMode: InsertionMode {
+        mode.deliversToClipboard ? .clipboard : systemWideInsertionMode
+    }
+
+    func selectingAccessMode(_ mode: AppAccessMode) -> AppAccessConfiguration {
+        AppAccessConfiguration(
+            mode: mode,
+            systemWideInsertionMode: systemWideInsertionMode
+        )
+    }
+
+    func selectingSystemWideInsertionMode(_ insertionMode: InsertionMode) -> AppAccessConfiguration {
+        AppAccessConfiguration(
+            mode: mode,
+            systemWideInsertionMode: insertionMode
+        )
+    }
+}

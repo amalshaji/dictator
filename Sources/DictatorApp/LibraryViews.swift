@@ -234,7 +234,7 @@ struct SettingsView: View {
                         }
                         Spacer()
                         Button(model.microphoneGranted ? "Granted" : "Allow microphone") {
-                            Task { await model.requestOnboardingPermissions() }
+                            Task { await model.requestMicrophonePermission() }
                         }
                         .disabled(model.microphoneGranted).dictatorButton(.secondary)
                     }.padding(.vertical, 11)
@@ -291,8 +291,7 @@ struct SettingsView: View {
                         }
                         Spacer()
                         Button(model.shortcutsAvailable ? "Working" : "Grant & retry") {
-                            model.requestAccessibilityPermission()
-                            model.retryShortcuts()
+                            model.requestInputMonitoringPermission()
                         }
                         .disabled(model.shortcutsAvailable).dictatorButton(.secondary)
                     }.padding(.vertical, 11)

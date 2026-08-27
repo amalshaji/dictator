@@ -48,6 +48,49 @@ final class HotkeyLifecycleControllerTests: XCTestCase {
         XCTAssertEqual(controller.state, .stopped)
     }
 
+    func testSwitchingFromLeastPrivilegesToSystemWideRestartsHotkeysAfterOnboarding() throws {
+        let hotkey = TestHotkeyMonitor(isRunning: false)
+        let controller = HotkeyLifecycleController(
+            monitor: hotkey,
+            notificationCenter: NotificationCenter()
+        )
+        let (model, defaults, suiteName) = try makeModel(
+            hotkeys: controller,
+            recorder: LifecycleAudioRecorder()
+        )
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        model.finishOnboarding()
+        XCTAssertEqual(controller.state, .stopped)
+        XCTAssertEqual(hotkey.startCount, 0)
+
+        model.setAccessMode(.systemWide)
+
+        XCTAssertEqual(hotkey.startCount, 1)
+        XCTAssertEqual(controller.state, .available)
+    }
+
+    func testMicrophonePermissionRequestDoesNotStartSystemWideHotkeys() async throws {
+        let hotkey = TestHotkeyMonitor(isRunning: false)
+        let controller = HotkeyLifecycleController(
+            monitor: hotkey,
+            notificationCenter: NotificationCenter()
+        )
+        let recorder = LifecycleAudioRecorder()
+        let (model, defaults, suiteName) = try makeModel(
+            hotkeys: controller,
+            recorder: recorder
+        )
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        model.setAccessMode(.systemWide)
+
+        await model.requestMicrophonePermission()
+
+        XCTAssertEqual(recorder.permissionRequestCount, 1)
+        XCTAssertEqual(hotkey.startCount, 0)
+        XCTAssertEqual(controller.state, .stopped)
+    }
+
     func testEachWakeRecreatesHotkeyMonitorEvenWhenItReportsRunning() {
         let notifications = NotificationCenter()
         let hotkey = TestHotkeyMonitor(isRunning: true)
