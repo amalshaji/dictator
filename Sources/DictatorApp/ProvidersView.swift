@@ -10,7 +10,9 @@ struct ProvidersView: View {
             VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Providers").font(.dictatorDisplay(30))
-                    Text("Choose speech, cleanup, and screen-aware models independently. Focused-window images are sent only for screen-aware dictation and are never saved.")
+                    Text(model.accessMode == .leastPrivileges
+                        ? "Choose the speech and cleanup models used for your recordings."
+                        : "Choose speech, cleanup, and screen-aware models independently. Focused-window images are sent only for screen-aware dictation and are never saved.")
                         .font(.dictatorBody(14)).foregroundStyle(DictatorDesign.inkSecondary)
                 }
                 providerTypeSelector
@@ -22,8 +24,12 @@ struct ProvidersView: View {
                         .font(.dictatorBody(11)).foregroundStyle(DictatorDesign.muted)
                     providerList(CleanupProviderRegistry.metadata, purpose: .cleanup)
                 } else {
-                    screenAwareControl
-                    providerList(ScreenAwareProviderRegistry.metadata, purpose: .screenAware)
+                    if model.accessMode == .leastPrivileges {
+                        systemWideRequirement
+                    } else {
+                        screenAwareControl
+                        providerList(ScreenAwareProviderRegistry.metadata, purpose: .screenAware)
+                    }
                 }
             }
             .frame(maxWidth: DictatorDesign.contentWidth, alignment: .leading)
@@ -66,6 +72,17 @@ struct ProvidersView: View {
                         .dictatorButton(.secondary)
                 }
             }
+        }
+        .padding(14)
+        .dictatorCard()
+    }
+
+    private var systemWideRequirement: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Label("System-wide access required", systemImage: "hand.raised")
+                .font(.dictatorBody(13, weight: .semibold))
+            Text("Screen-aware dictation is off in least-privilege mode. Switch access modes in Settings before configuring Screen Recording.")
+                .font(.dictatorBody(11)).foregroundStyle(.secondary)
         }
         .padding(14)
         .dictatorCard()

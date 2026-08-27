@@ -35,9 +35,11 @@ struct HomeView: View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 9) {
                 Text("Ready when you are").font(.dictatorDisplay(32)).foregroundStyle(DictatorDesign.ink)
-                Text(model.dictateActivationMode == .hold
-                    ? "Hold \(model.dictateShortcut.displayName), speak naturally, then release."
-                    : "Press \(model.dictateShortcut.displayName), speak naturally, then press it again.")
+                Text(model.accessMode == .leastPrivileges
+                    ? model.accessMode.recordingInstruction
+                    : (model.dictateActivationMode == .hold
+                        ? "Hold \(model.dictateShortcut.displayName), speak naturally, then release."
+                        : "Press \(model.dictateShortcut.displayName), speak naturally, then press it again."))
                     .font(.dictatorBody(15)).foregroundStyle(DictatorDesign.inkSecondary)
             }
             Spacer()

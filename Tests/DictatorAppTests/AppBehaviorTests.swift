@@ -82,6 +82,38 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertTrue(AppAccessMode.leastPrivileges.deliversToClipboard)
     }
 
+    func testAccessModePresentationExplainsItsPermissionBoundary() {
+        XCTAssertEqual(AppAccessMode.leastPrivileges.title, "Use with least privileges")
+        XCTAssertEqual(AppAccessMode.leastPrivileges.statusTitle, "Microphone only")
+        XCTAssertEqual(
+            AppAccessMode.leastPrivileges.recordingInstruction,
+            "Start from the menu bar, stop from the pill, then press ⌘V to paste."
+        )
+        XCTAssertEqual(AppAccessMode.systemWide.title, "Use system-wide")
+        XCTAssertEqual(AppAccessMode.systemWide.statusTitle, "System-wide enabled")
+    }
+
+    func testSwitchingToLeastPrivilegesDisablesPrivilegedBehavior() throws {
+        let suiteName = "ai.dictator.tests.access-mode-restriction.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(AppAccessMode.systemWide.rawValue, forKey: "accessMode")
+        defaults.set(InsertionMode.insert.rawValue, forKey: "insertionMode")
+
+        let model = AppModel(
+            keychain: HUDTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor()
+        )
+        model.screenAwareEnabled = true
+
+        model.setAccessMode(.leastPrivileges)
+
+        XCTAssertEqual(model.insertionMode, .clipboard)
+        XCTAssertFalse(model.screenAwareEnabled)
+    }
+
     func testLeastPrivilegesOnboardingRequiresOnlyMicrophone() throws {
         let suiteName = "ai.dictator.tests.onboarding-permissions-least.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))

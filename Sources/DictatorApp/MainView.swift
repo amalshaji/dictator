@@ -77,17 +77,26 @@ struct MainView: View {
 
             Spacer()
             VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 7) {
-                    Circle().fill(model.shortcutsAvailable ? Color.green : Color.orange).frame(width: 6, height: 6)
-                    Text(model.shortcutsAvailable ? "Ready" : "Shortcuts need permission")
-                }
-                HStack(spacing: 7) {
-                    Text(model.dictateShortcut.displayName)
-                        .font(.dictatorUtility(9)).foregroundStyle(.white.opacity(0.78))
-                        .padding(.horizontal, 7).frame(height: 22)
-                        .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    Text(model.dictateActivationMode == .hold ? "Hold to speak" : "Press to start and stop")
+                if model.accessMode == .leastPrivileges {
+                    HStack(spacing: 7) {
+                        Circle().fill(Color.green).frame(width: 6, height: 6)
+                        Text(model.accessMode.statusTitle)
+                    }
+                    Text("Record from the menu bar")
                         .font(.dictatorBody(10.5)).foregroundStyle(.white.opacity(0.46))
+                } else {
+                    HStack(spacing: 7) {
+                        Circle().fill(model.shortcutsAvailable ? Color.green : Color.orange).frame(width: 6, height: 6)
+                        Text(model.shortcutsAvailable ? "Ready" : "Shortcuts need permission")
+                    }
+                    HStack(spacing: 7) {
+                        Text(model.dictateShortcut.displayName)
+                            .font(.dictatorUtility(9)).foregroundStyle(.white.opacity(0.78))
+                            .padding(.horizontal, 7).frame(height: 22)
+                            .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        Text(model.dictateActivationMode == .hold ? "Hold to speak" : "Press to start and stop")
+                            .font(.dictatorBody(10.5)).foregroundStyle(.white.opacity(0.46))
+                    }
                 }
             }
             .font(.dictatorBody(11, weight: .medium))
