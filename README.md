@@ -1,12 +1,21 @@
 # Dictator
 
-Dictator is a native macOS menu-bar app for dictation and screen-aware writing. Hold `Fn` to dictate, or hold `Control-Option` to speak an instruction that uses the focused window as context. Dictator inserts the result into the field that was focused when recording began; if no editable field was focused, it uses its private clipboard.
+Dictator is a native macOS menu-bar app for dictation and screen-aware writing. In the default least-privilege mode, start recording from the menu bar, stop from the pill below the notch or menu bar, and press `Command-V` to paste the copied transcript. This mode requests Microphone access only.
 
 > ⚠️ Dictator is still in the early stages of development. Expect rough edges.
 
 ![Dictator's Providers screen on macOS](docs/images/dictator-providers.jpg)
 
-## Shortcuts
+## Recording and access modes
+
+During onboarding, choose one of two access modes:
+
+- **Use with least privileges** (recommended): Microphone permission only. Start and stop from Dictator's menu-bar menu or stop from the recording pill; every transcript is copied to the system clipboard.
+- **Use system-wide**: adds global shortcuts, focused-field insertion, and optional screen-aware dictation. This mode requires Accessibility and Input Monitoring; Screen Recording is requested only when you enable Screen Aware.
+
+You can switch modes later under **Settings → Access mode**. Switching to least privileges disables privileged features and returns result delivery to the clipboard.
+
+System-wide mode provides these shortcuts:
 
 - Hold `Fn`: record dictation
 - Hold `Control-Option`: compose or transform text using the focused window
@@ -69,7 +78,7 @@ GEMINI_API_KEY=
 OPENROUTER_API_KEY=
 ```
 
-The app needs Microphone and Accessibility/Input Monitoring permission for recording, global shortcuts, focus detection, and insertion. Screen Recording permission is required only for Screen Aware.
+Least-privilege mode needs only Microphone permission. System-wide mode additionally needs Accessibility and Input Monitoring for global shortcuts, focus detection, and insertion. Screen Recording permission is required only for Screen Aware.
 
 ## Release process
 

@@ -17,8 +17,18 @@ private struct ScreenAwareRun {
     let credentials: ProviderCredentials
 }
 
+private enum StandardDictationDelivery {
+    case clipboard
+    case focusedTarget(FocusedTarget?)
+
+    var target: FocusedTarget? {
+        guard case .focusedTarget(let target) = self else { return nil }
+        return target
+    }
+}
+
 private enum ActiveDictationRun {
-    case standard(target: FocusedTarget?)
+    case standard(StandardDictationDelivery)
     case screenAware(ScreenAwareRun)
 
     var isScreenAware: Bool {
@@ -39,7 +49,6 @@ final class AppModel: ObservableObject {
     @Published var cleanupEnabled = false { didSet { defaults.set(cleanupEnabled, forKey: "cleanupEnabled") } }
     @Published var screenAwareEnabled = false { didSet { defaults.set(screenAwareEnabled, forKey: "screenAwareEnabled") } }
     @Published private(set) var offlineFallbackEnabled = false
-    @Published private(set) var hudPositionMode: HUDPositionMode = .notch
     @Published var lastError: String?
     @Published var requestedDestination: String?
     @Published var shortcutsAvailable = false
@@ -47,8 +56,11 @@ final class AppModel: ObservableObject {
     @Published var inputMonitoringGranted = CGPreflightListenEventAccess()
     @Published var microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     @Published var screenCaptureGranted = CGPreflightScreenCaptureAccess()
-    @Published var onboardingComplete = UserDefaults.standard.bool(forKey: "onboardingComplete")
-    @Published private(set) var insertionMode = InsertionMode.insert
+    @Published var onboardingComplete = false
+    @Published private var accessConfiguration = AppAccessConfiguration(
+        mode: .leastPrivileges,
+        systemWideInsertionMode: .insert
+    )
     @Published private(set) var dictateShortcut = GlobalShortcut.dictate
     @Published private(set) var dictateActivationMode = HotkeyActivationMode.hold
     @Published private(set) var pasteLatestShortcut = GlobalShortcut.pasteLatest
@@ -61,6 +73,9 @@ final class AppModel: ObservableObject {
     let pricing = PricingStore()
     let appleSpeech: AppleSpeechCoordinator
 
+    var accessMode: AppAccessMode { accessConfiguration.mode }
+    var insertionMode: InsertionMode { accessConfiguration.insertionMode }
+
     private let defaults: UserDefaults
     private let store: LocalStore
     private let keychain: any CredentialStoring
@@ -70,6 +85,7 @@ final class AppModel: ObservableObject {
     private let screenCapture: any ScreenContextCapturing
     private let hotkeys: HotkeyLifecycleController
     private let inserter: any FocusedTargetInserting
+    private let clipboardWriter: any ClipboardWriting
     private let providerConnections: ProviderConnectionService
     private let transcriptProcessor = TranscriptProcessor()
     private let transcriptRepairService = TranscriptRepairService()
@@ -106,6 +122,7 @@ final class AppModel: ObservableObject {
         screenCapture: any ScreenContextCapturing = ScreenContextCaptureService(),
         transcriptionCoordinator: (any TranscriptionCoordinating)? = nil,
         inserter: any FocusedTargetInserting = AccessibilityInserter(),
+        clipboardWriter: any ClipboardWriting = SystemClipboardWriter(),
         screenAwareProvider: @escaping (ProviderKind) -> (any ScreenAwareLLMProvider)? = ScreenAwareProviderRegistry.provider
     ) {
         let runningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
@@ -118,6 +135,7 @@ final class AppModel: ObservableObject {
         self.recorder = recorder
         self.screenCapture = screenCapture
         self.inserter = inserter
+        self.clipboardWriter = clipboardWriter
         providerConnections = ProviderConnectionService(
             defaults: defaults,
             screenAwareProvider: screenAwareProvider
@@ -148,21 +166,29 @@ final class AppModel: ObservableObject {
         cleanupEnabled = defaults.bool(forKey: "cleanupEnabled")
         screenAwareEnabled = defaults.bool(forKey: "screenAwareEnabled")
         offlineFallbackEnabled = defaults.bool(forKey: "offlineFallbackEnabled")
-        let savedHUDPosition = defaults.string(forKey: "hudPositionMode")
-        hudPositionMode = HUDPositionMode(rawValue: savedHUDPosition ?? "") ?? .notch
-        if savedHUDPosition != hudPositionMode.rawValue {
-            defaults.set(hudPositionMode.rawValue, forKey: "hudPositionMode")
+        onboardingComplete = defaults.bool(forKey: "onboardingComplete")
+        let accessMode: AppAccessMode
+        if let savedAccessMode = defaults.string(forKey: "accessMode").flatMap(AppAccessMode.init(rawValue:)) {
+            accessMode = savedAccessMode
+        } else {
+            accessMode = onboardingComplete ? .systemWide : .leastPrivileges
+            defaults.set(accessMode.rawValue, forKey: "accessMode")
         }
         selectedStyleID = defaults.string(forKey: "selectedStyleID").flatMap(UUID.init(uuidString:))
         cleanupCustomInstruction = String((defaults.string(forKey: "cleanupCustomInstruction") ?? "").prefix(Self.maximumCleanupInstructionLength))
-        insertionMode = InsertionMode(rawValue: defaults.string(forKey: "insertionMode") ?? "") ?? .insert
+        let systemWideInsertionMode = InsertionMode(
+            rawValue: defaults.string(forKey: "insertionMode") ?? ""
+        ) ?? .insert
+        accessConfiguration = AppAccessConfiguration(
+            mode: accessMode,
+            systemWideInsertionMode: systemWideInsertionMode
+        )
         dictateShortcut = loadShortcut(forKey: "shortcut.dictate", fallback: .dictate)
         dictateActivationMode = HotkeyActivationMode(
             rawValue: defaults.string(forKey: "dictateActivationMode") ?? ""
         ) ?? .hold
         pasteLatestShortcut = loadShortcut(forKey: "shortcut.pasteLatest", fallback: .pasteLatest)
         openClipboardShortcut = loadShortcut(forKey: "shortcut.openClipboard", fallback: .openClipboard)
-        hud.setPositionMode(hudPositionMode)
         defaults.set(selectedSTT.rawValue, forKey: "selectedSTT")
         if selectedSTT != .appleSpeech { defaults.set(selectedSTT.rawValue, forKey: "lastCloudSTT") }
         appleSpeechObservation = appleSpeech.objectWillChange.sink { [weak self] _ in
@@ -171,6 +197,9 @@ final class AppModel: ObservableObject {
         configureHotkeys()
         recorder.onLevel = { [weak self] level in
             Task { @MainActor in self?.hud.model.push(level: level) }
+        }
+        hud.onStop = { [weak self] in
+            Task { @MainActor in await self?.stopDictation() }
         }
         hotkeys.onPress = { [weak self] targetPID in
             Task { @MainActor in await self?.handleDictatePress(targetProcessIdentifier: targetPID) }
@@ -196,8 +225,10 @@ final class AppModel: ObservableObject {
         }
         hotkeys.onStateChange = { [weak self] state in self?.applyHotkeyState(state) }
         if !runningTests {
-            if onboardingComplete { requestRequiredPermissions() }
-            hotkeys.start()
+            if accessMode.allowsGlobalShortcuts {
+                if onboardingComplete { requestRequiredPermissions() }
+            }
+            reconcileHotkeyLifecycle()
         }
         if !runningTests {
             initialLoadTask = Task { @MainActor [weak self] in
@@ -215,6 +246,14 @@ final class AppModel: ObservableObject {
                 if selectedSTT == .appleSpeech { await appleSpeech.refresh() }
             }
         }
+    }
+
+    func setAccessMode(_ mode: AppAccessMode) {
+        guard mode != accessMode else { return }
+        if phase == .listening { cancelDictation() }
+        accessConfiguration = accessConfiguration.selectingAccessMode(mode)
+        defaults.set(mode.rawValue, forKey: "accessMode")
+        reconcileHotkeyLifecycle()
     }
 
     private static func defaultAppleSpeechProvider() -> (any LocalSpeechTranscribing)? {
@@ -239,9 +278,14 @@ final class AppModel: ObservableObject {
             showError("Microphone permission is required")
             return
         }
-        let target = inserter.captureFocusedTarget(processIdentifier: targetProcessIdentifier)
+        let delivery: StandardDictationDelivery
+        if insertionMode == .clipboard {
+            delivery = .clipboard
+        } else {
+            delivery = .focusedTarget(inserter.captureFocusedTarget(processIdentifier: targetProcessIdentifier))
+        }
         let runID = UUID()
-        activeRun = .standard(target: target)
+        activeRun = .standard(delivery)
         activeRunID = runID
         phase = .listening
         hud.show(.listening)
@@ -261,6 +305,10 @@ final class AppModel: ObservableObject {
     func startScreenAwareDictation(targetProcessIdentifier: pid_t? = nil) async {
         await waitForInitialLoad()
         guard phase == .idle else { return }
+        guard accessMode.allowsScreenAwareDictation else {
+            showError("Screen-aware dictation requires system-wide mode.")
+            return
+        }
         guard screenAwareEnabled else {
             showError("Configure and enable screen-aware dictation in Providers.")
             return
@@ -357,8 +405,8 @@ final class AppModel: ObservableObject {
         switch run {
         case .screenAware(let screenAwareRun):
             await processScreenAware(audio, run: screenAwareRun, pipelineStarted: pipelineStarted)
-        case .standard(let target):
-            await process(audio, target: target, pipelineStarted: pipelineStarted)
+        case .standard(let delivery):
+            await process(audio, delivery: delivery, pipelineStarted: pipelineStarted)
         }
     }
 
@@ -368,7 +416,7 @@ final class AppModel: ObservableObject {
         activeRunID = nil
         phase = .idle
         recorder.cancel()
-        hud.show(.success("Cancelled"))
+        hud.show(.success(.cancelled))
         hud.hideAfterDelay()
     }
 
@@ -416,7 +464,7 @@ final class AppModel: ObservableObject {
                 transcription: transcriptionRun,
                 finalText: result.text,
                 insertion: insertion,
-                target: run.target,
+                delivery: .focusedTarget(run.target),
                 llmExecution: .init(result: result),
                 cleanupFallbackReason: nil,
                 pipelineStarted: pipelineStarted
@@ -428,11 +476,12 @@ final class AppModel: ObservableObject {
 
     private func process(
         _ audio: RecordedAudio,
-        target: FocusedTarget?,
+        delivery: StandardDictationDelivery,
         pipelineStarted: ContinuousClock.Instant
     ) async {
         hud.show(.transcribing)
         do {
+            let target = delivery.target
             let transcription = try await transcriptionCoordinator.transcribe(
                 audio: audio,
                 selectedProvider: selectedSTT,
@@ -472,7 +521,7 @@ final class AppModel: ObservableObject {
             // transformation intent degrades to copying the transformed text.
             guard let insertion = requestedInsertion(
                 text: finalText,
-                replacesSelection: insertionMode == .insert && cleanupResult?.intent == .transformation,
+                replacesSelection: target != nil && cleanupResult?.intent == .transformation,
                 target: target
             ) else { return }
             await completeDictation(
@@ -480,7 +529,7 @@ final class AppModel: ObservableObject {
                 transcription: transcription,
                 finalText: finalText,
                 insertion: insertion,
-                target: target,
+                delivery: delivery,
                 llmExecution: cleanupResult.map(LLMExecution.init(result:)),
                 cleanupFallbackReason: cleanupFallbackReason,
                 pipelineStarted: pipelineStarted
@@ -508,17 +557,19 @@ final class AppModel: ObservableObject {
         transcription: TranscriptionRun,
         finalText: String,
         insertion: TextInsertion,
-        target: FocusedTarget?,
+        delivery: StandardDictationDelivery,
         llmExecution: LLMExecution?,
         cleanupFallbackReason: String?,
         pipelineStarted: ContinuousClock.Instant
     ) async {
+        let target = delivery.target
         let outcome: InsertionResult
-        if insertionMode == .clipboard {
-            outcome = inserter.copyToSystemClipboard(finalText)
+        switch delivery {
+        case .clipboard:
+            outcome = clipboardWriter.write(finalText)
                 ? .copiedToClipboard
                 : .privateClipboard("the system clipboard could not be updated")
-        } else {
+        case .focusedTarget(let target):
             outcome = await inserter.insert(insertion, into: target)
         }
         switch outcome {
@@ -689,8 +740,8 @@ final class AppModel: ObservableObject {
         let item = entry ?? data.clipboard.first
         guard let item else { return }
         if insertionMode == .clipboard {
-            if inserter.copyToSystemClipboard(item.text) {
-                hud.show(.success("Copied — press ⌘V"))
+            if clipboardWriter.write(item.text) {
+                hud.show(.success(.copied))
                 hud.hideAfterDelay()
             } else {
                 showError("Could not update the system clipboard")
@@ -698,7 +749,7 @@ final class AppModel: ObservableObject {
             return
         }
         if await inserter.pasteIntoFrontmostApp(item.text) {
-            hud.show(.success("Paste sent"))
+            hud.show(.success(.pasteSent))
             hud.hideAfterDelay()
         } else {
             showError("Could not post the paste shortcut")
@@ -706,13 +757,12 @@ final class AppModel: ObservableObject {
     }
 
     func copyTranscriptText(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
+        if !clipboardWriter.write(text) { showError("Could not update the system clipboard") }
     }
 
     func pasteTranscriptText(_ text: String) async {
         if insertionMode == .clipboard {
-            if !inserter.copyToSystemClipboard(text) { showError("Could not update the system clipboard") }
+            if !clipboardWriter.write(text) { showError("Could not update the system clipboard") }
             return
         }
         if !(await inserter.pasteIntoFrontmostApp(text)) { showError("Could not post the paste shortcut") }
@@ -752,26 +802,35 @@ final class AppModel: ObservableObject {
     }
 
     func setInsertionMode(_ mode: InsertionMode) {
+        guard accessMode.allowsFocusedInsertion else { return }
         guard mode != insertionMode else { return }
-        insertionMode = mode
+        accessConfiguration = accessConfiguration.selectingSystemWideInsertionMode(mode)
         defaults.set(mode.rawValue, forKey: "insertionMode")
     }
 
     func requestAccessibilityPermission() {
+        guard accessMode.allowsGlobalShortcuts else { return }
         AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
+    }
+
+    func requestInputMonitoringPermission() {
+        guard accessMode.allowsGlobalShortcuts else { return }
         _ = CGRequestListenEventAccess()
-        hotkeys.retry()
+        hotkeys.start()
+    }
+
+    func requestMicrophonePermission() async {
+        microphoneGranted = await recorder.requestPermission()
     }
 
     func requestScreenCapturePermission() {
+        guard accessMode.allowsScreenAwareDictation else { return }
         screenCaptureGranted = screenCapture.requestPermission()
     }
 
     func refreshScreenCapturePermission() {
         screenCaptureGranted = screenCapture.permissionGranted
     }
-
-    func retryShortcuts() { hotkeys.retry() }
 
     @discardableResult
     func setShortcut(_ shortcut: GlobalShortcut, for purpose: ShortcutPurpose) -> Bool {
@@ -819,8 +878,13 @@ final class AppModel: ObservableObject {
     }
 
     func requestOnboardingPermissions() async {
-        requestAccessibilityPermission()
-        microphoneGranted = await recorder.requestPermission()
+        if accessMode.allowsGlobalShortcuts {
+            requestAccessibilityPermission()
+            requestInputMonitoringPermission()
+        } else {
+            hotkeys.stop()
+        }
+        await requestMicrophonePermission()
         refreshPermissionState()
     }
 
@@ -829,7 +893,17 @@ final class AppModel: ObservableObject {
         inputMonitoringGranted = CGPreflightListenEventAccess()
         microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         screenCaptureGranted = screenCapture.permissionGranted
-        hotkeys.retry()
+        if accessMode.allowsGlobalShortcuts {
+            hotkeys.retry()
+        } else {
+            hotkeys.stop()
+        }
+    }
+
+    var onboardingPermissionsReady: Bool {
+        guard microphoneGranted else { return false }
+        guard accessMode.allowsGlobalShortcuts else { return true }
+        return accessibilityGranted && inputMonitoringGranted && shortcutsAvailable
     }
 
     func configureOnboardingProvider(kind: ProviderKind, apiKey: String, accountID: String?) async throws {
@@ -876,17 +950,12 @@ final class AppModel: ObservableObject {
     func finishOnboarding() {
         onboardingComplete = true
         defaults.set(true, forKey: "onboardingComplete")
+        reconcileHotkeyLifecycle()
     }
 
     private func setOfflineFallbackEnabled(_ enabled: Bool) {
         offlineFallbackEnabled = enabled
         defaults.set(enabled, forKey: "offlineFallbackEnabled")
-    }
-
-    func setHUDPositionMode(_ mode: HUDPositionMode) {
-        hudPositionMode = mode
-        defaults.set(mode.rawValue, forKey: "hudPositionMode")
-        hud.setPositionMode(mode)
     }
 
     func setCleanupCustomInstruction(_ instruction: String) {
@@ -1014,26 +1083,35 @@ final class AppModel: ObservableObject {
         lastError = nil
         if offlineMode {
             switch insertion {
-            case .privateClipboard: hud.show(.success("Offline · Saved"))
-            case .copiedToClipboard: hud.show(.success("Offline · Copied"))
-            case .pasteCommandPosted: hud.show(.success("Offline · Paste sent"))
+            case .privateClipboard: hud.show(.success(.offlineSaved))
+            case .copiedToClipboard: hud.show(.success(.offlineCopied))
+            case .pasteCommandPosted: hud.show(.success(.offlinePasteSent))
             }
             return
         }
         switch insertion {
         case .privateClipboard: hud.show(.clipboard)
-        case .copiedToClipboard: hud.show(.success("Copied — press ⌘V"))
-        case .pasteCommandPosted: hud.show(.success("Paste sent"))
+        case .copiedToClipboard: hud.show(.success(.copied))
+        case .pasteCommandPosted: hud.show(.success(.pasteSent))
         }
     }
 
     private func requestRequiredPermissions() {
+        guard accessMode.allowsGlobalShortcuts else { return }
         // Clipboard delivery works without Accessibility, so the user who
         // chose it is not re-prompted on every launch.
         if insertionMode == .insert, !AXIsProcessTrusted() {
             AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
         }
         if !CGPreflightListenEventAccess() { _ = CGRequestListenEventAccess() }
+    }
+
+    private func reconcileHotkeyLifecycle() {
+        if accessMode.allowsGlobalShortcuts, onboardingComplete {
+            hotkeys.start()
+        } else {
+            hotkeys.stop()
+        }
     }
 
     private func applyHotkeyState(_ state: HotkeyLifecycleState) {

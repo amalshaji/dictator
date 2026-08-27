@@ -185,7 +185,7 @@ final class OfflineDictationTests: XCTestCase {
 
     func testOfflineHUDStateIsExplicitThroughCompletion() {
         XCTAssertEqual(HUDPhase.offline.label, "Offline mode")
-        XCTAssertEqual(HUDPhase.success("Offline · Paste sent").label, "Offline · Paste sent")
+        XCTAssertEqual(HUDPhase.success(.offlinePasteSent).label, "Offline · Paste sent")
     }
 
     private func makeCoordinator(

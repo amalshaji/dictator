@@ -106,7 +106,9 @@ struct ClipboardView: View {
             VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Dictator clipboard").font(.dictatorDisplay(30))
-                    Text("Transcripts land here when no editable field is focused. \(model.pasteLatestShortcut.displayName) pastes the latest item.")
+                    Text(model.accessMode == .leastPrivileges
+                        ? "Every transcript is copied to the system clipboard. Press ⌘V to paste it wherever you want."
+                        : "Transcripts land here when no editable field is focused. \(model.pasteLatestShortcut.displayName) pastes the latest item.")
                         .font(.dictatorBody(14)).foregroundStyle(DictatorDesign.inkSecondary)
                 }
                 if model.data.clipboard.isEmpty {
@@ -147,7 +149,31 @@ struct SettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 26) {
                 Text("Settings").font(.dictatorDisplay(30))
-                settingsSection("Shortcuts") {
+                settingsSection("Access mode") {
+                    HStack(spacing: 20) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(model.accessMode.title).font(.dictatorBody(14, weight: .medium))
+                            Text(model.accessMode.detail)
+                                .font(.dictatorBody(11)).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        DictatorSegmentedSwitcher(
+                            label: "Access mode",
+                            options: [
+                                .init(title: "Least privileges", icon: "hand.raised"),
+                                .init(title: "System-wide", icon: "keyboard"),
+                            ],
+                            selection: Binding(
+                                get: { model.accessMode == .leastPrivileges ? 0 : 1 },
+                                set: { model.setAccessMode($0 == 0 ? .leastPrivileges : .systemWide) }
+                            )
+                        )
+                    }
+                    .padding(.vertical, 10)
+                    .overlay(alignment: .bottom) { Divider() }
+                }
+                if model.accessMode == .systemWide {
+                    settingsSection("Shortcuts") {
                     shortcutRow(
                         "Dictate",
                         detail: model.dictateActivationMode == .hold
@@ -197,8 +223,34 @@ struct SettingsView: View {
                             // horizontal padding to sit the label on the same edge.
                             .padding(.trailing, -8)
                     }.padding(.top, 5)
+                    }
                 }
                 settingsSection("Permissions") {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Microphone").font(.dictatorBody(14, weight: .medium))
+                            Text("Used only while you explicitly record audio for transcription.")
+                                .font(.dictatorBody(12)).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button(model.microphoneGranted ? "Granted" : "Allow microphone") {
+                            Task { await model.requestMicrophonePermission() }
+                        }
+                        .disabled(model.microphoneGranted).dictatorButton(.secondary)
+                    }.padding(.vertical, 11)
+                    if model.accessMode == .leastPrivileges {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Result delivery").font(.dictatorBody(14, weight: .medium))
+                                Text("Transcripts are copied to the clipboard. Press ⌘V to paste; no administrative settings are needed.")
+                                    .font(.dictatorBody(12)).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Label("Clipboard", systemImage: "doc.on.clipboard")
+                                .font(.dictatorBody(12, weight: .semibold))
+                                .foregroundStyle(DictatorDesign.signalInk)
+                        }.padding(.vertical, 11)
+                    } else {
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Result delivery").font(.dictatorBody(14, weight: .medium))
@@ -239,8 +291,7 @@ struct SettingsView: View {
                         }
                         Spacer()
                         Button(model.shortcutsAvailable ? "Working" : "Grant & retry") {
-                            model.requestAccessibilityPermission()
-                            model.retryShortcuts()
+                            model.requestInputMonitoringPermission()
                         }
                         .disabled(model.shortcutsAvailable).dictatorButton(.secondary)
                     }.padding(.vertical, 11)
@@ -255,6 +306,7 @@ struct SettingsView: View {
                         }
                         .disabled(model.screenCaptureGranted).dictatorButton(.secondary)
                     }.padding(.vertical, 11)
+                    }
                 }
                 settingsSection("Data handling") {
                     settingRow("Transcript retention", detail: "30 days")
@@ -293,21 +345,13 @@ struct SettingsView: View {
                     HStack(spacing: 20) {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Status pill").font(.dictatorBody(14, weight: .medium))
-                            Text("Choose where status appears in every dictation mode.")
+                            Text("Appears below the notch or menu bar on the display where recording starts.")
                                 .font(.dictatorBody(11)).foregroundStyle(.secondary)
                         }
                         Spacer()
-                        DictatorSegmentedSwitcher(
-                            label: "Status pill position",
-                            options: [
-                                .init(title: "Notch", icon: "rectangle.topthird.inset.filled"),
-                                .init(title: "Next to pointer", icon: "cursorarrow"),
-                            ],
-                            selection: Binding(
-                                get: { model.hudPositionMode == .notch ? 0 : 1 },
-                                set: { model.setHUDPositionMode($0 == 0 ? .notch : .pointer) }
-                            )
-                        )
+                        Label("Top center", systemImage: "rectangle.topthird.inset.filled")
+                            .font(.dictatorBody(12, weight: .semibold))
+                            .foregroundStyle(DictatorDesign.signalInk)
                     }
                     .padding(.vertical, 10)
                     .overlay(alignment: .bottom) { Divider() }
