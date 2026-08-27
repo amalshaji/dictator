@@ -73,6 +73,64 @@ final class AppBehaviorTests: XCTestCase {
         XCTAssertTrue(AppAccessMode.leastPrivileges.deliversToClipboard)
     }
 
+    func testLeastPrivilegesOnboardingRequiresOnlyMicrophone() throws {
+        let suiteName = "ai.dictator.tests.onboarding-permissions-least.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = AppModel(
+            keychain: HUDTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor()
+        )
+        model.microphoneGranted = true
+        model.accessibilityGranted = false
+        model.inputMonitoringGranted = false
+        model.shortcutsAvailable = false
+
+        XCTAssertTrue(model.onboardingPermissionsReady)
+    }
+
+    func testSystemWideOnboardingRequiresPrivilegedPermissions() throws {
+        let suiteName = "ai.dictator.tests.onboarding-permissions-system-wide.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = AppModel(
+            keychain: HUDTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor()
+        )
+        model.setAccessMode(.systemWide)
+        model.microphoneGranted = true
+        model.accessibilityGranted = false
+        model.inputMonitoringGranted = false
+        model.shortcutsAvailable = false
+
+        XCTAssertFalse(model.onboardingPermissionsReady)
+
+        model.accessibilityGranted = true
+        model.inputMonitoringGranted = true
+        model.shortcutsAvailable = true
+        XCTAssertTrue(model.onboardingPermissionsReady)
+    }
+
+    func testLeastPrivilegesCannotEnableFocusedInsertion() throws {
+        let suiteName = "ai.dictator.tests.least-privilege-insertion.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = AppModel(
+            keychain: HUDTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults,
+            connectivity: HUDTestConnectivityMonitor()
+        )
+
+        model.setInsertionMode(.insert)
+
+        XCTAssertEqual(model.insertionMode, .clipboard)
+    }
+
     func testWindowChromeBackgroundMatchesSidebarAndContentAtEveryWidth() throws {
         for width in [920.0, 1_400.0] {
             let image = WindowChromeStyle.backgroundImage(windowWidth: width)

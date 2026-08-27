@@ -54,6 +54,7 @@ final class HotkeyLifecycleController {
     private let scheduleRecovery: RecoveryScheduler
     private var observers = [NSObjectProtocol]()
     private var recovery: AnyCancellable?
+    private var isEnabled = false
 
     init(
         monitor: any HotkeyMonitoring = HotkeyMonitor(),
@@ -86,11 +87,20 @@ final class HotkeyLifecycleController {
     }
 
     func start() {
+        isEnabled = true
         recoverIfNeeded()
     }
 
     func retry() {
+        guard isEnabled else { return }
         recoverIfNeeded()
+    }
+
+    func stop() {
+        isEnabled = false
+        cancelRecovery()
+        monitor.stop()
+        state = .stopped
     }
 
     private func observeWorkspaceLifecycle() {
@@ -120,6 +130,10 @@ final class HotkeyLifecycleController {
     private func recoverAfterWake() {
         cancelRecovery()
         onDidWake?()
+        guard isEnabled else {
+            state = .stopped
+            return
+        }
         monitor.stop()
         state = .stopped
         recoverIfNeeded()
@@ -131,6 +145,7 @@ final class HotkeyLifecycleController {
         } else if recovery == nil {
             recovery = scheduleRecovery { [weak self] in
                 guard let self else { return true }
+                guard self.isEnabled else { return true }
                 guard self.startMonitor() else { return false }
                 self.recovery = nil
                 return true

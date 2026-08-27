@@ -67,38 +67,47 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 20) {
             WaveMarkLarge()
             Text("Speak. Release. Keep moving.").font(.dictatorDisplay(38))
-            Text("Dictator turns the Fn key into dictation anywhere on your Mac. Use Apple On-Device on supported Macs, or connect the cloud speech provider you prefer.")
+            Text("Record from the menu bar and turn speech into text on your clipboard. You can optionally enable system-wide shortcuts and direct insertion later.")
                 .font(.dictatorBody(16)).foregroundStyle(.secondary).lineSpacing(4)
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var permissions: some View {
         VStack(alignment: .leading, spacing: 22) {
-            Text("Three permissions, one purpose").font(.dictatorDisplay(30))
-            Text("macOS controls these individually. Grant them, then return here—Dictator detects changes automatically.")
+            Text("Choose how Dictator works").font(.dictatorDisplay(30))
+            Text("Least privilege needs only your microphone. System-wide mode adds shortcuts and direct insertion, which macOS protects with additional permissions.")
                 .font(.dictatorBody(14)).foregroundStyle(.secondary)
-            permissionRow("Microphone", detail: "Records only while Fn is held", granted: model.microphoneGranted)
-            permissionRow(
-                "Accessibility",
-                detail: model.insertionMode == .clipboard
-                    ? "Skipped—results are copied to the clipboard instead"
-                    : "Inserts text into the focused field",
-                granted: model.accessibilityGranted || model.insertionMode == .clipboard
-            )
-            permissionRow("Input Monitoring", detail: "Detects Fn while another app is active", granted: model.inputMonitoringGranted)
-            Button("Grant permissions") { Task { await model.requestOnboardingPermissions() } }
-                .dictatorButton()
-            if !model.accessibilityGranted {
-                Button(model.insertionMode == .clipboard
-                    ? "Use Accessibility insertion instead"
-                    : "Can't grant Accessibility? Copy results to the clipboard instead") {
-                    model.setInsertionMode(model.insertionMode == .clipboard ? .insert : .clipboard)
-                }
-                .dictatorButton(.ghost)
-                .padding(.leading, -8)
+            HStack(spacing: 10) {
+                accessModeChoice(
+                    .leastPrivileges,
+                    title: "Use with least privileges",
+                    detail: "Menu bar recording · Clipboard delivery",
+                    recommended: true
+                )
+                accessModeChoice(
+                    .systemWide,
+                    title: "Use system-wide",
+                    detail: "Global shortcuts · Direct insertion",
+                    recommended: false
+                )
             }
+            permissionRow(
+                "Microphone",
+                detail: "Records only after you start a dictation",
+                granted: model.microphoneGranted
+            )
+            if model.accessMode == .systemWide {
+                permissionRow("Accessibility", detail: "Inserts text into the focused field", granted: model.accessibilityGranted)
+                permissionRow("Input Monitoring", detail: "Detects shortcuts while another app is active", granted: model.inputMonitoringGranted)
+            }
+            Button(model.accessMode == .leastPrivileges ? "Allow microphone" : "Grant permissions") {
+                Task { await model.requestOnboardingPermissions() }
+            }
+                .dictatorButton()
             if !permissionsReady {
-                Text("If System Settings opens, enable Dictator in the displayed list and come back here.")
+                Text(model.accessMode == .leastPrivileges
+                    ? "Allow microphone access to continue. No other macOS permission is required."
+                    : "If System Settings opens, enable Dictator in the displayed list and come back here.")
                     .font(.dictatorBody(12)).foregroundStyle(.orange)
             }
         }.frame(maxWidth: .infinity, alignment: .leading)
@@ -213,7 +222,9 @@ struct OnboardingView: View {
                         .font(.dictatorUtility(10)).foregroundStyle(.green)
                 }
             }
-            Text("Click the scratchpad, hold Fn while speaking, then release. This uses the transcription option you just selected.")
+            Text(model.accessMode == .leastPrivileges
+                ? "Start recording from the menu bar, stop from the pill, then press Command-V here to paste the copied transcript."
+                : "Click the scratchpad, use your dictation shortcut while speaking, then stop. This uses the transcription option you just selected.")
                 .font(.dictatorBody(14)).foregroundStyle(.secondary).lineSpacing(3)
 
             HStack(spacing: 8) {
@@ -239,7 +250,9 @@ struct OnboardingView: View {
             }
 
             HStack {
-                Label("Hold \(model.dictateShortcut.displayName) to speak", systemImage: "waveform")
+                Label(model.accessMode == .leastPrivileges
+                    ? "Record from the menu bar · Paste with ⌘V"
+                    : model.dictateInstruction, systemImage: "waveform")
                     .font(.dictatorBody(12, weight: .semibold)).foregroundStyle(DictatorDesign.signalInk)
                 Spacer()
                 if !scratchText.isEmpty {
@@ -288,10 +301,34 @@ struct OnboardingView: View {
     }
 
     private var permissionsReady: Bool {
-        model.microphoneGranted
-            && (model.accessibilityGranted || model.insertionMode == .clipboard)
-            && model.inputMonitoringGranted
-            && model.shortcutsAvailable
+        model.onboardingPermissionsReady
+    }
+
+    private func accessModeChoice(
+        _ mode: AppAccessMode,
+        title: String,
+        detail: String,
+        recommended: Bool
+    ) -> some View {
+        let selected = model.accessMode == mode
+        return Button { model.setAccessMode(mode) } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    Spacer()
+                    if recommended {
+                        Text("RECOMMENDED").font(.dictatorUtility(8)).foregroundStyle(DictatorDesign.focus)
+                    }
+                }
+                Text(title).font(.dictatorBody(13, weight: .semibold))
+                Text(detail).font(.dictatorBody(11)).foregroundStyle(.secondary)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, minHeight: 92, alignment: .leading)
+            .background(selected ? DictatorDesign.orchid.opacity(0.24) : DictatorDesign.control, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(selected ? DictatorDesign.focus : DictatorDesign.border, lineWidth: selected ? 1.5 : 1))
+        }
+        .buttonStyle(.plain)
     }
 
     private func permissionRow(_ title: String, detail: String, granted: Bool) -> some View {

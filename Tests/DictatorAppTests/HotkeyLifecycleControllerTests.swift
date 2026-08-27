@@ -7,6 +7,47 @@ import XCTest
 
 @MainActor
 final class HotkeyLifecycleControllerTests: XCTestCase {
+    func testStopPreventsWakeFromRestartingHotkeys() {
+        let notifications = NotificationCenter()
+        let hotkey = TestHotkeyMonitor(isRunning: false)
+        let controller = HotkeyLifecycleController(
+            monitor: hotkey,
+            notificationCenter: notifications
+        )
+        controller.start()
+        XCTAssertEqual(hotkey.startCount, 1)
+
+        controller.stop()
+        notifications.post(
+            name: NSWorkspace.didWakeNotification,
+            object: NSWorkspace.shared
+        )
+
+        XCTAssertEqual(hotkey.startCount, 1)
+        XCTAssertFalse(hotkey.isRunning)
+        XCTAssertEqual(controller.state, .stopped)
+    }
+
+    func testLeastPrivilegesPermissionRequestStartsNoHotkeyMonitor() async throws {
+        let hotkey = TestHotkeyMonitor(isRunning: false)
+        let controller = HotkeyLifecycleController(
+            monitor: hotkey,
+            notificationCenter: NotificationCenter()
+        )
+        let recorder = LifecycleAudioRecorder()
+        let (model, defaults, suiteName) = try makeModel(
+            hotkeys: controller,
+            recorder: recorder
+        )
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        await model.requestOnboardingPermissions()
+
+        XCTAssertEqual(recorder.permissionRequestCount, 1)
+        XCTAssertEqual(hotkey.startCount, 0)
+        XCTAssertEqual(controller.state, .stopped)
+    }
+
     func testEachWakeRecreatesHotkeyMonitorEvenWhenItReportsRunning() {
         let notifications = NotificationCenter()
         let hotkey = TestHotkeyMonitor(isRunning: true)
@@ -14,6 +55,7 @@ final class HotkeyLifecycleControllerTests: XCTestCase {
             monitor: hotkey,
             notificationCenter: notifications
         )
+        controller.start()
 
         for _ in 0..<2 {
             notifications.post(
@@ -66,6 +108,7 @@ final class HotkeyLifecycleControllerTests: XCTestCase {
             recorder: recorder
         )
         defer { defaults.removePersistentDomain(forName: suiteName) }
+        controller.start()
         XCTAssertEqual(model.phase, .idle)
 
         notifications.post(
@@ -87,6 +130,7 @@ final class HotkeyLifecycleControllerTests: XCTestCase {
             monitor: hotkey,
             notificationCenter: notifications
         )
+        controller.start()
         var pasteCount = 0
         var clipboardCount = 0
         controller.onPasteLatest = { pasteCount += 1 }
@@ -125,6 +169,7 @@ final class HotkeyLifecycleControllerTests: XCTestCase {
             notificationCenter: notifications,
             scheduleRecovery: scheduler.schedule
         )
+        controller.start()
 
         notifications.post(
             name: NSWorkspace.didWakeNotification,
@@ -296,8 +341,12 @@ private final class TestHotkeyMonitor: HotkeyMonitoring {
 private final class LifecycleAudioRecorder: AudioRecording {
     var onLevel: (@Sendable (Double) -> Void)?
     private(set) var cancelCount = 0
+    private(set) var permissionRequestCount = 0
 
-    func requestPermission() async -> Bool { true }
+    func requestPermission() async -> Bool {
+        permissionRequestCount += 1
+        return true
+    }
     func start() async throws {}
     func stop() async -> RecordedAudio {
         RecordedAudio(wavData: Data(), duration: 0)
