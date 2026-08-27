@@ -195,40 +195,6 @@ final class AppBehaviorTests: XCTestCase {
         }
     }
 
-    func testHUDPositionModeDefaultsToNotch() throws {
-        let suiteName = "ai.dictator.tests.hud-position.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        defaults.set("unsupported", forKey: "hudPositionMode")
-
-        let model = AppModel(
-            keychain: HUDTestCredentialStore(),
-            appleSpeechProvider: nil,
-            defaults: defaults,
-            connectivity: HUDTestConnectivityMonitor()
-        )
-
-        XCTAssertEqual(model.hudPositionMode, .notch)
-        XCTAssertEqual(defaults.string(forKey: "hudPositionMode"), HUDPositionMode.notch.rawValue)
-    }
-
-    func testAppModelMigratesPointerHUDModeToNotch() throws {
-        let suiteName = "ai.dictator.tests.hud-position-restoration.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        defaults.set("pointer", forKey: "hudPositionMode")
-
-        let model = AppModel(
-            keychain: HUDTestCredentialStore(),
-            appleSpeechProvider: nil,
-            defaults: defaults,
-            connectivity: HUDTestConnectivityMonitor()
-        )
-
-        XCTAssertEqual(model.hudPositionMode, .notch)
-        XCTAssertEqual(defaults.string(forKey: "hudPositionMode"), HUDPositionMode.notch.rawValue)
-    }
-
     func testCleanupCustomInstructionPersistsAndRestores() throws {
         let suiteName = "ai.dictator.tests.cleanup-instruction.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -278,23 +244,6 @@ final class AppBehaviorTests: XCTestCase {
             connectivity: HUDTestConnectivityMonitor()
         )
         XCTAssertEqual(restored.cleanupCustomInstruction.count, limit)
-    }
-
-    func testAppModelMigratesBottomHUDModeToNotch() throws {
-        let suiteName = "ai.dictator.tests.hud-position-migration.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        defaults.set("bottom", forKey: "hudPositionMode")
-
-        let model = AppModel(
-            keychain: HUDTestCredentialStore(),
-            appleSpeechProvider: nil,
-            defaults: defaults,
-            connectivity: HUDTestConnectivityMonitor()
-        )
-
-        XCTAssertEqual(model.hudPositionMode, .notch)
-        XCTAssertEqual(defaults.string(forKey: "hudPositionMode"), HUDPositionMode.notch.rawValue)
     }
 
     func testSavedProviderCredentialsAreReportedAsConfiguredBeforeExpansion() throws {
@@ -1092,6 +1041,23 @@ final class AppBehaviorTests: XCTestCase {
             ),
             NSRect(x: 694, y: 908, width: 124, height: 32)
         )
+    }
+
+    func testHUDSuccessPresentationDefinesItsOwnLabelAndWidth() {
+        let presentations: [(HUDSuccess, String, CGFloat)] = [
+            (.cancelled, "Cancelled", 124),
+            (.copied, "Copied — press ⌘V", 196),
+            (.pasteSent, "Paste sent", 124),
+            (.offlineSaved, "Offline · Saved", 174),
+            (.offlineCopied, "Offline · Copied", 196),
+            (.offlinePasteSent, "Offline · Paste sent", 174),
+        ]
+
+        for (success, label, width) in presentations {
+            XCTAssertEqual(success.label, label)
+            XCTAssertEqual(success.panelWidth, width)
+            XCTAssertEqual(HUDPhase.success(success).label, label)
+        }
     }
 
     func testScreenWindowMatcherChoosesTheUniqueFocusedWindow() {

@@ -49,7 +49,6 @@ final class AppModel: ObservableObject {
     @Published var cleanupEnabled = false { didSet { defaults.set(cleanupEnabled, forKey: "cleanupEnabled") } }
     @Published var screenAwareEnabled = false { didSet { defaults.set(screenAwareEnabled, forKey: "screenAwareEnabled") } }
     @Published private(set) var offlineFallbackEnabled = false
-    @Published private(set) var hudPositionMode: HUDPositionMode = .notch
     @Published var lastError: String?
     @Published var requestedDestination: String?
     @Published var shortcutsAvailable = false
@@ -175,11 +174,6 @@ final class AppModel: ObservableObject {
             accessMode = onboardingComplete ? .systemWide : .leastPrivileges
             defaults.set(accessMode.rawValue, forKey: "accessMode")
         }
-        let savedHUDPosition = defaults.string(forKey: "hudPositionMode")
-        hudPositionMode = HUDPositionMode(rawValue: savedHUDPosition ?? "") ?? .notch
-        if savedHUDPosition != hudPositionMode.rawValue {
-            defaults.set(hudPositionMode.rawValue, forKey: "hudPositionMode")
-        }
         selectedStyleID = defaults.string(forKey: "selectedStyleID").flatMap(UUID.init(uuidString:))
         cleanupCustomInstruction = String((defaults.string(forKey: "cleanupCustomInstruction") ?? "").prefix(Self.maximumCleanupInstructionLength))
         let systemWideInsertionMode = InsertionMode(
@@ -195,7 +189,6 @@ final class AppModel: ObservableObject {
         ) ?? .hold
         pasteLatestShortcut = loadShortcut(forKey: "shortcut.pasteLatest", fallback: .pasteLatest)
         openClipboardShortcut = loadShortcut(forKey: "shortcut.openClipboard", fallback: .openClipboard)
-        hud.setPositionMode(hudPositionMode)
         defaults.set(selectedSTT.rawValue, forKey: "selectedSTT")
         if selectedSTT != .appleSpeech { defaults.set(selectedSTT.rawValue, forKey: "lastCloudSTT") }
         appleSpeechObservation = appleSpeech.objectWillChange.sink { [weak self] _ in
@@ -423,7 +416,7 @@ final class AppModel: ObservableObject {
         activeRunID = nil
         phase = .idle
         recorder.cancel()
-        hud.show(.success("Cancelled"))
+        hud.show(.success(.cancelled))
         hud.hideAfterDelay()
     }
 
@@ -748,7 +741,7 @@ final class AppModel: ObservableObject {
         guard let item else { return }
         if insertionMode == .clipboard {
             if clipboardWriter.write(item.text) {
-                hud.show(.success("Copied — press ⌘V"))
+                hud.show(.success(.copied))
                 hud.hideAfterDelay()
             } else {
                 showError("Could not update the system clipboard")
@@ -756,7 +749,7 @@ final class AppModel: ObservableObject {
             return
         }
         if await inserter.pasteIntoFrontmostApp(item.text) {
-            hud.show(.success("Paste sent"))
+            hud.show(.success(.pasteSent))
             hud.hideAfterDelay()
         } else {
             showError("Could not post the paste shortcut")
@@ -965,12 +958,6 @@ final class AppModel: ObservableObject {
         defaults.set(enabled, forKey: "offlineFallbackEnabled")
     }
 
-    func setHUDPositionMode(_ mode: HUDPositionMode) {
-        hudPositionMode = mode
-        defaults.set(mode.rawValue, forKey: "hudPositionMode")
-        hud.setPositionMode(mode)
-    }
-
     func setCleanupCustomInstruction(_ instruction: String) {
         let bounded = String(instruction.prefix(Self.maximumCleanupInstructionLength))
         cleanupCustomInstruction = bounded
@@ -1096,16 +1083,16 @@ final class AppModel: ObservableObject {
         lastError = nil
         if offlineMode {
             switch insertion {
-            case .privateClipboard: hud.show(.success("Offline · Saved"))
-            case .copiedToClipboard: hud.show(.success("Offline · Copied"))
-            case .pasteCommandPosted: hud.show(.success("Offline · Paste sent"))
+            case .privateClipboard: hud.show(.success(.offlineSaved))
+            case .copiedToClipboard: hud.show(.success(.offlineCopied))
+            case .pasteCommandPosted: hud.show(.success(.offlinePasteSent))
             }
             return
         }
         switch insertion {
         case .privateClipboard: hud.show(.clipboard)
-        case .copiedToClipboard: hud.show(.success("Copied — press ⌘V"))
-        case .pasteCommandPosted: hud.show(.success("Paste sent"))
+        case .copiedToClipboard: hud.show(.success(.copied))
+        case .pasteCommandPosted: hud.show(.success(.pasteSent))
         }
     }
 

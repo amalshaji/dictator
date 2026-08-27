@@ -2,10 +2,32 @@ import AppKit
 import QuartzCore
 import SwiftUI
 
-enum HUDPositionMode: String, CaseIterable, Identifiable {
-    case notch
+enum HUDSuccess: Equatable {
+    case cancelled
+    case copied
+    case pasteSent
+    case offlineSaved
+    case offlineCopied
+    case offlinePasteSent
 
-    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .cancelled: "Cancelled"
+        case .copied: "Copied — press ⌘V"
+        case .pasteSent: "Paste sent"
+        case .offlineSaved: "Offline · Saved"
+        case .offlineCopied: "Offline · Copied"
+        case .offlinePasteSent: "Offline · Paste sent"
+        }
+    }
+
+    var panelWidth: CGFloat {
+        switch self {
+        case .cancelled, .pasteSent: 124
+        case .offlineSaved, .offlinePasteSent: 174
+        case .copied, .offlineCopied: 196
+        }
+    }
 }
 
 enum HUDPhase: Equatable {
@@ -15,7 +37,7 @@ enum HUDPhase: Equatable {
     case offline
     case cleaning
     case understanding
-    case success(String)
+    case success(HUDSuccess)
     case clipboard
     case error(String)
 
@@ -27,7 +49,7 @@ enum HUDPhase: Equatable {
         case .offline: "Offline mode"
         case .cleaning: "Cleaning up"
         case .understanding: "Understanding screen"
-        case .success(let value): value
+        case .success(let success): success.label
         case .clipboard: "Saved to Dictator clipboard"
         case .error(let value): value
         }
@@ -125,10 +147,6 @@ final class FloatingPanelController {
         resize(for: model.phase, animated: false)
     }
 
-    func setPositionMode(_ mode: HUDPositionMode) {
-        // The recording pill has one stable location below the notch or menu bar.
-    }
-
     func show(_ phase: HUDPhase) {
         hideTask?.cancel()
         guard phase != .idle else {
@@ -189,8 +207,8 @@ final class FloatingPanelController {
             NSSize(width: 148, height: 34)
         case .transcribing, .offline, .cleaning, .understanding:
             NSSize(width: 124, height: 32)
-        case .success(let message):
-            NSSize(width: message.contains("Copied") ? 196 : (message.hasPrefix("Offline") ? 174 : 124), height: 32)
+        case .success(let success):
+            NSSize(width: success.panelWidth, height: 32)
         case .clipboard: NSSize(width: 190, height: 34)
         case .error: NSSize(width: 260, height: 36)
         }
