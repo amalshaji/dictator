@@ -194,6 +194,9 @@ final class CleanupProcessingTests: XCTestCase {
         XCTAssertTrue(prompt.contains(#""greater than or equal to" as ">=""#))
         XCTAssertTrue(prompt.contains(#""greater there or equal to""#))
         XCTAssertTrue(prompt.contains("ordered or numbered list"))
+        XCTAssertTrue(prompt.contains("dictates a numbered enumeration of items"))
+        XCTAssertTrue(prompt.contains("consecutive numbers starting at 1"))
+        XCTAssertTrue(prompt.contains("Never turn numbers used in ordinary prose into a list"))
         XCTAssertTrue(prompt.contains("one item per line"))
         XCTAssertTrue(prompt.contains("Preserve every item and its order"))
     }
@@ -293,6 +296,30 @@ final class CleanupProcessingTests: XCTestCase {
         1. Connect the microphone.
         2. Start dictating.
         3. Review the transcript.
+        """
+        let response = try responseJSON([
+            "intent": "transcription",
+            "text": text,
+            "withdrawnSpans": [],
+            "correctionSpans": [],
+            "renderedSpans": []
+        ])
+
+        let output = try CleanupResponseDecoder.decode(response, for: .init(input: .transcription(raw)))
+
+        XCTAssertEqual(output, .transcription(text))
+    }
+
+    func testResponseDecoderAcceptsDictatedNumberedEnumerationFormatting() throws {
+        let raw = "These are the options available: 1 mini statement, 2 detailed statement, 3 closed deposit, 4 deposit certificate, 5 nominee, 6 form 121."
+        let text = """
+        These are the options available:
+        1. Mini statement
+        2. Detailed statement
+        3. Closed deposit
+        4. Deposit certificate
+        5. Nominee
+        6. Form 121
         """
         let response = try responseJSON([
             "intent": "transcription",
