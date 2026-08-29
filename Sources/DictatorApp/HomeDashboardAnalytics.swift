@@ -39,6 +39,17 @@ enum HomeDashboardAnalytics {
         }
     }
 
+    static func formattedSpokenTime(_ seconds: TimeInterval) -> String {
+        let total = Int(seconds.rounded())
+        let hours = total / 3_600
+        let minutes = (total % 3_600) / 60
+        if hours > 0 {
+            return minutes > 0 ? "\(hours) hr \(minutes) min" : "\(hours) hr"
+        }
+        if minutes > 0 { return "\(minutes) min" }
+        return "\(total) sec"
+    }
+
     static func estimatedMinutesSaved(from statistics: LifetimeStatistics) -> Double {
         let typingMinutes = Double(statistics.words) / assumedTypingWordsPerMinute
         let speechMinutes = statistics.audioSeconds / 60
