@@ -87,6 +87,15 @@ final class HomePresentationTests: XCTestCase {
         XCTAssertEqual(activity.dropFirst().dropLast().map(\.speechMinutes), Array(repeating: 0, count: 5))
     }
 
+    func testHomeFormattedSpokenTimeUsesLargestNaturalUnits() {
+        XCTAssertEqual(HomeDashboardAnalytics.formattedSpokenTime(0), "0 sec")
+        XCTAssertEqual(HomeDashboardAnalytics.formattedSpokenTime(45), "45 sec")
+        XCTAssertEqual(HomeDashboardAnalytics.formattedSpokenTime(60), "1 min")
+        XCTAssertEqual(HomeDashboardAnalytics.formattedSpokenTime(752), "12 min")
+        XCTAssertEqual(HomeDashboardAnalytics.formattedSpokenTime(7_200), "2 hr")
+        XCTAssertEqual(HomeDashboardAnalytics.formattedSpokenTime(4 * 3_600 + 23 * 60), "4 hr 23 min")
+    }
+
     func testHomeEstimatedMinutesSavedComparesSpeechWithFortyWPMTyping() {
         let words = Array(repeating: "word", count: 240).joined(separator: " ")
         let transcript = TranscriptRecord(

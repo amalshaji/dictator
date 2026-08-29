@@ -19,10 +19,8 @@ struct HomeDashboardOverview: View {
                 averageWPM: averageWPM,
                 averageLatency: averageLatency
             )
-            HStack(spacing: 14) {
-                HomeTimeSavedCard(statistics: lifetimeStatistics)
-                HomeTopApplicationCard(usage: topApplication)
-            }
+            HomeAllTimeCard(statistics: lifetimeStatistics)
+            HomeTopApplicationCard(usage: topApplication)
         }
     }
 }
@@ -108,44 +106,67 @@ private struct HomeActivityChart: View {
     }
 }
 
-private struct HomeTimeSavedCard: View {
+private struct HomeAllTimeCard: View {
     let statistics: LifetimeStatistics
 
     var body: some View {
-        HStack(spacing: 14) {
-            Image(systemName: "clock.arrow.2.circlepath")
-                .font(.system(size: 18, weight: .medium))
-                .foregroundStyle(DictatorDesign.signalInk)
-                .frame(width: 38, height: 38)
-                .background(DictatorDesign.orchid.opacity(0.58), in: Circle())
+        HStack(alignment: .center, spacing: 20) {
             VStack(alignment: .leading, spacing: 3) {
                 Text("ALL TIME")
                     .font(.dictatorUtility(9))
-                    .foregroundStyle(DictatorDesign.muted)
-                Text(displayValue)
-                    .font(.dictatorDisplay(22))
+                    .foregroundStyle(DictatorDesign.orchid)
+                Text(spokenTime)
+                    .font(.dictatorDisplay(26))
                     .monospacedDigit()
-                Text("estimated typing time saved · 40 wpm baseline")
+                    .foregroundStyle(DictatorDesign.paper)
+                Text("time spoken")
                     .font(.dictatorBody(10.5))
-                    .foregroundStyle(DictatorDesign.muted)
+                    .foregroundStyle(DictatorDesign.paper.opacity(0.55))
             }
-            Spacer(minLength: 0)
+            Spacer(minLength: 18)
+            metric(value: statistics.dictations.formatted(), label: "dictations")
+            metricDivider
+            metric(value: statistics.words.formatted(), label: "words")
+            metricDivider
+            metric(value: statistics.averageWPM.map(String.init) ?? "—", label: "avg wpm")
+            metricDivider
+            metric(value: timeSaved, label: "typing saved")
         }
         .frame(maxWidth: .infinity, minHeight: 78, alignment: .leading)
-        .padding(16)
-        .background(DictatorDesign.control, in: RoundedRectangle(cornerRadius: DictatorDesign.cornerRadius, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: DictatorDesign.cornerRadius, style: .continuous)
-                .stroke(DictatorDesign.border.opacity(0.82))
-        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+        .background(DictatorDesign.signalInk, in: RoundedRectangle(cornerRadius: DictatorDesign.cornerRadius, style: .continuous))
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Estimated typing time saved, \(displayValue), based on 40 words per minute")
+        .accessibilityLabel(
+            "All time: \(spokenTime) spoken across \(statistics.dictations) dictations and \(statistics.words) words"
+                + ", estimated typing time saved \(timeSaved), based on 40 words per minute"
+        )
     }
 
-    private var displayValue: String {
-        let minutes = HomeDashboardAnalytics.estimatedMinutesSaved(from: statistics)
-        if minutes > 0, minutes < 1 { return "<1 min" }
-        return "\(Int(minutes.rounded())) min"
+    private var spokenTime: String {
+        HomeDashboardAnalytics.formattedSpokenTime(statistics.audioSeconds)
+    }
+
+    private var timeSaved: String {
+        HomeDashboardAnalytics.formattedSpokenTime(HomeDashboardAnalytics.estimatedMinutesSaved(from: statistics) * 60)
+    }
+
+    private var metricDivider: some View {
+        Rectangle()
+            .fill(DictatorDesign.paper.opacity(0.14))
+            .frame(width: 1, height: 32)
+    }
+
+    private func metric(value: String, label: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(value)
+                .font(.dictatorDisplay(17))
+                .monospacedDigit()
+                .foregroundStyle(DictatorDesign.paper)
+            Text(label)
+                .font(.dictatorUtility(9))
+                .foregroundStyle(DictatorDesign.paper.opacity(0.55))
+        }
     }
 }
 
