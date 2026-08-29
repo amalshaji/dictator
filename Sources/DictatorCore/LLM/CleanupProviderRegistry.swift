@@ -4,6 +4,7 @@ public enum CleanupProviderRegistry {
     public static func provider(for kind: ProviderKind) -> (any CleanupLLMProvider)? {
         switch kind {
         case .groq: OpenAICompatibleCleanupProvider.groq()
+        case .cerebras: OpenAICompatibleCleanupProvider.cerebras()
         case .cloudflare: CloudflareCleanupProvider()
         case .gemini: GeminiCleanupProvider()
         case .xAI: OpenAICompatibleCleanupProvider.xAI()
@@ -14,8 +15,9 @@ public enum CleanupProviderRegistry {
     }
 
     public static var metadata: [ProviderMetadata] {
-        [OpenAICompatibleCleanupProvider.groq().metadata, CloudflareCleanupProvider().metadata,
-         GeminiCleanupProvider().metadata, OpenAICompatibleCleanupProvider.xAI().metadata,
-         OpenAICompatibleCleanupProvider.openRouter().metadata, OpenAICompatibleCleanupProvider.custom().metadata]
+        [OpenAICompatibleCleanupProvider.groq().metadata, OpenAICompatibleCleanupProvider.cerebras().metadata,
+         CloudflareCleanupProvider().metadata, GeminiCleanupProvider().metadata,
+         OpenAICompatibleCleanupProvider.xAI().metadata, OpenAICompatibleCleanupProvider.openRouter().metadata,
+         OpenAICompatibleCleanupProvider.custom().metadata]
     }
 }

@@ -11,6 +11,13 @@ public protocol CleanupLLMProvider: Sendable {
     func validate(credentials: ProviderCredentials) async throws
     func listModels(credentials: ProviderCredentials) async throws -> [String]
     func clean(request: CleanupRequest, model: String, credentials: ProviderCredentials) async throws -> CleanupResult
+    /// Opens the HTTPS connection ahead of the cleanup request so the
+    /// DNS/TCP/TLS handshake overlaps recording instead of adding latency.
+    func warmUpConnection(credentials: ProviderCredentials) async
+}
+
+public extension CleanupLLMProvider {
+    func warmUpConnection(credentials: ProviderCredentials) async {}
 }
 
 public protocol ScreenAwareLLMProvider: Sendable {

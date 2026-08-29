@@ -138,6 +138,59 @@ final class ProviderContractTests: XCTestCase {
         }
     }
 
+    func testCerebrasCleanupDefaultsToDocumentedModel() throws {
+        let provider = try XCTUnwrap(CleanupProviderRegistry.provider(for: .cerebras))
+
+        XCTAssertEqual(provider.metadata.displayName, "Cerebras")
+        XCTAssertEqual(provider.metadata.defaultModel, "gpt-oss-120b")
+    }
+
+    func testOpenAICompatibleCleanupRequestsLowReasoningEffortForGptOssModels() async throws {
+        let response = #"{"choices":[{"message":{"content":"{\"intent\":\"transcription\",\"text\":\"Hi.\"}"}}]}"#
+        let transport = MockTransport { request in
+            XCTAssertEqual(request.url?.host, "api.cerebras.ai")
+            let body = try XCTUnwrap(request.httpBody.flatMap { String(data: $0, encoding: .utf8) })
+            XCTAssertTrue(body.contains(#""reasoning_effort":"low""#))
+            return (response.data(using: .utf8)!, 200)
+        }
+
+        _ = try await OpenAICompatibleCleanupProvider.cerebras(transport: transport).clean(
+            request: .init(input: .transcription("Hi.")),
+            model: "gpt-oss-120b",
+            credentials: .init(apiKey: "test")
+        )
+    }
+
+    func testOpenAICompatibleCleanupOmitsReasoningEffortForOtherModels() async throws {
+        let response = #"{"choices":[{"message":{"content":"{\"intent\":\"transcription\",\"text\":\"Hi.\"}"}}]}"#
+        let transport = MockTransport { request in
+            let body = try XCTUnwrap(request.httpBody.flatMap { String(data: $0, encoding: .utf8) })
+            XCTAssertFalse(body.contains("reasoning_effort"))
+            return (response.data(using: .utf8)!, 200)
+        }
+
+        _ = try await OpenAICompatibleCleanupProvider.groq(transport: transport).clean(
+            request: .init(input: .transcription("Hi.")),
+            model: "llama-3.3-70b-versatile",
+            credentials: .init(apiKey: "test")
+        )
+    }
+
+    func testWarmUpConnectionSendsHeadRequestToBaseURL() async {
+        let warmed = expectation(description: "warm-up request sent")
+        let transport = MockTransport { request in
+            XCTAssertEqual(request.httpMethod, "HEAD")
+            XCTAssertEqual(request.url?.host, "api.cerebras.ai")
+            warmed.fulfill()
+            return (Data(), 404)
+        }
+
+        await OpenAICompatibleCleanupProvider.cerebras(transport: transport)
+            .warmUpConnection(credentials: .init(apiKey: "test"))
+
+        await fulfillment(of: [warmed], timeout: 1)
+    }
+
     func testOpenAICompatibleScreenAwareSendsImageAndParsesInsertResult() async throws {
         let response = #"{"choices":[{"message":{"content":"{\"intent\":\"insert\",\"text\":\"Thanks — Tuesday works for me.\"}"}}],"usage":{"prompt_tokens":42,"completion_tokens":8}}"#
         let transport = MockTransport { request in

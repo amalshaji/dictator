@@ -9,6 +9,7 @@ public enum ProviderKind: String, Codable, CaseIterable, Sendable {
     case assemblyAI = "assemblyai"
     case gladia
     case gemini
+    case cerebras
     case openRouter = "openrouter"
     case openAICompatible = "openai-compatible"
 }

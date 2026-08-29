@@ -28,7 +28,7 @@ On macOS 26 and later, Apple On-Device is available without an API key and is th
 
 Cloud speech-to-text adapters remain available: Groq, Cloudflare Workers AI, xAI, Deepgram, AssemblyAI, and Gladia. On macOS 14 and 15, these are the available speech providers and Groq remains the new-install default.
 
-Optional cleanup adapters use BYOK credentials: Groq, Cloudflare Workers AI, Gemini, xAI, OpenRouter, and any OpenAI-compatible endpoint. Cleanup sends transcript text, never audio. When speech-to-text and cleanup use the same provider, Dictator reuses that provider credential unless you configure a separate cleanup credential. Keys are stored in macOS Keychain. Transcript history, vocabulary, styles, snippets, and private-clipboard data stay in local Application Support storage. Cloud recordings are sent to the selected speech provider and are not stored by Dictator after processing; the provider's own data-handling policy applies.
+Optional cleanup adapters use BYOK credentials: Groq, Cerebras, Cloudflare Workers AI, Gemini, xAI, OpenRouter, and any OpenAI-compatible endpoint. Cleanup sends transcript text, never audio. When speech-to-text and cleanup use the same provider, Dictator reuses that provider credential unless you configure a separate cleanup credential. Keys are stored in macOS Keychain. Transcript history, vocabulary, styles, snippets, and private-clipboard data stay in local Application Support storage. Cloud recordings are sent to the selected speech provider and are not stored by Dictator after processing; the provider's own data-handling policy applies.
 
 Screen Aware is a separate, disabled-by-default mode for composing or transforming text from the focused window. Hold `Control-Option`, speak an instruction, and release; Dictator transcribes the audio, captures only the focused window, and sends the image, spoken instruction, app and window details, and selected text when available to your selected vision-capable provider. Screen Aware supports Groq, Gemini, xAI, OpenRouter, and OpenAI-compatible endpoints. Focused-window images are never saved by Dictator; the selected provider's own data-handling policy applies.
 
@@ -76,6 +76,7 @@ ASSEMBLYAI_API_KEY=
 GLADIA_API_KEY=
 GEMINI_API_KEY=
 OPENROUTER_API_KEY=
+CEREBRAS_API_KEY=
 ```
 
 Least-privilege mode needs only Microphone permission. System-wide mode additionally needs Accessibility and Input Monitoring for global shortcuts, focus detection, and insertion. Screen Recording permission is required only for Screen Aware.
