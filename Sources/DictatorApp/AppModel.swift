@@ -293,12 +293,22 @@ final class AppModel: ObservableObject {
         guard phase == .listening, activeRunID == runID else { return }
         do {
             try await recorder.start()
+            warmUpCleanupConnection()
         } catch {
             guard activeRunID == runID else { return }
             activeRun = nil
             activeRunID = nil
             phase = .idle
             showError(error.localizedDescription)
+        }
+    }
+
+    /// Opens the cleanup provider's HTTPS connection while the user is still
+    /// speaking so the TLS handshake never adds to post-dictation latency.
+    private func warmUpCleanupConnection() {
+        guard let cleanup = try? cleanupConfiguration() else { return }
+        Task.detached(priority: .utility) {
+            await cleanup.provider.warmUpConnection(credentials: cleanup.credentials)
         }
     }
 

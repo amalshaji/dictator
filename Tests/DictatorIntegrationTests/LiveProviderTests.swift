@@ -62,7 +62,8 @@ final class LiveProviderTests: XCTestCase {
             (.cloudflare, .init(apiKey: environment["CLOUDFLARE_API_TOKEN"] ?? "", accountID: environment["CLOUDFLARE_ACCOUNT_ID"])),
             (.gemini, .init(apiKey: environment["GEMINI_API_KEY"] ?? "")),
             (.xAI, .init(apiKey: environment["XAI_API_KEY"] ?? "")),
-            (.openRouter, .init(apiKey: environment["OPENROUTER_API_KEY"] ?? ""))
+            (.openRouter, .init(apiKey: environment["OPENROUTER_API_KEY"] ?? "")),
+            (.cerebras, .init(apiKey: environment["CEREBRAS_API_KEY"] ?? ""))
         ]
         var tested = 0
         for (kind, credentials) in configurations where !credentials.apiKey.isEmpty {

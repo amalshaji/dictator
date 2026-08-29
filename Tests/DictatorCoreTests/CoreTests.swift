@@ -32,7 +32,7 @@ final class CoreTests: XCTestCase {
 
     func testRegistriesExposeAllPlannedProviders() {
         XCTAssertEqual(Set(ProviderRegistry.sttMetadata.map(\.kind)), Set([.groq, .cloudflare, .xAI, .deepgram, .assemblyAI, .gladia]))
-        XCTAssertEqual(Set(CleanupProviderRegistry.metadata.map(\.kind)), Set([.groq, .cloudflare, .gemini, .xAI, .openRouter, .openAICompatible]))
+        XCTAssertEqual(Set(CleanupProviderRegistry.metadata.map(\.kind)), Set([.groq, .cerebras, .cloudflare, .gemini, .xAI, .openRouter, .openAICompatible]))
         XCTAssertEqual(Set(ScreenAwareProviderRegistry.metadata.map(\.kind)), Set([.groq, .gemini, .xAI, .openRouter, .openAICompatible]))
         XCTAssertNil(ScreenAwareProviderRegistry.provider(for: .cloudflare))
     }

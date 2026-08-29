@@ -63,6 +63,14 @@ struct OpenAICompatibleClient: Sendable {
         return try JSONDecoder().decode(ModelsResponse.self, from: data).data.map(\.id).sorted()
     }
 
+    func warmUpConnection(credentials: ProviderCredentials) async {
+        guard let url = try? resolvedBaseURL(credentials) else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "HEAD"
+        request.timeoutInterval = 5
+        _ = try? await transport.data(for: request)
+    }
+
     func complete(
         model: String,
         messages: [OpenAIChatMessage],
@@ -78,7 +86,8 @@ struct OpenAICompatibleClient: Sendable {
             model: model,
             messages: messages,
             temperature: 0,
-            responseFormat: .init(type: "json_object")
+            responseFormat: .init(type: "json_object"),
+            reasoningEffort: Self.reasoningEffort(kind: kind, model: model)
         ))
         let (data, response) = try await transport.data(for: request)
         try HTTPHelpers.requireSuccess(data: data, response: response)
@@ -91,6 +100,14 @@ struct OpenAICompatibleClient: Sendable {
             providerReportedCostUSD: payload.usage?.cost.map { Decimal($0) },
             latency: seconds(since: started)
         )
+    }
+
+    /// gpt-oss models reason at "medium" effort by default, spending hundreds of
+    /// hidden tokens before the JSON answer. "low" cuts that without hurting a
+    /// short rewrite task. Only Groq and Cerebras document this parameter.
+    private static func reasoningEffort(kind: ProviderKind, model: String) -> String? {
+        guard kind == .groq || kind == .cerebras else { return nil }
+        return model.contains("gpt-oss") ? "low" : nil
     }
 
     private func resolvedBaseURL(_ credentials: ProviderCredentials) throws -> URL {
@@ -114,10 +131,12 @@ struct OpenAICompatibleClient: Sendable {
         let messages: [OpenAIChatMessage]
         let temperature: Double
         let responseFormat: ResponseFormat
+        let reasoningEffort: String?
 
         private enum CodingKeys: String, CodingKey {
             case model, messages, temperature
             case responseFormat = "response_format"
+            case reasoningEffort = "reasoning_effort"
         }
 
         struct ResponseFormat: Encodable { let type: String }

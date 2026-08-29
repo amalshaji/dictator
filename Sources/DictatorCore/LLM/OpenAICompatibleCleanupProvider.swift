@@ -25,6 +25,10 @@ public struct OpenAICompatibleCleanupProvider: CleanupLLMProvider {
         try await client.validate(credentials: credentials)
     }
 
+    public func warmUpConnection(credentials: ProviderCredentials) async {
+        await client.warmUpConnection(credentials: credentials)
+    }
+
     public func listModels(credentials: ProviderCredentials) async throws -> [String] {
         try await client.listModels(credentials: credentials)
     }
@@ -54,6 +58,10 @@ public struct OpenAICompatibleCleanupProvider: CleanupLLMProvider {
 public extension OpenAICompatibleCleanupProvider {
     static func groq(transport: any HTTPTransport = URLSessionTransport()) -> Self {
         .init(kind: .groq, displayName: "Groq", defaultModel: "openai/gpt-oss-20b", defaultBaseURL: URL(string: "https://api.groq.com/openai/v1")!, transport: transport)
+    }
+
+    static func cerebras(transport: any HTTPTransport = URLSessionTransport()) -> Self {
+        .init(kind: .cerebras, displayName: "Cerebras", defaultModel: "gpt-oss-120b", defaultBaseURL: URL(string: "https://api.cerebras.ai/v1")!, transport: transport)
     }
 
     static func xAI(transport: any HTTPTransport = URLSessionTransport()) -> Self {
