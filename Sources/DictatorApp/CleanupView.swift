@@ -102,7 +102,7 @@ struct CleanupView: View {
                     Button { model.selectStyle(style.id) } label: {
                         styleRow(title: style.name, detail: style.instruction, selected: model.selectedStyleID == style.id)
                     }.buttonStyle(.plain).disabled(!style.isEnabled).opacity(style.isEnabled ? 1 : 0.5)
-                    Toggle("", isOn: Binding(get: { style.isEnabled }, set: { model.setStyleEnabled(style.id, $0) })).labelsHidden().toggleStyle(.switch).tint(DictatorDesign.signalInk)
+                    Toggle("", isOn: Binding(get: { style.isEnabled }, set: { model.setStyleEnabled(style.id, $0) })).labelsHidden().toggleStyle(.switch).controlSize(.small).tint(DictatorDesign.signalInk)
                         .accessibilityLabel("Enable \(style.name)")
                     Button("Edit") { editingRule = .style(style) }.dictatorButton(.ghost)
                     Button(role: .destructive) { model.deleteStyle(style.id) } label: { Image(systemName: "trash") }.dictatorButton(.destructive)
