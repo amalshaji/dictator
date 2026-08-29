@@ -6,6 +6,22 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>Dictator</title>
         <item>
+            <title>0.7.0-canary.132</title>
+            <pubDate>Sat, 29 Aug 2026 08:48:01 +0000</pubDate>
+            <link>https://github.com/amalshaji/dictator</link>
+            <sparkle:channel>canary</sparkle:channel>
+            <sparkle:version>132</sparkle:version>
+            <sparkle:shortVersionString>0.7.0-canary.132</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[## What's Changed
+* Use small switches in list rows by @amalshaji in https://github.com/amalshaji/dictator/pull/72
+
+
+**Full Changelog**: https://github.com/amalshaji/dictator/compare/canary-0.7.0-b130-d75a5ba6...canary-0.7.0-b132-55a8d39f
+]]></description>
+            <enclosure url="https://github.com/amalshaji/dictator/releases/download/canary-0.7.0-b132-55a8d39f/Dictator-0.7.0-canary.132-universal.dmg" length="6156554" type="application/octet-stream" sparkle:edSignature="pVFkdOg2/jstuMYzCf1jgAPE6BrT+YrfAaoD6IUvQJLCOZmCh3Giil00FXDJTSUNHqI2yq9ITTtLe6SVRyKABQ=="/>
+        </item>
+        <item>
             <title>0.7.0-canary.130</title>
             <pubDate>Sat, 29 Aug 2026 08:33:51 +0000</pubDate>
             <link>https://github.com/amalshaji/dictator</link>
@@ -36,22 +52,6 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
 **Full Changelog**: https://github.com/amalshaji/dictator/compare/canary-0.7.0-b126-3ad34d4b...canary-0.7.0-b128-6e254600
 ]]></description>
             <enclosure url="https://github.com/amalshaji/dictator/releases/download/canary-0.7.0-b128-6e254600/Dictator-0.7.0-canary.128-universal.dmg" length="6141409" type="application/octet-stream" sparkle:edSignature="Ikt3FcOsgHSToeyn1lA8KgjtOFP7uSgz00Ku95quXMu4lpuy9UPkB/UnJLn5UMEeYUl3vBthUS3DvuZkzCEwAQ=="/>
-        </item>
-        <item>
-            <title>0.7.0-canary.126</title>
-            <pubDate>Sat, 29 Aug 2026 08:10:34 +0000</pubDate>
-            <link>https://github.com/amalshaji/dictator</link>
-            <sparkle:channel>canary</sparkle:channel>
-            <sparkle:version>126</sparkle:version>
-            <sparkle:shortVersionString>0.7.0-canary.126</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="markdown"><![CDATA[## What's Changed
-* Format dictated numbered enumerations as lists by @amalshaji in https://github.com/amalshaji/dictator/pull/69
-
-
-**Full Changelog**: https://github.com/amalshaji/dictator/compare/canary-0.7.0-b124-51246eca...canary-0.7.0-b126-3ad34d4b
-]]></description>
-            <enclosure url="https://github.com/amalshaji/dictator/releases/download/canary-0.7.0-b126-3ad34d4b/Dictator-0.7.0-canary.126-universal.dmg" length="6144787" type="application/octet-stream" sparkle:edSignature="jpHNKPQXJbuIc7fdeMrlDvAW0YUaZPHTmcGj2fqDf900aK3FvEVqJpS2F/rvcefpiSgceky1OmlhukJ5UiQwAg=="/>
         </item>
         <item>
             <title>0.7.0</title>
@@ -129,6 +129,6 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: 6f5P9oduVA77EW3n1ddjFLds/Bmu+Mj8IV/ZlgcsmxJ7ahnKw5gMgFkNst8pAW4nlZ9TlpXfo0/SJrZE8mkiBA==
-length: 9480
+edSignature: O/nzujmkw8wgu4vWVMPVC4AU2YLrKNf6synxGzuTNsKEKpfnmI7ZSVmsPNAj6zv17bN4mKNxq/hIWycy6GjgBg==
+length: 9465
 -->
