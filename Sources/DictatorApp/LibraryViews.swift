@@ -34,7 +34,7 @@ struct VocabularyView: View {
                             if index > 0 { Divider().padding(.leading, 14) }
                             HStack {
                                 Toggle("", isOn: Binding(get: { entry.isEnabled }, set: { model.setVocabularyEnabled(entry.id, $0) }))
-                                    .labelsHidden().toggleStyle(.switch).tint(DictatorDesign.signalInk)
+                                    .labelsHidden().toggleStyle(.switch).controlSize(.small).tint(DictatorDesign.signalInk)
                                     .accessibilityLabel("Enable \(entry.value)")
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(entry.value).font(.dictatorBody(14, weight: .medium))

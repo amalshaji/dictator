@@ -26,7 +26,7 @@ struct SnippetsView: View {
                             if index > 0 { Divider().padding(.leading, 52) }
                             HStack(alignment: .top) {
                                 snippetRow(snippet)
-                                Toggle("", isOn: Binding(get: { snippet.isEnabled }, set: { model.setSnippetEnabled(snippet.id, $0) })).labelsHidden().toggleStyle(.switch).tint(DictatorDesign.signalInk)
+                                Toggle("", isOn: Binding(get: { snippet.isEnabled }, set: { model.setSnippetEnabled(snippet.id, $0) })).labelsHidden().toggleStyle(.switch).controlSize(.small).tint(DictatorDesign.signalInk)
                                     .accessibilityLabel("Enable \(snippet.trigger)")
                                 Button("Edit") { editingRule = .snippet(snippet) }.dictatorButton(.ghost)
                                 Button(role: .destructive) { model.deleteSnippet(snippet.id) } label: { Image(systemName: "trash") }.dictatorButton(.destructive)
