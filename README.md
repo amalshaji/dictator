@@ -108,3 +108,9 @@ Configure a protected GitHub environment named `release` with:
 Do not add required reviewers to the `release` environment if canaries must remain fully automatic.
 
 Configure GitHub Pages to use **GitHub Actions** as its source. The publishing workflow keeps the signed feed on `gh-pages` for rollback and deploys that exact feed to `https://amalshaji.github.io/dictator/appcast.xml` with GitHub's Pages deployment action. Keep encrypted offline backups of both signing keys; losing the Sparkle private key prevents trusted key rotation for existing installations, while losing the Developer ID private key requires replacing the certificate and CI secret before another release can be signed.
+
+## FAQ
+
+### Does Dictator send my audio to the cloud?
+
+It depends on the speech provider you select. Apple On-Device keeps transcription audio on your Mac after any required model download. If you select Groq, Cloudflare, xAI, Deepgram, AssemblyAI, or Gladia, Dictator sends your audio to that provider for transcription. Optional cleanup sends transcript text—not audio. Dictator does not control or guarantee third-party retention or other data-handling practices; the selected cloud provider's own policies apply.
