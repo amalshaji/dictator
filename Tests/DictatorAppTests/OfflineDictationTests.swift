@@ -112,6 +112,35 @@ final class OfflineDictationTests: XCTestCase {
         XCTAssertTrue(appleSpeech.state.readiness.isReady)
     }
 
+    func testPrimaryAppleProviderRefreshesReadinessAfterFailedTranscription() async throws {
+        let provider = FailingAppleSpeechProvider()
+        let appleSpeech = AppleSpeechCoordinator(
+            provider: provider,
+            selectedLocaleIdentifier: "fr_FR",
+            persistSelection: { _ in }
+        )
+        await appleSpeech.refresh()
+        XCTAssertTrue(appleSpeech.state.readiness.isReady)
+        let coordinator = TranscriptionCoordinator(
+            keychain: EmptyCredentialStore(),
+            appleSpeech: appleSpeech,
+            connectivity: StaticConnectivityMonitor(state: .online)
+        )
+
+        do {
+            _ = try await coordinator.transcribe(
+                audio: audio,
+                selectedProvider: .appleSpeech,
+                selectedModel: nil,
+                fallbackEnabled: false,
+                vocabulary: []
+            )
+            XCTFail("Expected transcription failure to propagate")
+        } catch {}
+
+        XCTAssertFalse(appleSpeech.state.readiness.isReady)
+    }
+
     func testAppleOnboardingFailureDoesNotPartiallyEnableFallback() async throws {
         let suiteName = "ai.dictator.tests.offline.atomic.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -374,5 +403,32 @@ private actor RecoveringAppleSpeechProvider: LocalSpeechTranscribing {
             model: AppleTranscriptionEngine.speechTranscriber.rawValue,
             latency: 0
         )
+    }
+}
+
+private actor FailingAppleSpeechProvider: LocalSpeechTranscribing {
+    private let locale = AppleSpeechLocale(identifier: "fr_FR", engine: .speechTranscriber)
+    private var readinessCheckCount = 0
+
+    func availableLocales() async -> [AppleSpeechLocale] { [locale] }
+
+    func readiness(for localeIdentifier: String) async -> AppleSpeechReadiness {
+        readinessCheckCount += 1
+        return readinessCheckCount == 1 ? .ready(locale) : .downloadRequired(locale)
+    }
+
+    func installAssets(
+        for localeIdentifier: String,
+        progress: @escaping @Sendable (Double) -> Void
+    ) async throws -> AppleSpeechReadiness {
+        .ready(locale)
+    }
+
+    func transcribe(
+        audio: RecordedAudio,
+        localeIdentifier: String,
+        vocabulary: [VocabularyEntry]
+    ) async throws -> TranscriptionResult {
+        throw ProviderError.invalidConfiguration("boom")
     }
 }

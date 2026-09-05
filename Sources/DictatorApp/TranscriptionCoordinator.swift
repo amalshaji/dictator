@@ -75,8 +75,15 @@ final class TranscriptionCoordinator: TranscriptionCoordinating {
             let mode = currentMode
             onModeChange(mode)
             if !appleSpeech.state.readiness.isReady { await appleSpeech.refresh() }
-            let result = try await appleSpeech.transcribe(audio: audio, vocabulary: vocabulary)
-            return .init(result: result, mode: mode)
+            do {
+                let result = try await appleSpeech.transcribe(audio: audio, vocabulary: vocabulary)
+                return .init(result: result, mode: mode)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                await appleSpeech.refresh()
+                throw error
+            }
         }
 
         if fallbackEnabled, connectivity.state == .offline {
