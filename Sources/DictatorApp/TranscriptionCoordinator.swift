@@ -78,6 +78,8 @@ final class TranscriptionCoordinator: TranscriptionCoordinating {
             do {
                 let result = try await appleSpeech.transcribe(audio: audio, vocabulary: vocabulary)
                 return .init(result: result, mode: mode)
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
                 await appleSpeech.refresh()
                 throw error
