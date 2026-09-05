@@ -107,6 +107,89 @@ final class AppleSpeechTranscriberTests: XCTestCase {
         }
     }
 
+    func testReadinessIsReadyWhenAssetStatusLiesButAnalyzerCanRun() async {
+        let runtime = FakeAppleSpeechRuntime(
+            statuses: [.speechTranscriber: .supported, .dictationTranscriber: .supported],
+            analyzable: [.speechTranscriber: true]
+        )
+
+        let readiness = await AppleSpeechTranscriber(runtime: runtime).readiness(for: "en_US")
+
+        XCTAssertEqual(readiness, .ready(.init(identifier: "en_US", engine: .speechTranscriber)))
+    }
+
+    func testInstallationReportsReadyWhenStatusNeverRegistersButAnalyzerCanRun() async throws {
+        let progress = ProgressRecorder()
+        let runtime = FakeAppleSpeechRuntime(
+            statuses: [.speechTranscriber: .supported],
+            installUpdatesStatus: false,
+            analyzable: [.speechTranscriber: false],
+            installMakesAnalyzable: true
+        )
+
+        let readiness = try await AppleSpeechTranscriber(runtime: runtime).installAssets(for: "en_US") { value in
+            progress.append(value)
+        }
+
+        XCTAssertEqual(readiness, .ready(.init(identifier: "en_US", engine: .speechTranscriber)))
+        XCTAssertTrue(progress.values.contains(1))
+    }
+
+    func testReadinessRescueReservesLocale() async {
+        let runtime = FakeAppleSpeechRuntime(
+            statuses: [.speechTranscriber: .supported],
+            analyzable: [.speechTranscriber: true]
+        )
+
+        let readiness = await AppleSpeechTranscriber(runtime: runtime).readiness(for: "en_US")
+
+        XCTAssertEqual(readiness, .ready(.init(identifier: "en_US", engine: .speechTranscriber)))
+        let reservedLocales = await runtime.reservedLocales
+        XCTAssertEqual(reservedLocales, [.init(identifier: "en_US", engine: .speechTranscriber)])
+    }
+
+    func testReadinessDoesNotRescueWhileDownloading() async {
+        let runtime = FakeAppleSpeechRuntime(
+            statuses: [.speechTranscriber: .downloading],
+            analyzable: [.speechTranscriber: true]
+        )
+
+        let readiness = await AppleSpeechTranscriber(runtime: runtime).readiness(for: "en_US")
+
+        XCTAssertEqual(readiness, .downloadRequired(.init(identifier: "en_US", engine: .speechTranscriber)))
+        let reservedLocales = await runtime.reservedLocales
+        XCTAssertTrue(reservedLocales.isEmpty)
+    }
+
+    func testReadinessStillRequiresDownloadWhenAnalyzerCannotRun() async {
+        let runtime = FakeAppleSpeechRuntime(
+            statuses: [.speechTranscriber: .supported],
+            analyzable: [.speechTranscriber: false]
+        )
+
+        let readiness = await AppleSpeechTranscriber(runtime: runtime).readiness(for: "en_US")
+
+        XCTAssertEqual(readiness, .downloadRequired(.init(identifier: "en_US", engine: .speechTranscriber)))
+    }
+
+    func testTranscriptionProceedsWhenAssetStatusLiesButAnalyzerCanRun() async throws {
+        let runtime = FakeAppleSpeechRuntime(
+            statuses: [.speechTranscriber: .supported],
+            segments: [.speechTranscriber: [.init(text: "recovered", isFinal: true)]],
+            analyzable: [.speechTranscriber: true]
+        )
+
+        let result = try await AppleSpeechTranscriber(runtime: runtime).transcribe(
+            audio: audio,
+            localeIdentifier: "en_US",
+            vocabulary: []
+        )
+
+        XCTAssertEqual(result.text, "recovered")
+        let engines = await runtime.transcribedEngines
+        XCTAssertEqual(engines, [.speechTranscriber])
+    }
+
     func testOnlyFinalSegmentsAreCombinedInOrder() async throws {
         let runtime = FakeAppleSpeechRuntime(
             statuses: [.speechTranscriber: .installed],
@@ -178,18 +261,25 @@ private actor FakeAppleSpeechRuntime: AppleSpeechRuntime {
     private let segments: [AppleTranscriptionEngine: [AppleSpeechSegment]]
     private let transcriptionDelay: Duration?
     private let installUpdatesStatus: Bool
+    private var analyzable: [AppleTranscriptionEngine: Bool]
+    private let installMakesAnalyzable: Bool
     private(set) var transcribedEngines: [AppleTranscriptionEngine] = []
+    private(set) var reservedLocales: [AppleSpeechLocale] = []
 
     init(
         statuses: [AppleTranscriptionEngine: AppleSpeechAssetStatus],
         segments: [AppleTranscriptionEngine: [AppleSpeechSegment]] = [:],
         transcriptionDelay: Duration? = nil,
-        installUpdatesStatus: Bool = true
+        installUpdatesStatus: Bool = true,
+        analyzable: [AppleTranscriptionEngine: Bool] = [:],
+        installMakesAnalyzable: Bool = false
     ) {
         self.statuses = statuses
         self.segments = segments
         self.transcriptionDelay = transcriptionDelay
         self.installUpdatesStatus = installUpdatesStatus
+        self.analyzable = analyzable
+        self.installMakesAnalyzable = installMakesAnalyzable
     }
 
     func supportedLocaleIdentifiers(for engine: AppleTranscriptionEngine) async -> [String] {
@@ -204,10 +294,19 @@ private actor FakeAppleSpeechRuntime: AppleSpeechRuntime {
         statuses[locale.engine] ?? .unsupported
     }
 
+    func canAnalyze(locale: AppleSpeechLocale) async -> Bool {
+        analyzable[locale.engine] ?? (statuses[locale.engine] == .installed)
+    }
+
+    func reserve(locale: AppleSpeechLocale) async {
+        reservedLocales.append(locale)
+    }
+
     func installAssets(for locale: AppleSpeechLocale, progress: @escaping @Sendable (Double) -> Void) async throws {
         progress(0)
         progress(0.5)
         if installUpdatesStatus { statuses[locale.engine] = .installed }
+        if installMakesAnalyzable { analyzable[locale.engine] = true }
         progress(1)
     }
 

@@ -34,6 +34,8 @@ protocol AppleSpeechRuntime: Sendable {
     func supportedLocaleIdentifiers(for engine: AppleTranscriptionEngine) async -> [String]
     func equivalentLocaleIdentifier(to identifier: String, for engine: AppleTranscriptionEngine) async -> String?
     func assetStatus(for locale: AppleSpeechLocale) async -> AppleSpeechAssetStatus
+    func canAnalyze(locale: AppleSpeechLocale) async -> Bool
+    func reserve(locale: AppleSpeechLocale) async
     func installAssets(for locale: AppleSpeechLocale, progress: @escaping @Sendable (Double) -> Void) async throws
     func transcribe(
         audio: RecordedAudio,
@@ -75,10 +77,11 @@ public actor AppleSpeechTranscriber: LocalSpeechTranscribing {
         }
         var downloadable: AppleSpeechLocale?
         for candidate in candidates {
-            switch await runtime.assetStatus(for: candidate) {
-            case .installed: return .ready(candidate)
-            case .supported, .downloading: downloadable = downloadable ?? candidate
+            let status = await runtime.assetStatus(for: candidate)
+            if await isUsable(candidate, status: status) { return .ready(candidate) }
+            switch status {
             case .unsupported: continue
+            default: downloadable = downloadable ?? candidate
             }
         }
         // Candidates only exist when an engine reports the locale as supported, so
@@ -98,7 +101,7 @@ public actor AppleSpeechTranscriber: LocalSpeechTranscribing {
         var statuses: [(AppleSpeechLocale, AppleSpeechAssetStatus)] = []
         for candidate in candidates {
             let status = await runtime.assetStatus(for: candidate)
-            if status == .installed {
+            if await isUsable(candidate, status: status) {
                 progress(1)
                 return .ready(candidate)
             }
@@ -112,7 +115,8 @@ public actor AppleSpeechTranscriber: LocalSpeechTranscribing {
         for (candidate, _) in ordered {
             do {
                 try await runtime.installAssets(for: candidate, progress: progress)
-                if case .installed = await runtime.assetStatus(for: candidate) {
+                let status = await runtime.assetStatus(for: candidate)
+                if await isUsable(candidate, status: status) {
                     return .ready(candidate)
                 }
             } catch is CancellationError {
@@ -137,7 +141,8 @@ public actor AppleSpeechTranscriber: LocalSpeechTranscribing {
         let started = ContinuousClock.now
         var lastError: Error?
         for candidate in candidates {
-            guard await runtime.assetStatus(for: candidate) == .installed else { continue }
+            let status = await runtime.assetStatus(for: candidate)
+            guard await isUsable(candidate, status: status) else { continue }
             do {
                 let segments = try await runtime.transcribe(audio: audio, locale: candidate, vocabulary: vocabulary)
                 let text = segments.filter(\.isFinal).map(\.text).joined()
@@ -158,6 +163,20 @@ public actor AppleSpeechTranscriber: LocalSpeechTranscribing {
         }
         if let lastError { throw lastError }
         throw ProviderError.invalidConfiguration("Download the selected Apple speech model before dictating.")
+    }
+
+    private func isUsable(_ candidate: AppleSpeechLocale, status: AppleSpeechAssetStatus) async -> Bool {
+        switch status {
+        case .installed: return true
+        case .downloading: return false
+        case .supported, .unsupported: break
+        }
+        guard await runtime.canAnalyze(locale: candidate) else { return false }
+        // Assets are on disk but the inventory lost track of them (lost reservation,
+        // or a dead inventory client after its XPC service was idle-exited). Reserve
+        // so the system keeps the assets; in the dead-client state this is a no-op.
+        await runtime.reserve(locale: candidate)
+        return true
     }
 
     private func candidates(for identifier: String) async -> [AppleSpeechLocale] {
@@ -273,6 +292,14 @@ private struct SystemAppleSpeechRuntime: AppleSpeechRuntime {
         case .unsupported: .unsupported
         @unknown default: .unsupported
         }
+    }
+
+    func canAnalyze(locale: AppleSpeechLocale) async -> Bool {
+        await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [module(for: locale)]) != nil
+    }
+
+    func reserve(locale: AppleSpeechLocale) async {
+        _ = try? await AssetInventory.reserve(locale: Locale(identifier: locale.identifier))
     }
 
     func installAssets(
