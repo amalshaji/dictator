@@ -10,18 +10,16 @@ public struct LifetimeStatistics: Codable, Equatable, Sendable {
     public init() {}
 
     public var averageWPM: Int? {
-        guard audioSeconds > 0 else { return nil }
-        return Int(Double(words) / audioSeconds * 60)
+        TranscriptMetrics.wordsPerMinute(words: words, seconds: audioSeconds)
     }
 
     public var averagePipelineLatency: TimeInterval? {
-        guard pipelineLatencySamples > 0 else { return nil }
-        return pipelineLatencySeconds / Double(pipelineLatencySamples)
+        TranscriptMetrics.averageLatency(totalSeconds: pipelineLatencySeconds, sampleCount: pipelineLatencySamples)
     }
 
     public mutating func record(_ transcript: TranscriptRecord) {
         dictations += 1
-        words += transcript.finalText.split(whereSeparator: \.isWhitespace).count
+        words += TranscriptMetrics.wordCount(in: transcript.finalText)
         audioSeconds += transcript.audioDuration
         if let pipelineLatency = transcript.pipelineLatency {
             pipelineLatencySeconds += pipelineLatency

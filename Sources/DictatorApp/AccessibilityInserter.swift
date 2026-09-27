@@ -61,7 +61,7 @@ enum InsertionResult: Equatable {
         case .pasteCommandPosted(.capturedField): "Paste command sent to captured field"
         case .pasteCommandPosted(.activeApplication): "Paste command sent to active application"
         case .copiedToClipboard: "Copied to the system clipboard"
-        case .privateClipboard(let reason): "Saved to private clipboard: \(reason)"
+        case .privateClipboard(let reason): "Copied to clipboard: \(reason)"
         }
     }
 }
@@ -77,7 +77,6 @@ enum InsertionMode: String {
 @MainActor
 protocol FocusedTargetInserting: AnyObject {
     func captureFocusedTarget(processIdentifier: pid_t?) -> FocusedTarget?
-    func captureFocusedWindow(for target: FocusedTarget) -> FocusedWindowSnapshot?
     func insert(_ insertion: TextInsertion, into target: FocusedTarget?) async -> InsertionResult
     func pasteIntoFrontmostApp(_ text: String) async -> Bool
 }
@@ -95,7 +94,43 @@ enum TargetCandidate {
     }
 }
 
+/// Raw Accessibility primitives used while walking the focused-element
+/// ancestor chain. Injectable so the walk's call count and outcome can be
+/// exercised deterministically in tests against a synthetic element graph,
+/// instead of live AXUIElements that require Accessibility trust.
+struct AccessibilityWalkPrimitives: @unchecked Sendable {
+    let copyAttribute: (AXUIElement, CFString) -> CFTypeRef?
+    let isAttributeSettable: (AXUIElement, CFString) -> Bool
+    let setMessagingTimeout: (AXUIElement, Float) -> Void
+
+    static let live = AccessibilityWalkPrimitives(
+        copyAttribute: { element, attribute in
+            var value: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success else { return nil }
+            return value
+        },
+        isAttributeSettable: { element, attribute in
+            var settable = DarwinBoolean(false)
+            guard AXUIElementIsAttributeSettable(element, attribute, &settable) == .success else { return false }
+            return settable.boolValue
+        },
+        setMessagingTimeout: { element, timeout in
+            AXUIElementSetMessagingTimeout(element, timeout)
+        }
+    )
+}
+
 struct AccessibilityTargetResolver {
+    /// Bounds a single AX round trip so a hung target app cannot block
+    /// dictation capture for anywhere near the 6s default messaging timeout.
+    static let messagingTimeout: Float = 0.5
+
+    private let primitives: AccessibilityWalkPrimitives
+
+    init(primitives: AccessibilityWalkPrimitives = .live) {
+        self.primitives = primitives
+    }
+
     func captureFocusedTarget(processIdentifier: pid_t? = nil) -> FocusedTarget? {
         let eventTarget = processIdentifier.flatMap(NSRunningApplication.init(processIdentifier:))
         guard let runningApplication = eventTarget ?? targetApplication() else { return nil }
@@ -107,8 +142,23 @@ struct AccessibilityTargetResolver {
         )
 
         let system = AXUIElementCreateSystemWide()
-        let elements = [focusedElement(in: system), focusedElement(in: application.element)].compactMap { $0 }
-        let candidates = elements.compactMap(candidate(from:))
+        primitives.setMessagingTimeout(system, Self.messagingTimeout)
+        primitives.setMessagingTimeout(application.element, Self.messagingTimeout)
+
+        // The system-wide and app-scoped focused elements are usually the
+        // same element, so only consult the app when the system-wide lookup
+        // comes back empty instead of always paying for both.
+        let systemFocused = focusedElement(in: system)
+        let appFocused = systemFocused == nil ? focusedElement(in: application.element) : nil
+
+        var seen: [AXUIElement] = []
+        let candidates: [TargetCandidate] = [systemFocused, appFocused]
+            .compactMap { $0 }
+            .compactMap { element -> TargetCandidate? in
+                guard !seen.contains(where: { CFEqual($0, element) }) else { return nil }
+                seen.append(element)
+                return candidate(from: element)
+            }
         return Self.resolve(application: application, candidates: candidates)
     }
 
@@ -162,10 +212,11 @@ struct AccessibilityTargetResolver {
     private func candidate(from element: AXUIElement) -> TargetCandidate? {
         var candidatePID: pid_t = 0
         guard AXUIElementGetPid(element, &candidatePID) == .success else { return nil }
-        if firstAncestor(from: element, matching: isSecure) != nil {
+        let ancestor = editableAncestor(from: element)
+        if ancestor.isSecure {
             return .secure(processIdentifier: candidatePID)
         }
-        guard let editableElement = firstAncestor(from: element, matching: isEditable) else {
+        guard let editableElement = ancestor.editable else {
             return .other(processIdentifier: candidatePID)
         }
         return .editable(
@@ -194,89 +245,38 @@ struct AccessibilityTargetResolver {
         return TextSelectionSnapshot(text: text, location: range.location, length: range.length)
     }
 
-    func focusedWindow(for target: FocusedTarget) -> FocusedWindowSnapshot? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(
-            target.application.element,
-            kAXFocusedWindowAttribute as CFString,
-            &value
-        ) == .success,
-        let window = axElement(value),
-        let frame = windowFrame(window)
-        else { return nil }
-
-        var titleValue: CFTypeRef?
-        _ = AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleValue)
-        return FocusedWindowSnapshot(
-            processIdentifier: target.application.processIdentifier,
-            applicationName: target.application.name,
-            bundleIdentifier: target.application.bundleIdentifier,
-            title: titleValue as? String,
-            frame: frame
-        )
-    }
-
-    private func windowFrame(_ window: AXUIElement) -> CGRect? {
-        var positionValue: CFTypeRef?
-        var sizeValue: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(window, kAXPositionAttribute as CFString, &positionValue) == .success,
-              AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &sizeValue) == .success,
-              let positionValue, let sizeValue,
-              CFGetTypeID(positionValue) == AXValueGetTypeID(),
-              CFGetTypeID(sizeValue) == AXValueGetTypeID()
-        else { return nil }
-        var point = CGPoint.zero
-        var size = CGSize.zero
-        guard AXValueGetValue(unsafeDowncast(positionValue, to: AXValue.self), .cgPoint, &point),
-              AXValueGetValue(unsafeDowncast(sizeValue, to: AXValue.self), .cgSize, &size),
-              size.width > 0, size.height > 0
-        else { return nil }
-        return CGRect(origin: point, size: size)
-    }
-
     private func focusedElement(in root: AXUIElement) -> AXUIElement? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(root, kAXFocusedUIElementAttribute as CFString, &value) == .success
-        else { return nil }
-        return axElement(value)
+        axElement(primitives.copyAttribute(root, kAXFocusedUIElementAttribute as CFString))
     }
 
-    private func firstAncestor(
-        from element: AXUIElement,
-        matching predicate: (AXUIElement) -> Bool
-    ) -> AXUIElement? {
+    /// Walks up to 8 ancestors from `element`, evaluating the secure-field
+    /// and editable predicates together at each hop instead of running two
+    /// separate ancestor walks. Stops as soon as an editable ancestor is
+    /// found; a secure match anywhere on the walked path still marks the
+    /// target as secure, even if the walk stops before reaching it.
+    private func editableAncestor(from element: AXUIElement) -> (isSecure: Bool, editable: AXUIElement?) {
         var current: AXUIElement? = element
+        var secureFound = false
         for _ in 0..<8 {
-            guard let candidate = current else { return nil }
-            if predicate(candidate) { return candidate }
-            var parentValue: CFTypeRef?
-            guard AXUIElementCopyAttributeValue(candidate, kAXParentAttribute as CFString, &parentValue) == .success,
-                  let parent = axElement(parentValue)
-            else { return nil }
+            guard let candidate = current else { break }
+            if isSecure(candidate) { secureFound = true }
+            if isEditable(candidate) { return (secureFound, candidate) }
+            guard let parent = axElement(primitives.copyAttribute(candidate, kAXParentAttribute as CFString))
+            else { break }
             current = parent
         }
-        return nil
+        return (secureFound, nil)
     }
 
     private func isEditable(_ element: AXUIElement) -> Bool {
-        var selectedTextSettable = DarwinBoolean(false)
-        if AXUIElementIsAttributeSettable(element, kAXSelectedTextAttribute as CFString, &selectedTextSettable) == .success,
-           selectedTextSettable.boolValue { return true }
-
-        var valueSettable = DarwinBoolean(false)
-        if AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &valueSettable) == .success,
-           valueSettable.boolValue { return true }
-
-        var roleValue: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleValue) == .success,
-              let role = roleValue as? String else { return false }
+        if primitives.isAttributeSettable(element, kAXSelectedTextAttribute as CFString) { return true }
+        if primitives.isAttributeSettable(element, kAXValueAttribute as CFString) { return true }
+        guard let role = primitives.copyAttribute(element, kAXRoleAttribute as CFString) as? String else { return false }
         return [kAXTextFieldRole, kAXTextAreaRole, kAXComboBoxRole, "AXSearchField"].contains(role)
     }
 
     private func isSecure(_ element: AXUIElement) -> Bool {
-        var subroleValue: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXSubroleAttribute as CFString, &subroleValue) == .success,
-              let subrole = subroleValue as? String else { return false }
+        guard let subrole = primitives.copyAttribute(element, kAXSubroleAttribute as CFString) as? String else { return false }
         return subrole == kAXSecureTextFieldSubrole
     }
 
@@ -333,10 +333,6 @@ final class AccessibilityInserter: FocusedTargetInserting {
         resolver.captureFocusedTarget(processIdentifier: processIdentifier)
     }
 
-    func captureFocusedWindow(for target: FocusedTarget) -> FocusedWindowSnapshot? {
-        resolver.focusedWindow(for: target)
-    }
-
     func insert(_ insertion: TextInsertion, into target: FocusedTarget?) async -> InsertionResult {
         guard let target else { return .privateClipboard("no editable field was focused") }
         let text = insertion.text
@@ -355,7 +351,7 @@ final class AccessibilityInserter: FocusedTargetInserting {
             // AX focus is advisory. Some valid custom editors reject this write
             // while retaining a responder that still accepts the paste command.
             _ = environment.focus(element)
-            await environment.delay(40)
+            await environment.delay(20)
             if case .transformation(_, let expectedSelection) = insertion,
                environment.selection(element) != expectedSelection {
                 return .privateClipboard("the selected text changed before transformation")

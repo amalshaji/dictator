@@ -13,8 +13,7 @@ final class AppPreferencesTests: XCTestCase {
         let model = AppModel(
             keychain: AppTestCredentialStore(),
             appleSpeechProvider: nil,
-            defaults: defaults,
-            connectivity: AppTestConnectivityMonitor()
+            defaults: defaults
         )
         XCTAssertEqual(model.cleanupCustomInstruction, "")
 
@@ -24,8 +23,7 @@ final class AppPreferencesTests: XCTestCase {
         let restored = AppModel(
             keychain: AppTestCredentialStore(),
             appleSpeechProvider: nil,
-            defaults: defaults,
-            connectivity: AppTestConnectivityMonitor()
+            defaults: defaults
         )
         XCTAssertEqual(restored.cleanupCustomInstruction, "Prefer British spelling")
     }
@@ -39,8 +37,7 @@ final class AppPreferencesTests: XCTestCase {
         let model = AppModel(
             keychain: AppTestCredentialStore(),
             appleSpeechProvider: nil,
-            defaults: defaults,
-            connectivity: AppTestConnectivityMonitor()
+            defaults: defaults
         )
         model.setCleanupCustomInstruction(String(repeating: "a", count: limit + 500))
         XCTAssertEqual(model.cleanupCustomInstruction.count, limit)
@@ -50,8 +47,7 @@ final class AppPreferencesTests: XCTestCase {
         let restored = AppModel(
             keychain: AppTestCredentialStore(),
             appleSpeechProvider: nil,
-            defaults: defaults,
-            connectivity: AppTestConnectivityMonitor()
+            defaults: defaults
         )
         XCTAssertEqual(restored.cleanupCustomInstruction.count, limit)
     }
@@ -63,11 +59,27 @@ final class AppPreferencesTests: XCTestCase {
         let model = AppModel(
             keychain: ConfiguredProviderCredentialStore(),
             appleSpeechProvider: nil,
-            defaults: defaults,
-            connectivity: AppTestConnectivityMonitor()
+            defaults: defaults
         )
 
         XCTAssertTrue(model.isProviderConfigured(purpose: .cleanup, provider: .groq))
+    }
+
+    func testRetiredCleanupProviderResetsToGroqAndDisablesCleanup() throws {
+        let suiteName = "ai.dictator.tests.retired-llm.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set("cloudflare", forKey: "selectedLLM")
+        defaults.set(true, forKey: "cleanupEnabled")
+
+        let model = AppModel(
+            keychain: AppTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults
+        )
+
+        XCTAssertEqual(model.selectedLLM, .groq)
+        XCTAssertFalse(model.cleanupEnabled)
     }
 
     func testDisabledStyleCannotBeSelected() {
@@ -77,6 +89,60 @@ final class AppPreferencesTests: XCTestCase {
         model.selectedStyleID = nil
         model.selectStyle(disabled.id)
         XCTAssertNil(model.selectedStyleID)
+    }
+
+    func testRapidPersistenceRequestsCoalesceIntoASingleWrite() async throws {
+        let suiteName = "ai.dictator.tests.persist-debounce.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = AppModel(
+            keychain: AppTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults
+        )
+
+        try model.saveVocabulary(.init(value: "One", variants: ["1"]))
+        try model.saveVocabulary(.init(value: "Two", variants: ["2"]))
+        try model.saveVocabulary(.init(value: "Three", variants: ["3"]))
+
+        XCTAssertEqual(model.persistCount, 0, "the debounce window has not elapsed yet")
+
+        try await Task.sleep(for: .milliseconds(400))
+
+        XCTAssertEqual(model.persistCount, 1)
+    }
+
+    func testFlushPersistenceCancelsPendingDebounceAndPersistsImmediately() async throws {
+        let suiteName = "ai.dictator.tests.flush-persistence.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = AppModel(
+            keychain: AppTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults
+        )
+
+        try model.saveVocabulary(.init(value: "One", variants: ["1"]))
+        XCTAssertEqual(model.persistCount, 0)
+
+        await model.flushPersistence()
+
+        XCTAssertEqual(model.persistCount, 1)
+    }
+
+    func testFlushPersistenceWithNothingPendingDoesNotWrite() async throws {
+        let suiteName = "ai.dictator.tests.flush-persistence-noop.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = AppModel(
+            keychain: AppTestCredentialStore(),
+            appleSpeechProvider: nil,
+            defaults: defaults
+        )
+
+        await model.flushPersistence()
+
+        XCTAssertEqual(model.persistCount, 0)
     }
 
     func testAppleSpeechSetupIgnoresStaleLocaleReadiness() async throws {

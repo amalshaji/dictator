@@ -43,7 +43,6 @@ final class AudioRecordingTests: XCTestCase {
             keychain: AppTestCredentialStore(),
             appleSpeechProvider: nil,
             defaults: defaults,
-            connectivity: AppTestConnectivityMonitor(),
             recorder: recorder
         )
 
@@ -63,7 +62,6 @@ final class AudioRecordingTests: XCTestCase {
             keychain: AppTestCredentialStore(),
             appleSpeechProvider: nil,
             defaults: defaults,
-            connectivity: AppTestConnectivityMonitor(),
             recorder: recorder
         )
         let startup = Task { @MainActor in await model.startDictation() }
@@ -93,7 +91,6 @@ final class AudioRecordingTests: XCTestCase {
             keychain: AppTestCredentialStore(),
             appleSpeechProvider: nil,
             defaults: defaults,
-            connectivity: AppTestConnectivityMonitor(),
             recorder: recorder
         )
         let startup = Task { @MainActor in await model.startDictation() }
@@ -125,7 +122,6 @@ final class AudioRecordingTests: XCTestCase {
             keychain: AppTestCredentialStore(),
             appleSpeechProvider: nil,
             defaults: defaults,
-            connectivity: AppTestConnectivityMonitor(),
             recorder: recorder
         )
 
@@ -241,25 +237,153 @@ final class AudioRecordingTests: XCTestCase {
             }
         }
         await fulfillment(of: [receivedSample], timeout: 5)
-        await session.stop()
+        session.stop()
     }
 
-    func testAudioRecorderWaitsForPendingSamplesBeforeFinishing() async throws {
+    func testAudioRecorderStopReturnsWithoutWaitingAndDropsLateSamples() async throws {
         let session = TestAudioCaptureSession()
-        let gate = AudioStartGate()
-        session.stopGate = gate
         let recorder = AudioRecorder(
             session: session,
             notificationCenter: NotificationCenter()
         )
 
         try await recorder.start()
-        let stopping = Task { @MainActor in await recorder.stop() }
-        await Task.detached { gate.waitUntilStarted() }.value
-        gate.release()
-        let audio = await stopping.value
+        let pcm = try Self.makeMonoPCMBuffer(seconds: 0.1)
+        session.emit(pcm)
 
+        let stopStarted = ContinuousClock.now
+        let audio = await recorder.stop()
+        // stop() no longer awaits stopRunning(), so it must return promptly.
+        XCTAssertLessThan(stopStarted.duration(to: ContinuousClock.now), .milliseconds(50))
         XCTAssertEqual(audio.duration, 0.1, accuracy: 0.001)
+
+        // A buffer delivered from the stopped recording's tap handler after
+        // stop() already returned must be dropped by the recordingID guard
+        // rather than bleeding into whatever recording comes next.
+        session.emit(pcm)
+        try await recorder.start()
+        let secondAudio = await recorder.stop()
+
+        XCTAssertEqual(secondAudio.duration, 0, accuracy: 0.001)
+    }
+
+    private static func makeMonoPCMBuffer(seconds: Double, sampleRate: Double = 16_000) throws -> AVAudioPCMBuffer {
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1))
+        let frameCount = AVAudioFrameCount(seconds * sampleRate)
+        let pcm = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount))
+        pcm.frameLength = frameCount
+        let samples = try XCTUnwrap(pcm.floatChannelData?[0])
+        for index in 0..<Int(frameCount) { samples[index] = 0.1 }
+        return pcm
+    }
+
+    func testAudioTapHandlerThrottlesLevelCallbacks() async throws {
+        let levels = AudioLevelRecorder()
+        let recorder = AudioRecorder()
+        recorder.onLevel = { levels.append($0) }
+        let tap = recorder.makeTapHandler()
+
+        try await Task.detached {
+            let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1))
+            for _ in 0..<100 {
+                let pcm = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 16))
+                pcm.frameLength = 16
+                let samples = try XCTUnwrap(pcm.floatChannelData?[0])
+                for index in 0..<16 { samples[index] = 0.01 }
+                tap(pcm, AVAudioTime(hostTime: 0))
+            }
+        }.value
+
+        XCTAssertLessThanOrEqual(levels.values.count, 4)
+    }
+
+    func testSystemAudioCaptureSessionReusesUnderlyingSessionAcrossStartStopCycles() async throws {
+        guard Bundle.main.bundleIdentifier == "ai.dictator.live-audio-test" else {
+            throw XCTSkip("Run with the live-audio test bundle identifier")
+        }
+        let microphoneGranted = switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized: true
+        case .notDetermined: await AVCaptureDevice.requestAccess(for: .audio)
+        default: false
+        }
+        guard microphoneGranted else {
+            XCTFail("Microphone permission was not granted to the live-audio test bundle")
+            return
+        }
+        let session = SystemAudioCaptureSession()
+
+        try await session.start { _, _ in }
+        session.stop()
+        try await session.start { _, _ in }
+        session.stop()
+
+        XCTAssertEqual(session.sessionBuildCount, 1)
+    }
+
+    func testSystemAudioCaptureSessionRebuildsWhenDefaultInputDeviceChanges() async throws {
+        guard Bundle.main.bundleIdentifier == "ai.dictator.live-audio-test" else {
+            throw XCTSkip("Run with the live-audio test bundle identifier")
+        }
+        let microphoneGranted = switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized: true
+        case .notDetermined: await AVCaptureDevice.requestAccess(for: .audio)
+        default: false
+        }
+        guard microphoneGranted else {
+            XCTFail("Microphone permission was not granted to the live-audio test bundle")
+            return
+        }
+        let lookupCounter = DeviceLookupCallCounter()
+        // Simulate the default input device changing while the session sat
+        // idle: the reuse check's lookup (the second call) reports no
+        // current default, which must be treated the same as a changed or
+        // disconnected device and trigger a rebuild.
+        let session = SystemAudioCaptureSession(deviceLookup: {
+            lookupCounter.next() == 2 ? nil : AVCaptureDevice.default(for: .audio)
+        })
+
+        try await session.start { _, _ in }
+        session.stop()
+        try await session.start { _, _ in }
+        session.stop()
+
+        XCTAssertEqual(session.sessionBuildCount, 2)
+    }
+
+    func testAudioRecorderDownmixesStereoBufferWithOneSilentChannel() async throws {
+        let sourceRate = 16_000.0
+        let framesPerBuffer = 512
+        let format = try XCTUnwrap(AVAudioFormat(
+            standardFormatWithSampleRate: sourceRate,
+            channels: 2
+        ))
+        let session = TestAudioCaptureSession()
+        let recorder = AudioRecorder(
+            session: session,
+            notificationCenter: NotificationCenter()
+        )
+
+        try await recorder.start()
+        let pcm = try XCTUnwrap(AVAudioPCMBuffer(
+            pcmFormat: format,
+            frameCapacity: AVAudioFrameCount(framesPerBuffer)
+        ))
+        pcm.frameLength = AVAudioFrameCount(framesPerBuffer)
+        let channels = try XCTUnwrap(pcm.floatChannelData)
+        for index in 0..<framesPerBuffer {
+            channels[0][index] = 0    // left silent
+            channels[1][index] = 0.5  // right carries the signal
+        }
+        session.emit(pcm)
+
+        let audio = await recorder.stop()
+        let pcmData = Data(audio.wavData.dropFirst(44))
+        let samples = pcmData.withUnsafeBytes { rawBuffer in
+            rawBuffer.bindMemory(to: Int16.self).map { Int16(littleEndian: $0) }
+        }
+        let peak = samples.map { abs(Int($0)) }.max() ?? 0
+
+        XCTAssertGreaterThan(peak, 0, "downmixing must not drop the channel carrying the signal")
     }
 
     func testAudioRecorderCarriesResamplingStateAcrossCaptureBuffers() async throws {
@@ -602,7 +726,12 @@ final class TestAudioCaptureSession: AudioCaptureSession, @unchecked Sendable {
         onStart?()
     }
 
-    func stop() async {
+    func stop() {
+        stopCount += 1
+        recoverySourceObject = TestAudioConfigurationSource()
+    }
+
+    func invalidate() async {
         stopCount += 1
         recoverySourceObject = TestAudioConfigurationSource()
         guard let stopGate, let tapHandler else { return }
@@ -632,6 +761,20 @@ final class TestAudioCaptureSession: AudioCaptureSession, @unchecked Sendable {
 }
 
 final class TestAudioConfigurationSource: NSObject, @unchecked Sendable {}
+
+/// Thread-safe call counter for a `deviceLookup` closure invoked from
+/// `SystemAudioCaptureSession`'s lifecycle queue.
+final class DeviceLookupCallCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+
+    func next() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        value += 1
+        return value
+    }
+}
 
 final class AudioLevelRecorder: @unchecked Sendable {
     private let lock = NSLock()

@@ -1,21 +1,12 @@
-import AppKit
 import ApplicationServices
 import AVFoundation
-import Combine
 import DictatorCore
 import Foundation
+import Observation
 import ServiceManagement
 
 enum DictationPhase: Equatable { case idle, listening, processing }
-enum ShortcutPurpose { case dictate, pasteLatest, openClipboard }
-
-private struct ScreenAwareRun {
-    let target: FocusedTarget
-    let window: FocusedWindowSnapshot
-    let provider: any ScreenAwareLLMProvider
-    let model: String
-    let credentials: ProviderCredentials
-}
+enum ShortcutPurpose { case dictate, pasteLatest }
 
 private enum StandardDictationDelivery {
     case clipboard
@@ -29,48 +20,35 @@ private enum StandardDictationDelivery {
 
 private enum ActiveDictationRun {
     case standard(StandardDictationDelivery)
-    case screenAware(ScreenAwareRun)
-
-    var isScreenAware: Bool {
-        if case .screenAware = self { return true }
-        return false
-    }
 }
 
 @MainActor
-final class AppModel: ObservableObject {
-    @Published var data = PersistedData()
-    @Published var phase: DictationPhase = .idle
-    @Published private(set) var selectedSTT: ProviderKind = .groq
-    @Published var selectedLLM: ProviderKind = .groq { didSet { defaults.set(selectedLLM.rawValue, forKey: "selectedLLM") } }
-    @Published var selectedScreenAwareLLM: ProviderKind = .groq {
-        didSet { defaults.set(selectedScreenAwareLLM.rawValue, forKey: "selectedScreenAwareLLM") }
-    }
-    @Published var cleanupEnabled = false { didSet { defaults.set(cleanupEnabled, forKey: "cleanupEnabled") } }
-    @Published var screenAwareEnabled = false { didSet { defaults.set(screenAwareEnabled, forKey: "screenAwareEnabled") } }
-    @Published private(set) var offlineFallbackEnabled = false
-    @Published var lastError: String?
-    @Published var requestedDestination: String?
-    @Published var shortcutsAvailable = false
-    @Published var accessibilityGranted = AXIsProcessTrusted()
-    @Published var inputMonitoringGranted = CGPreflightListenEventAccess()
-    @Published var microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-    @Published var screenCaptureGranted = CGPreflightScreenCaptureAccess()
-    @Published var onboardingComplete = false
-    @Published private var accessConfiguration = AppAccessConfiguration(
+@Observable
+final class AppModel {
+    var data = PersistedData()
+    var phase: DictationPhase = .idle
+    private(set) var selectedSTT: ProviderKind = .groq
+    var selectedLLM: ProviderKind = .groq { didSet { defaults.set(selectedLLM.rawValue, forKey: "selectedLLM") } }
+    var cleanupEnabled = false { didSet { defaults.set(cleanupEnabled, forKey: "cleanupEnabled") } }
+    var lastError: String?
+    var shortcutsAvailable = false
+    var accessibilityGranted = AXIsProcessTrusted()
+    var inputMonitoringGranted = CGPreflightListenEventAccess()
+    var microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+    var launchesAtLogin = SMAppService.mainApp.status == .enabled
+    var onboardingComplete = false
+    private var accessConfiguration = AppAccessConfiguration(
         mode: .leastPrivileges,
         systemWideInsertionMode: .insert
     )
-    @Published private(set) var dictateShortcut = GlobalShortcut.dictate
-    @Published private(set) var dictateActivationMode = HotkeyActivationMode.hold
-    @Published private(set) var pasteLatestShortcut = GlobalShortcut.pasteLatest
-    @Published private(set) var openClipboardShortcut = GlobalShortcut.openClipboard
-    @Published var selectedStyleID: UUID? = nil {
+    private(set) var dictateShortcut = GlobalShortcut.dictate
+    private(set) var dictateActivationMode = HotkeyActivationMode.hold
+    private(set) var pasteLatestShortcut = GlobalShortcut.pasteLatest
+    var selectedStyleID: UUID? = nil {
         didSet { defaults.set(selectedStyleID?.uuidString, forKey: "selectedStyleID") }
     }
-    @Published private(set) var cleanupCustomInstruction = ""
+    private(set) var cleanupCustomInstruction = ""
     static let maximumCleanupInstructionLength = 2_000
-    let pricing = PricingStore()
     let appleSpeech: AppleSpeechCoordinator
 
     var accessMode: AppAccessMode { accessConfiguration.mode }
@@ -80,35 +58,24 @@ final class AppModel: ObservableObject {
     private let store: LocalStore
     private let keychain: any CredentialStoring
     private let transcriptionCoordinator: any TranscriptionCoordinating
-    private var appleSpeechObservation: AnyCancellable?
     private let recorder: any AudioRecording
-    private let screenCapture: any ScreenContextCapturing
     private let hotkeys: HotkeyLifecycleController
     private let inserter: any FocusedTargetInserting
     private let clipboardWriter: any ClipboardWriting
     private let providerConnections: ProviderConnectionService
     private let transcriptProcessor = TranscriptProcessor()
-    private let transcriptRepairService = TranscriptRepairService()
     private let hud = FloatingPanelController()
-    private var activeRun: ActiveDictationRun?
-    private var activeRunID: UUID?
-    private var initialLoadTask: Task<Void, Never>?
+    @ObservationIgnored private var activeRun: ActiveDictationRun?
+    @ObservationIgnored private var activeRunID: UUID?
+    @ObservationIgnored private var initialLoadTask: Task<Void, Never>?
+    @ObservationIgnored private var didCompleteInitialLoad = false
+    @ObservationIgnored private var credentialCache: [String: ProviderCredentials?] = [:]
 
     convenience init() {
         self.init(
             keychain: KeychainStore(),
             appleSpeechProvider: Self.defaultAppleSpeechProvider(),
-            defaults: .standard,
-            connectivity: NetworkConnectivityMonitor()
-        )
-    }
-
-    convenience init(keychain: any CredentialStoring, appleSpeechProvider: (any LocalSpeechTranscribing)?) {
-        self.init(
-            keychain: keychain,
-            appleSpeechProvider: appleSpeechProvider,
-            defaults: .standard,
-            connectivity: NetworkConnectivityMonitor()
+            defaults: .standard
         )
     }
 
@@ -116,14 +83,11 @@ final class AppModel: ObservableObject {
         keychain: any CredentialStoring,
         appleSpeechProvider: (any LocalSpeechTranscribing)?,
         defaults: UserDefaults,
-        connectivity: any ConnectivityMonitoring,
         hotkeys: HotkeyLifecycleController = HotkeyLifecycleController(),
         recorder: any AudioRecording = AudioRecorder(),
-        screenCapture: any ScreenContextCapturing = ScreenContextCaptureService(),
         transcriptionCoordinator: (any TranscriptionCoordinating)? = nil,
         inserter: any FocusedTargetInserting = AccessibilityInserter(),
-        clipboardWriter: any ClipboardWriting = SystemClipboardWriter(),
-        screenAwareProvider: @escaping (ProviderKind) -> (any ScreenAwareLLMProvider)? = ScreenAwareProviderRegistry.provider
+        clipboardWriter: any ClipboardWriting = SystemClipboardWriter()
     ) {
         let runningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
         self.defaults = defaults
@@ -133,13 +97,9 @@ final class AppModel: ObservableObject {
         self.keychain = keychain
         self.hotkeys = hotkeys
         self.recorder = recorder
-        self.screenCapture = screenCapture
         self.inserter = inserter
         self.clipboardWriter = clipboardWriter
-        providerConnections = ProviderConnectionService(
-            defaults: defaults,
-            screenAwareProvider: screenAwareProvider
-        )
+        providerConnections = ProviderConnectionService()
         let appleSpeech = AppleSpeechCoordinator(
             provider: appleSpeechProvider,
             selectedLocaleIdentifier: defaults.string(forKey: "appleSpeechLocale") ?? Locale.current.identifier,
@@ -148,8 +108,7 @@ final class AppModel: ObservableObject {
         self.appleSpeech = appleSpeech
         self.transcriptionCoordinator = transcriptionCoordinator ?? TranscriptionCoordinator(
             keychain: keychain,
-            appleSpeech: appleSpeech,
-            connectivity: connectivity
+            appleSpeech: appleSpeech
         )
         selectedSTT = STTProviderSelection.resolve(
             savedRawValue: defaults.string(forKey: "selectedSTT"),
@@ -157,15 +116,22 @@ final class AppModel: ObservableObject {
             lastCloudRawValue: defaults.string(forKey: "lastCloudSTT"),
             existingInstallation: defaults.object(forKey: "onboardingComplete") != nil
         )
-        selectedLLM = ProviderKind(rawValue: defaults.string(forKey: "selectedLLM") ?? "") ?? .groq
-        let screenAwareFallback = providerConnections.screenAwareProvider(for: selectedLLM) == nil
-            ? ProviderKind.gemini
-            : selectedLLM
-        selectedScreenAwareLLM = ProviderKind(rawValue: defaults.string(forKey: "selectedScreenAwareLLM") ?? "")
-            ?? screenAwareFallback
-        cleanupEnabled = defaults.bool(forKey: "cleanupEnabled")
-        screenAwareEnabled = defaults.bool(forKey: "screenAwareEnabled")
-        offlineFallbackEnabled = defaults.bool(forKey: "offlineFallbackEnabled")
+        let savedLLMRawValue = defaults.string(forKey: "selectedLLM")
+        if let savedLLMRawValue {
+            if let parsed = ProviderKind(rawValue: savedLLMRawValue) {
+                selectedLLM = parsed
+                cleanupEnabled = defaults.bool(forKey: "cleanupEnabled")
+            } else {
+                // The saved provider no longer exists (e.g. a retired cleanup
+                // provider). Leaving cleanup on would point it at a provider
+                // with no stored key, failing every dictation.
+                selectedLLM = .groq
+                cleanupEnabled = false
+            }
+        } else {
+            selectedLLM = .groq
+            cleanupEnabled = defaults.bool(forKey: "cleanupEnabled")
+        }
         onboardingComplete = defaults.bool(forKey: "onboardingComplete")
         let accessMode: AppAccessMode
         if let savedAccessMode = defaults.string(forKey: "accessMode").flatMap(AppAccessMode.init(rawValue:)) {
@@ -188,12 +154,8 @@ final class AppModel: ObservableObject {
             rawValue: defaults.string(forKey: "dictateActivationMode") ?? ""
         ) ?? .hold
         pasteLatestShortcut = loadShortcut(forKey: "shortcut.pasteLatest", fallback: .pasteLatest)
-        openClipboardShortcut = loadShortcut(forKey: "shortcut.openClipboard", fallback: .openClipboard)
         defaults.set(selectedSTT.rawValue, forKey: "selectedSTT")
         if selectedSTT != .appleSpeech { defaults.set(selectedSTT.rawValue, forKey: "lastCloudSTT") }
-        appleSpeechObservation = appleSpeech.objectWillChange.sink { [weak self] _ in
-            self?.objectWillChange.send()
-        }
         configureHotkeys()
         recorder.onLevel = { [weak self] level in
             Task { @MainActor in self?.hud.model.push(level: level) }
@@ -205,12 +167,7 @@ final class AppModel: ObservableObject {
             Task { @MainActor in await self?.handleDictatePress(targetProcessIdentifier: targetPID) }
         }
         hotkeys.onRelease = { [weak self] in Task { @MainActor in await self?.stopDictation() } }
-        hotkeys.onScreenAwarePress = { [weak self] targetPID in
-            Task { @MainActor in await self?.startScreenAwareDictation(targetProcessIdentifier: targetPID) }
-        }
-        hotkeys.onScreenAwareRelease = { [weak self] in Task { @MainActor in await self?.stopDictation() } }
         hotkeys.onPasteLatest = { [weak self] in Task { @MainActor in await self?.pasteClipboard() } }
-        hotkeys.onOpenClipboard = { [weak self] in self?.openClipboard() }
         hotkeys.onWillSleep = { [weak self] in
             guard let self, phase == .listening else { return }
             cancelDictation()
@@ -230,7 +187,9 @@ final class AppModel: ObservableObject {
             }
             reconcileHotkeyLifecycle()
         }
-        if !runningTests {
+        if runningTests {
+            didCompleteInitialLoad = true
+        } else {
             initialLoadTask = Task { @MainActor [weak self] in
                 await self?.load()
             }
@@ -238,7 +197,7 @@ final class AppModel: ObservableObject {
         Task { @MainActor [weak self] in
             await Task.yield()
             guard let self else { return }
-            // Defer panel layout until SwiftUI has finished installing this StateObject.
+            // Defer panel layout until SwiftUI has finished installing this @State model.
             // Resizing an NSHostingView during AttributeGraph construction aborts on macOS 26.
             hud.show(.idle)
             if !runningTests {
@@ -271,116 +230,27 @@ final class AppModel: ObservableObject {
         await startDictation(targetProcessIdentifier: targetProcessIdentifier)
     }
 
-    func startDictation(targetProcessIdentifier: pid_t? = nil) async {
+    func startDictation(targetProcessIdentifier: pid_t? = nil, forceClipboardDelivery: Bool = false) async {
         await waitForInitialLoad()
         guard phase == .idle else { return }
         guard await recorder.requestPermission() else {
             showError("Microphone permission is required")
             return
         }
-        let delivery: StandardDictationDelivery
-        if insertionMode == .clipboard {
-            delivery = .clipboard
-        } else {
-            delivery = .focusedTarget(inserter.captureFocusedTarget(processIdentifier: targetProcessIdentifier))
-        }
+        // The captured target is only needed once insertion happens, so defer
+        // the Accessibility walk until after recording has actually started
+        // instead of making the user wait through it before hearing feedback.
+        // A placeholder delivery keeps `activeRun` non-nil in case the hotkey
+        // is released while `recorder.start()` is still in flight.
         let runID = UUID()
-        activeRun = .standard(delivery)
+        activeRun = .standard(.focusedTarget(nil))
         activeRunID = runID
         phase = .listening
         hud.show(.listening)
         await Task.yield()
         guard phase == .listening, activeRunID == runID else { return }
         do {
-            try await recorder.start()
-            warmUpCleanupConnection()
-        } catch {
-            guard activeRunID == runID else { return }
-            activeRun = nil
-            activeRunID = nil
-            phase = .idle
-            showError(error.localizedDescription)
-        }
-    }
-
-    /// Opens the cleanup provider's HTTPS connection while the user is still
-    /// speaking so the TLS handshake never adds to post-dictation latency.
-    private func warmUpCleanupConnection() {
-        guard let cleanup = try? cleanupConfiguration() else { return }
-        Task.detached(priority: .utility) {
-            await cleanup.provider.warmUpConnection(credentials: cleanup.credentials)
-        }
-    }
-
-    func startScreenAwareDictation(targetProcessIdentifier: pid_t? = nil) async {
-        await waitForInitialLoad()
-        guard phase == .idle else { return }
-        guard accessMode.allowsScreenAwareDictation else {
-            showError("Screen-aware dictation requires system-wide mode.")
-            return
-        }
-        guard screenAwareEnabled else {
-            showError("Configure and enable screen-aware dictation in Providers.")
-            return
-        }
-        guard let provider = providerConnections.screenAwareProvider(for: selectedScreenAwareLLM) else {
-            showError("The selected screen-aware provider is unavailable.")
-            return
-        }
-        let model = configuredModel(for: .screenAware, provider: selectedScreenAwareLLM)
-            ?? provider.metadata.defaultModel
-        let capability = ScreenAwareModelCapabilities.capability(provider: selectedScreenAwareLLM, model: model)
-        guard capability != .unsupported else {
-            showError("The selected model does not support image input. Choose a vision-capable model.")
-            return
-        }
-        guard let credentials = try? resolvedCredentials(purpose: .screenAware, provider: selectedScreenAwareLLM) else {
-            showError("Configure the screen-aware provider credentials first.")
-            return
-        }
-        if capability == .requiresConfirmation,
-           !isScreenAwareModelConfirmed(
-            provider: selectedScreenAwareLLM,
-            model: model,
-            credentials: credentials
-           ) {
-            showError("Test this screen-aware model in Providers before using it.")
-            return
-        }
-        guard screenCapture.permissionGranted else {
-            showError("Screen Recording permission is required for screen-aware dictation.")
-            return
-        }
-        guard let target = inserter.captureFocusedTarget(processIdentifier: targetProcessIdentifier) else {
-            showError("The focused window could not be identified safely.")
-            return
-        }
-        if case .blocked(_, let reason) = target {
-            showError("Screen-aware dictation is unavailable because \(reason).")
-            return
-        }
-        guard let window = inserter.captureFocusedWindow(for: target) else {
-            showError("The focused window could not be identified safely.")
-            return
-        }
-        guard await recorder.requestPermission() else {
-            showError("Microphone permission is required")
-            return
-        }
-        let runID = UUID()
-        activeRun = .screenAware(ScreenAwareRun(
-            target: target,
-            window: window,
-            provider: provider,
-            model: model,
-            credentials: credentials
-        ))
-        activeRunID = runID
-        phase = .listening
-        hud.show(.listening)
-        await Task.yield()
-        guard phase == .listening, activeRunID == runID else { return }
-        do {
+            warmUpConnections()
             try await recorder.start()
         } catch {
             guard activeRunID == runID else { return }
@@ -388,6 +258,33 @@ final class AppModel: ObservableObject {
             activeRunID = nil
             phase = .idle
             showError(error.localizedDescription)
+            return
+        }
+        guard activeRunID == runID else { return }
+        guard insertionMode != .clipboard, !forceClipboardDelivery else {
+            activeRun = .standard(.clipboard)
+            return
+        }
+        // A blocked target (e.g. a secure field) still records; the inserter
+        // then keeps the text off the system pasteboard (`.privateClipboard`)
+        // so it is only reachable through the transcript history / paste-latest.
+        let target = inserter.captureFocusedTarget(processIdentifier: targetProcessIdentifier)
+        activeRun = .standard(.focusedTarget(target))
+    }
+
+    /// Opens the STT and cleanup providers' HTTPS connections while the user
+    /// is still speaking so the DNS/TCP/TLS handshakes overlap recording
+    /// instead of adding to post-dictation latency.
+    private func warmUpConnections() {
+        let cleanup = try? cleanupConfiguration()
+        Task(priority: .userInitiated) { [transcriptionCoordinator, selectedSTT] in
+            async let sttWarmUp: Void = transcriptionCoordinator.warmUp(selectedProvider: selectedSTT)
+            if let cleanup {
+                async let cleanupWarmUp: Void = cleanup.provider.warmUpConnection(credentials: cleanup.credentials)
+                _ = await (sttWarmUp, cleanupWarmUp)
+            } else {
+                await sttWarmUp
+            }
         }
     }
 
@@ -404,17 +301,14 @@ final class AppModel: ObservableObject {
         let audio = await recorder.stop()
         guard audio.duration >= 0.15 else {
             phase = .idle
-            let shortcut = run.isScreenAware ? GlobalShortcut.screenAware : dictateShortcut
-            let usesToggle = !run.isScreenAware && dictateActivationMode == .toggle
+            let usesToggle = dictateActivationMode == .toggle
             hud.show(.error(usesToggle
-                ? "Too short—speak, then press \(shortcut.displayName)"
-                : "Too short—hold \(shortcut.displayName) while speaking"))
+                ? "Too short—speak, then press \(dictateShortcut.displayName)"
+                : "Too short—hold \(dictateShortcut.displayName) while speaking"))
             hud.hideAfterDelay()
             return
         }
         switch run {
-        case .screenAware(let screenAwareRun):
-            await processScreenAware(audio, run: screenAwareRun, pipelineStarted: pipelineStarted)
         case .standard(let delivery):
             await process(audio, delivery: delivery, pipelineStarted: pipelineStarted)
         }
@@ -430,60 +324,6 @@ final class AppModel: ObservableObject {
         hud.hideAfterDelay()
     }
 
-    private func processScreenAware(
-        _ audio: RecordedAudio,
-        run: ScreenAwareRun,
-        pipelineStarted: ContinuousClock.Instant
-    ) async {
-        hud.show(.understanding)
-        do {
-            let window = run.window
-            let selectedProvider = selectedSTT
-            let selectedModel = configuredModel(for: .speechToText, provider: selectedProvider)
-            let fallbackEnabled = offlineFallbackEnabled
-            let vocabulary = data.vocabulary
-            async let capturedContext = screenCapture.capture(window)
-            async let transcription = transcriptionCoordinator.transcribe(
-                audio: audio,
-                selectedProvider: selectedProvider,
-                selectedModel: selectedModel,
-                fallbackEnabled: fallbackEnabled,
-                vocabulary: vocabulary
-            )
-            let (context, transcriptionRun) = try await (capturedContext, transcription)
-            let request = ScreenAwareRequest(
-                command: transcriptionRun.result.text,
-                imageData: context.imageData,
-                imageMIMEType: context.imageMIMEType,
-                applicationName: run.window.applicationName,
-                bundleIdentifier: run.window.bundleIdentifier,
-                windowTitle: run.window.title,
-                selectedText: run.target.selection?.text
-            )
-            let provider = run.provider
-            let model = run.model
-            let credentials = run.credentials
-            let result = try await provider.generate(request: request, model: model, credentials: credentials)
-            guard let insertion = requestedInsertion(
-                text: result.text,
-                replacesSelection: result.intent == .replaceSelection,
-                target: run.target
-            ) else { return }
-            await completeDictation(
-                audio: audio,
-                transcription: transcriptionRun,
-                finalText: result.text,
-                insertion: insertion,
-                delivery: .focusedTarget(run.target),
-                llmExecution: .init(result: result),
-                cleanupFallbackReason: nil,
-                pipelineStarted: pipelineStarted
-            )
-        } catch {
-            showError(error.localizedDescription)
-        }
-    }
-
     private func process(
         _ audio: RecordedAudio,
         delivery: StandardDictationDelivery,
@@ -496,13 +336,9 @@ final class AppModel: ObservableObject {
                 audio: audio,
                 selectedProvider: selectedSTT,
                 selectedModel: configuredModel(for: .speechToText, provider: selectedSTT),
-                fallbackEnabled: offlineFallbackEnabled,
-                vocabulary: data.vocabulary,
-                onModeChange: { [hud] mode in
-                    if mode == .offline { hud.show(.offline) }
-                }
+                vocabulary: data.vocabulary
             )
-            let cleanup = transcription.allowsCleanup ? try cleanupConfiguration(forApp: target?.bundleIdentifier) : nil
+            let cleanup = transcription.allowsCleanup ? try cleanupConfiguration() : nil
             if cleanup != nil { hud.show(.cleaning) }
             let processed = await transcriptProcessor.process(
                 rawText: transcription.result.text,
@@ -582,20 +418,10 @@ final class AppModel: ObservableObject {
         case .focusedTarget(let target):
             outcome = await inserter.insert(insertion, into: target)
         }
-        switch outcome {
-        case .pasteCommandPosted:
-            break
-        case .copiedToClipboard, .privateClipboard:
-            data.clipboard.insert(.init(
-                text: finalText,
-                rawText: transcription.result.text,
-                sourceBundleID: target?.bundleIdentifier
-            ), at: 0)
-        }
         showCompletion(
             insertion: outcome,
             cleanupFallbackReason: cleanupFallbackReason,
-            offlineMode: transcription.mode == .offline
+            usedAppleFallback: transcription.usedAppleFallback
         )
         let transcript = TranscriptRecord(
             rawText: transcription.result.text,
@@ -606,20 +432,15 @@ final class AppModel: ObservableObject {
             sourceBundleID: target?.bundleIdentifier,
             audioDuration: audio.duration,
             sttLatency: transcription.result.latency,
-            pipelineLatency: Self.elapsedSeconds(since: pipelineStarted),
+            pipelineLatency: seconds(since: pipelineStarted),
             llmExecution: llmExecution,
             insertionOutcome: outcome.label
         )
         data.lifetimeStatistics.record(transcript)
         data.transcripts.insert(transcript, at: 0)
-        await persist()
         phase = .idle
         hud.hideAfterDelay()
-    }
-
-    private static func elapsedSeconds(since instant: ContinuousClock.Instant) -> TimeInterval {
-        let components = instant.duration(to: .now).components
-        return Double(components.seconds) + Double(components.attoseconds) / 1e18
+        schedulePersistence()
     }
 
     func credentials(purpose: ProviderPurpose, provider: ProviderKind) -> ProviderCredentials? {
@@ -638,7 +459,7 @@ final class AppModel: ObservableObject {
         guard !model.isEmpty else { throw ProviderError.invalidConfiguration("Enter a model name.") }
         try keychain.save(credentials, for: purpose, provider: provider)
         defaults.set(model, forKey: modelKey(for: purpose, provider: provider))
-        objectWillChange.send()
+        credentialCache.removeAll()
     }
 
     func testProviderConnection(
@@ -653,7 +474,6 @@ final class AppModel: ObservableObject {
             model: model,
             credentials: credentials
         )
-        if purpose == .screenAware { objectWillChange.send() }
     }
 
     func selectSTT(_ provider: ProviderKind) throws {
@@ -665,6 +485,10 @@ final class AppModel: ObservableObject {
             store: keychain
         )
         if let lastCloud { defaults.set(lastCloud.rawValue, forKey: "lastCloudSTT") }
+        // The cleanup credential lookup falls back to the STT key when the
+        // provider matches `selectedSTT`, so a cache entry computed under
+        // the old selection can go stale the moment it changes.
+        credentialCache.removeAll()
         selectedSTT = provider
         defaults.set(provider.rawValue, forKey: "selectedSTT")
         if provider == .appleSpeech, !appleSpeech.state.readiness.isReady {
@@ -687,6 +511,22 @@ final class AppModel: ObservableObject {
     func deleteVocabulary(_ id: UUID) {
         data.vocabulary.removeAll { $0.id == id }
         schedulePersistence()
+    }
+
+    func insertVocabulary(_ entry: VocabularyEntry, at index: Int) {
+        data.vocabulary.insert(entry, at: min(max(index, 0), data.vocabulary.count))
+        schedulePersistence()
+    }
+
+    /// Deletes immediately and registers the reinsertion as an undo action, so the
+    /// row disappears without a confirmation prompt but can be brought back with
+    /// Cmd+Z. Factored out of the view so the undo wiring is unit-testable.
+    func deleteVocabularyWithUndo(_ id: UUID, undoManager: UndoManager?) {
+        guard let index = data.vocabulary.firstIndex(where: { $0.id == id }) else { return }
+        let entry = data.vocabulary[index]
+        deleteVocabulary(id)
+        undoManager?.registerUndo(withTarget: self) { $0.insertVocabulary(entry, at: index) }
+        undoManager?.setActionName("Delete Vocabulary Entry")
     }
 
     func saveStyle(_ style: WritingStyle) throws {
@@ -712,20 +552,23 @@ final class AppModel: ObservableObject {
 
     func deleteStyle(_ id: UUID) {
         data.styles.removeAll { $0.id == id }
-        data.appStyleOverrides = data.appStyleOverrides.filter { $0.value != id }
         if selectedStyleID == id { selectedStyleID = nil }
         schedulePersistence()
     }
 
-    func assignStyle(_ styleID: UUID, toApp bundleID: String) {
-        guard data.styles.contains(where: { $0.id == styleID }) else { return }
-        data.appStyleOverrides[bundleID] = styleID
+    func insertStyle(_ style: WritingStyle, at index: Int) {
+        data.styles.insert(style, at: min(max(index, 0), data.styles.count))
         schedulePersistence()
     }
 
-    func removeAppStyleOverride(_ bundleID: String) {
-        data.appStyleOverrides.removeValue(forKey: bundleID)
-        schedulePersistence()
+    /// See `deleteVocabularyWithUndo` for why this lives on the model rather than
+    /// inline in the view.
+    func deleteStyleWithUndo(_ id: UUID, undoManager: UndoManager?) {
+        guard let index = data.styles.firstIndex(where: { $0.id == id }) else { return }
+        let style = data.styles[index]
+        deleteStyle(id)
+        undoManager?.registerUndo(withTarget: self) { $0.insertStyle(style, at: index) }
+        undoManager?.setActionName("Delete Style")
     }
 
     func saveSnippet(_ snippet: SnippetEntry) throws {
@@ -746,11 +589,25 @@ final class AppModel: ObservableObject {
         schedulePersistence()
     }
 
-    func pasteClipboard(_ entry: ClipboardEntry? = nil) async {
-        let item = entry ?? data.clipboard.first
-        guard let item else { return }
+    func insertSnippet(_ snippet: SnippetEntry, at index: Int) {
+        data.snippets.insert(snippet, at: min(max(index, 0), data.snippets.count))
+        schedulePersistence()
+    }
+
+    /// See `deleteVocabularyWithUndo` for why this lives on the model rather than
+    /// inline in the view.
+    func deleteSnippetWithUndo(_ id: UUID, undoManager: UndoManager?) {
+        guard let index = data.snippets.firstIndex(where: { $0.id == id }) else { return }
+        let snippet = data.snippets[index]
+        deleteSnippet(id)
+        undoManager?.registerUndo(withTarget: self) { $0.insertSnippet(snippet, at: index) }
+        undoManager?.setActionName("Delete Snippet")
+    }
+
+    func pasteClipboard() async {
+        guard let text = data.transcripts.first?.finalText else { return }
         if insertionMode == .clipboard {
-            if clipboardWriter.write(item.text) {
+            if clipboardWriter.write(text) {
                 hud.show(.success(.copied))
                 hud.hideAfterDelay()
             } else {
@@ -758,7 +615,7 @@ final class AppModel: ObservableObject {
             }
             return
         }
-        if await inserter.pasteIntoFrontmostApp(item.text) {
+        if await inserter.pasteIntoFrontmostApp(text) {
             hud.show(.success(.pasteSent))
             hud.hideAfterDelay()
         } else {
@@ -776,25 +633,6 @@ final class AppModel: ObservableObject {
             return
         }
         if !(await inserter.pasteIntoFrontmostApp(text)) { showError("Could not post the paste shortcut") }
-    }
-
-    func appendRevision(_ revision: TranscriptRevision, to transcriptID: UUID) {
-        guard let index = data.transcripts.firstIndex(where: { $0.id == transcriptID }) else { return }
-        data.transcripts[index].revisions.append(revision)
-        data.transcripts[index].preferredRevisionID = revision.id
-        schedulePersistence()
-    }
-
-    func reprocessTranscript(_ transcriptID: UUID) async throws -> TranscriptRevision {
-        guard let record = data.transcripts.first(where: { $0.id == transcriptID }) else {
-            throw ProviderError.invalidConfiguration("Transcript is no longer available.")
-        }
-        return try await transcriptRepairService.reprocess(
-            record: record,
-            vocabulary: data.vocabulary,
-            snippets: data.snippets,
-            cleanup: try cleanupConfiguration(forApp: record.sourceBundleID)
-        )
     }
 
     func teachDictator(incorrect: String, correct: String) throws {
@@ -833,29 +671,18 @@ final class AppModel: ObservableObject {
         microphoneGranted = await recorder.requestPermission()
     }
 
-    func requestScreenCapturePermission() {
-        guard accessMode.allowsScreenAwareDictation else { return }
-        screenCaptureGranted = screenCapture.requestPermission()
-    }
-
-    func refreshScreenCapturePermission() {
-        screenCaptureGranted = screenCapture.permissionGranted
-    }
-
     @discardableResult
     func setShortcut(_ shortcut: GlobalShortcut, for purpose: ShortcutPurpose) -> Bool {
         let others: [GlobalShortcut]
         switch purpose {
-        case .dictate: others = [.screenAware, pasteLatestShortcut, openClipboardShortcut]
-        case .pasteLatest: others = [dictateShortcut, .screenAware, openClipboardShortcut]
-        case .openClipboard: others = [dictateShortcut, .screenAware, pasteLatestShortcut]
+        case .dictate: others = [pasteLatestShortcut]
+        case .pasteLatest: others = [dictateShortcut]
         }
         guard !others.contains(shortcut) else { return false }
 
         switch purpose {
         case .dictate: dictateShortcut = shortcut
         case .pasteLatest: pasteLatestShortcut = shortcut
-        case .openClipboard: openClipboardShortcut = shortcut
         }
         persistShortcuts()
         configureHotkeys()
@@ -882,7 +709,6 @@ final class AppModel: ObservableObject {
     func resetShortcuts() {
         dictateShortcut = .dictate
         pasteLatestShortcut = .pasteLatest
-        openClipboardShortcut = .openClipboard
         persistShortcuts()
         configureHotkeys()
     }
@@ -902,7 +728,6 @@ final class AppModel: ObservableObject {
         accessibilityGranted = AXIsProcessTrusted()
         inputMonitoringGranted = CGPreflightListenEventAccess()
         microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-        screenCaptureGranted = screenCapture.permissionGranted
         if accessMode.allowsGlobalShortcuts {
             hotkeys.retry()
         } else {
@@ -916,45 +741,9 @@ final class AppModel: ObservableObject {
         return accessibilityGranted && inputMonitoringGranted && shortcutsAvailable
     }
 
-    func configureOnboardingProvider(kind: ProviderKind, apiKey: String, accountID: String?) async throws {
-        if kind == .appleSpeech {
-            try await prepareAppleSpeech()
-            try selectSTT(.appleSpeech)
-            setOfflineFallbackEnabled(true)
-            return
-        }
-        guard let provider = ProviderRegistry.sttProvider(for: kind) else { throw ProviderError.unsupported("Provider is unavailable") }
-        let normalizedAccountID = accountID?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let credentials = ProviderCredentials(
-            apiKey: apiKey.trimmingCharacters(in: .whitespacesAndNewlines),
-            accountID: normalizedAccountID?.isEmpty == false ? normalizedAccountID : nil
-        )
-        try await provider.validate(credentials: credentials)
-        try saveCredentials(credentials, purpose: .speechToText, provider: kind, model: provider.metadata.defaultModel)
-        try selectSTT(kind)
-    }
-
-    func configureOfflineFallback() async throws {
-        try await prepareAppleSpeech()
-        setOfflineFallbackEnabled(true)
-    }
-
-    private func prepareAppleSpeech() async throws {
-        if !appleSpeech.state.readiness.isReady { await appleSpeech.prepare() }
-        try Task.checkCancellation()
-        guard appleSpeech.state.readiness.isReady else {
-            throw ProviderError.invalidConfiguration(appleSpeech.statusText)
-        }
-    }
-
-    func disableOfflineFallback() {
-        setOfflineFallbackEnabled(false)
-    }
-
     func selectAppleSpeechLocale(_ identifier: String) {
         guard identifier != appleSpeech.state.selectedLocaleIdentifier else { return }
         appleSpeech.selectLocale(identifier)
-        setOfflineFallbackEnabled(false)
     }
 
     func finishOnboarding() {
@@ -963,68 +752,16 @@ final class AppModel: ObservableObject {
         reconcileHotkeyLifecycle()
     }
 
-    private func setOfflineFallbackEnabled(_ enabled: Bool) {
-        offlineFallbackEnabled = enabled
-        defaults.set(enabled, forKey: "offlineFallbackEnabled")
-    }
-
     func setCleanupCustomInstruction(_ instruction: String) {
         let bounded = String(instruction.prefix(Self.maximumCleanupInstructionLength))
         cleanupCustomInstruction = bounded
         defaults.set(bounded, forKey: "cleanupCustomInstruction")
     }
 
-    func selectScreenAwareProvider(_ provider: ProviderKind) {
-        selectedScreenAwareLLM = provider
-    }
-
-    func isScreenAwareModelConfirmed(
-        provider: ProviderKind,
-        model: String,
-        credentials: ProviderCredentials
-    ) -> Bool {
-        providerConnections.isScreenAwareModelConfirmed(
-            provider: provider,
-            model: model,
-            credentials: credentials
-        )
-    }
-
-    func confirmScreenAwareModel(
-        provider: ProviderKind,
-        model: String,
-        credentials: ProviderCredentials
-    ) {
-        providerConnections.confirmScreenAwareModel(
-            provider: provider,
-            model: model,
-            credentials: credentials
-        )
-        objectWillChange.send()
-    }
-
     var selectedSTTIsConfigured: Bool {
         selectedSTT == .appleSpeech
             ? appleSpeech.state.readiness.isReady
             : credentials(purpose: .speechToText, provider: selectedSTT)?.apiKey.isEmpty == false
-    }
-
-    var screenAwareProviderIsConfigured: Bool {
-        guard let provider = providerConnections.screenAwareProvider(for: selectedScreenAwareLLM),
-              let credentials = credentials(purpose: .screenAware, provider: selectedScreenAwareLLM),
-              !credentials.apiKey.isEmpty
-        else { return false }
-        let model = configuredModel(for: .screenAware, provider: selectedScreenAwareLLM) ?? provider.metadata.defaultModel
-        return switch ScreenAwareModelCapabilities.capability(provider: selectedScreenAwareLLM, model: model) {
-        case .supported: true
-        case .unsupported: false
-        case .requiresConfirmation:
-            isScreenAwareModelConfirmed(
-                provider: selectedScreenAwareLLM,
-                model: model,
-                credentials: credentials
-            )
-        }
     }
 
     var appleSpeechAvailable: Bool { appleSpeech.isAvailable }
@@ -1042,6 +779,14 @@ final class AppModel: ObservableObject {
     }
 
     private func resolvedCredentials(purpose: ProviderPurpose, provider: ProviderKind) throws -> ProviderCredentials? {
+        let key = "\(purpose.rawValue):\(provider.rawValue)"
+        if let cached = credentialCache[key] { return cached }
+        let resolved = try loadCredentials(purpose: purpose, provider: provider)
+        credentialCache[key] = resolved
+        return resolved
+    }
+
+    private func loadCredentials(purpose: ProviderPurpose, provider: ProviderKind) throws -> ProviderCredentials? {
         if let saved = try keychain.load(for: purpose, provider: provider) { return saved }
         switch purpose {
         case .speechToText:
@@ -1049,13 +794,10 @@ final class AppModel: ObservableObject {
         case .cleanup:
             guard provider == selectedSTT else { return nil }
             return try keychain.load(for: .speechToText, provider: provider)
-        case .screenAware:
-            if let cleanup = try keychain.load(for: .cleanup, provider: provider) { return cleanup }
-            return try keychain.load(for: .speechToText, provider: provider)
         }
     }
 
-    private func cleanupConfiguration(forApp bundleID: String? = nil) throws -> TranscriptCleanupConfiguration? {
+    private func cleanupConfiguration() throws -> TranscriptCleanupConfiguration? {
         guard cleanupEnabled else { return nil }
         guard let provider = CleanupProviderRegistry.provider(for: selectedLLM) else {
             throw ProviderError.unsupported("Cleanup provider is not available")
@@ -1065,8 +807,6 @@ final class AppModel: ObservableObject {
         }
         let model = configuredModel(for: .cleanup, provider: selectedLLM) ?? provider.metadata.defaultModel
         let style = StyleResolver.instruction(
-            forApp: bundleID,
-            overrides: data.appStyleOverrides,
             styles: data.styles,
             globalStyleID: selectedStyleID
         )
@@ -1083,27 +823,35 @@ final class AppModel: ObservableObject {
     private func showCompletion(
         insertion: InsertionResult,
         cleanupFallbackReason: String?,
-        offlineMode: Bool = false
+        usedAppleFallback: Bool = false
     ) {
         if let cleanupFallbackReason {
             lastError = "Cleanup failed: \(cleanupFallbackReason)"
-            hud.show(.error("Cleanup failed—used raw transcript"))
+            hud.show(.warning("Cleanup failed—used raw transcript"))
             return
         }
         lastError = nil
-        if offlineMode {
+        if usedAppleFallback {
             switch insertion {
-            case .privateClipboard: hud.show(.success(.offlineSaved))
-            case .copiedToClipboard: hud.show(.success(.offlineCopied))
-            case .pasteCommandPosted: hud.show(.success(.offlinePasteSent))
+            case .privateClipboard: hud.show(.clipboard(shortcut: pasteLatestShortcutDisplay))
+            case .copiedToClipboard: hud.show(.success(.copiedViaAppleFallback))
+            case .pasteCommandPosted: hud.show(.success(.pasteSentViaAppleFallback))
             }
             return
         }
         switch insertion {
-        case .privateClipboard: hud.show(.clipboard)
+        case .privateClipboard: hud.show(.clipboard(shortcut: pasteLatestShortcutDisplay))
         case .copiedToClipboard: hud.show(.success(.copied))
         case .pasteCommandPosted: hud.show(.success(.pasteSent))
         }
+    }
+
+    /// `pasteLatestShortcut` is a global hotkey that only functions with Input
+    /// Monitoring permission, which least-privilege mode never requests. The
+    /// HUD hint there points to the plain system ⌘V paste instead, since the
+    /// transcript is on the system clipboard in that mode.
+    private var pasteLatestShortcutDisplay: String {
+        accessMode == .leastPrivileges ? "⌘V" : pasteLatestShortcut.displayName
     }
 
     private func requestRequiredPermissions() {
@@ -1143,8 +891,7 @@ final class AppModel: ObservableObject {
         hotkeys.configure(
             dictate: dictateShortcut,
             dictateActivation: dictateActivationMode,
-            pasteLatest: pasteLatestShortcut,
-            openClipboard: openClipboardShortcut
+            pasteLatest: pasteLatestShortcut
         )
     }
 
@@ -1159,29 +906,21 @@ final class AppModel: ObservableObject {
         let encoder = JSONEncoder()
         defaults.set(try? encoder.encode(dictateShortcut), forKey: "shortcut.dictate")
         defaults.set(try? encoder.encode(pasteLatestShortcut), forKey: "shortcut.pasteLatest")
-        defaults.set(try? encoder.encode(openClipboardShortcut), forKey: "shortcut.openClipboard")
     }
-
-    var launchesAtLogin: Bool { SMAppService.mainApp.status == .enabled }
 
     func setLaunchAtLogin(_ enabled: Bool) {
         do {
             if enabled { try SMAppService.mainApp.register() }
             else { try SMAppService.mainApp.unregister() }
-            objectWillChange.send()
         } catch { lastError = error.localizedDescription }
-    }
-
-    private func openClipboard() {
-        requestedDestination = "Clipboard"
-        NSApp.activate(ignoringOtherApps: true)
-        NSApp.windows.first(where: { $0.title == "Dictator" })?.makeKeyAndOrderFront(nil)
+        launchesAtLogin = SMAppService.mainApp.status == .enabled
     }
 
     private func load() async {
         do {
             data = try await store.load()
             if let selectedStyleID, !data.styles.contains(where: { $0.id == selectedStyleID && $0.isEnabled }) { self.selectedStyleID = nil }
+            didCompleteInitialLoad = true
         } catch { lastError = error.localizedDescription }
     }
 
@@ -1190,14 +929,39 @@ final class AppModel: ObservableObject {
         initialLoadTask = nil
     }
 
+    @ObservationIgnored private var pendingPersistTask: Task<Void, Never>?
+    @ObservationIgnored private(set) var persistCount = 0
+
+    /// Coalesces bursts of edits (vocabulary, styles, snippets, transcripts)
+    /// into a single write instead of spawning a task per call.
     private func schedulePersistence() {
-        Task { @MainActor [weak self] in await self?.persist() }
+        pendingPersistTask?.cancel()
+        pendingPersistTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled, let self else { return }
+            await self.persist()
+            self.pendingPersistTask = nil
+        }
+    }
+
+    /// Persists immediately, skipping any pending debounce window. Used on
+    /// app termination so the last edit isn't lost mid-debounce. Guarded so
+    /// a termination that races (or precedes) the initial load can't
+    /// overwrite `data.json` with an incomplete or default in-memory
+    /// snapshot when nothing was actually pending to save.
+    func flushPersistence() async {
+        guard pendingPersistTask != nil, didCompleteInitialLoad else { return }
+        pendingPersistTask?.cancel()
+        pendingPersistTask = nil
+        await persist()
     }
 
     private func persist() async {
         let snapshot = data
-        do { try await store.save(snapshot) }
-        catch { lastError = "Could not save local data: \(error.localizedDescription)" }
+        do {
+            try await store.save(snapshot)
+            persistCount += 1
+        } catch { lastError = "Could not save local data: \(error.localizedDescription)" }
     }
 
     private func showError(_ message: String) {

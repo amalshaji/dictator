@@ -20,21 +20,9 @@ final class HotkeyLifecycleController {
         get { monitor.onRelease }
         set { monitor.onRelease = newValue }
     }
-    var onScreenAwarePress: ((pid_t?) -> Void)? {
-        get { monitor.onScreenAwarePress }
-        set { monitor.onScreenAwarePress = newValue }
-    }
-    var onScreenAwareRelease: (() -> Void)? {
-        get { monitor.onScreenAwareRelease }
-        set { monitor.onScreenAwareRelease = newValue }
-    }
     var onPasteLatest: (() -> Void)? {
         get { monitor.onPasteLatest }
         set { monitor.onPasteLatest = newValue }
-    }
-    var onOpenClipboard: (() -> Void)? {
-        get { monitor.onOpenClipboard }
-        set { monitor.onOpenClipboard = newValue }
     }
     var onWillSleep: (() -> Void)?
     var onDidWake: (() -> Void)?
@@ -75,14 +63,12 @@ final class HotkeyLifecycleController {
     func configure(
         dictate: GlobalShortcut,
         dictateActivation: HotkeyActivationMode,
-        pasteLatest: GlobalShortcut,
-        openClipboard: GlobalShortcut
+        pasteLatest: GlobalShortcut
     ) {
         monitor.configure(
             dictate: dictate,
             dictateActivation: dictateActivation,
-            pasteLatest: pasteLatest,
-            openClipboard: openClipboard
+            pasteLatest: pasteLatest
         )
     }
 

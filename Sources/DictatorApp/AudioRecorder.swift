@@ -1,3 +1,4 @@
+import Accelerate
 import AVFoundation
 import CoreMedia
 import DictatorCore
@@ -20,7 +21,8 @@ protocol AudioCaptureSession: AnyObject, Sendable {
     func start(
         tapHandler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
     ) async throws
-    func stop() async
+    func stop()
+    func invalidate() async
     func cancel()
 }
 
@@ -40,11 +42,21 @@ final class SystemAudioCaptureSession: AudioCaptureSession, @unchecked Sendable 
     // AVCaptureSession and its attachments are accessed only on this queue.
     private let lifecycleQueue = DispatchQueue(label: "ai.dictator.audio-capture.lifecycle")
     private let recoverySourceLock = NSLock()
+    private let deviceLookup: @Sendable () -> AVCaptureDevice?
     private var session: AVCaptureSession?
+    private var input: AVCaptureDeviceInput?
     private var output: AVCaptureAudioDataOutput?
     private var outputDelegate: AudioSampleBufferDelegate?
     private var currentRecoverySourceIdentifier: ObjectIdentifier?
     private let sampleQueue = DispatchQueue(label: "ai.dictator.audio-capture.samples")
+    // Built lazily on first start() and reused across recordings; only the
+    // existing recovery paths (runtime error, explicit cancel) and a changed
+    // or disconnected default input device rebuild it.
+    private(set) var sessionBuildCount = 0
+
+    init(deviceLookup: @escaping @Sendable () -> AVCaptureDevice? = { AVCaptureDevice.default(for: .audio) }) {
+        self.deviceLookup = deviceLookup
+    }
 
     var recoveryNotification: Notification.Name {
         AVCaptureSession.runtimeErrorNotification
@@ -70,11 +82,23 @@ final class SystemAudioCaptureSession: AudioCaptureSession, @unchecked Sendable 
         }
     }
 
-    func stop() async {
+    /// Pauses capture without tearing down the prepared session, so the next
+    /// start() only needs to call startRunning(). Fire-and-forget: does not
+    /// wait for stopRunning() to complete.
+    func stop() {
+        setRecoverySourceIdentifier(nil)
+        lifecycleQueue.async { [self] in
+            if session?.isRunning == true { session?.stopRunning() }
+        }
+    }
+
+    /// Fully tears down the session so the next start() rebuilds from
+    /// scratch. Used by the runtime-error recovery path and by cancel().
+    func invalidate() async {
         setRecoverySourceIdentifier(nil)
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             lifecycleQueue.async { [self] in
-                replaceSessionOnLifecycleQueue()
+                teardownOnLifecycleQueue()
                 sampleQueue.async { continuation.resume() }
             }
         }
@@ -82,29 +106,58 @@ final class SystemAudioCaptureSession: AudioCaptureSession, @unchecked Sendable 
 
     func cancel() {
         setRecoverySourceIdentifier(nil)
-        lifecycleQueue.async { [self] in replaceSessionOnLifecycleQueue() }
+        lifecycleQueue.async { [self] in teardownOnLifecycleQueue() }
     }
 
     private func startOnLifecycleQueue(
         tapHandler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
     ) throws {
-        replaceSessionOnLifecycleQueue()
+        if let session, let outputDelegate, let input, !defaultInputDeviceChanged(from: input) {
+            outputDelegate.updateTapHandler(tapHandler)
+            setRecoverySourceIdentifier(ObjectIdentifier(session))
+            session.startRunning()
+            if session.isRunning { return }
+            // The reused session failed to (re)start; rebuild once and retry
+            // rather than surfacing a spurious failure.
+            teardownOnLifecycleQueue()
+            try buildAndStart(tapHandler: tapHandler)
+            return
+        }
+        teardownOnLifecycleQueue()
+        try buildAndStart(tapHandler: tapHandler)
+    }
+
+    private func buildAndStart(
+        tapHandler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
+    ) throws {
         let session = AVCaptureSession()
+        sessionBuildCount += 1
         self.session = session
         setRecoverySourceIdentifier(ObjectIdentifier(session))
         do {
             try configureAndStart(session, tapHandler: tapHandler)
         } catch {
-            replaceSessionOnLifecycleQueue()
+            teardownOnLifecycleQueue()
             throw error
         }
+    }
+
+    /// True when the reused session's attached input no longer matches the
+    /// system default audio input (the user switched the default input
+    /// device, or it was disconnected) while the session sat idle between
+    /// recordings.
+    private func defaultInputDeviceChanged(from input: AVCaptureDeviceInput) -> Bool {
+        let attached = input.device
+        guard attached.isConnected else { return true }
+        guard let current = deviceLookup() else { return true }
+        return current.uniqueID != attached.uniqueID
     }
 
     private func configureAndStart(
         _ session: AVCaptureSession,
         tapHandler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
     ) throws {
-        guard let device = AVCaptureDevice.default(for: .audio) else {
+        guard let device = deviceLookup() else {
             throw AudioRecorderError.noInput
         }
         let input = try AVCaptureDeviceInput(device: device)
@@ -132,6 +185,7 @@ final class SystemAudioCaptureSession: AudioCaptureSession, @unchecked Sendable 
         }
         session.addOutput(output)
         session.commitConfiguration()
+        self.input = input
         self.output = output
         self.outputDelegate = outputDelegate
         session.startRunning()
@@ -140,9 +194,10 @@ final class SystemAudioCaptureSession: AudioCaptureSession, @unchecked Sendable 
         }
     }
 
-    private func replaceSessionOnLifecycleQueue() {
+    private func teardownOnLifecycleQueue() {
         output?.setSampleBufferDelegate(nil, queue: nil)
         if session?.isRunning == true { session?.stopRunning() }
+        input = nil
         output = nil
         outputDelegate = nil
         session = nil
@@ -157,10 +212,17 @@ final class SystemAudioCaptureSession: AudioCaptureSession, @unchecked Sendable 
 final class AudioSampleBufferDelegate: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate,
     @unchecked Sendable
 {
-    private let tapHandler: @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
+    private let lock = NSLock()
+    private var tapHandler: @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
 
     init(tapHandler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void) {
         self.tapHandler = tapHandler
+    }
+
+    /// Allows a reused capture session to route buffers to the current
+    /// recording's tap handler without rebuilding the delegate/output.
+    func updateTapHandler(_ tapHandler: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void) {
+        lock.withLock { self.tapHandler = tapHandler }
     }
 
     func captureOutput(
@@ -169,7 +231,8 @@ final class AudioSampleBufferDelegate: NSObject, AVCaptureAudioDataOutputSampleB
         from connection: AVCaptureConnection
     ) {
         guard let pcm = Self.pcmBuffer(from: sampleBuffer) else { return }
-        tapHandler(pcm, AVAudioTime(sampleTime: 0, atRate: pcm.format.sampleRate))
+        let handler = lock.withLock { tapHandler }
+        handler(pcm, AVAudioTime(sampleTime: 0, atRate: pcm.format.sampleRate))
     }
 
     static func pcmBuffer(from sampleBuffer: CMSampleBuffer) -> AVAudioPCMBuffer? {
@@ -236,7 +299,11 @@ final class AudioRecorder: AudioRecording {
     }
 
     func requestPermission() async -> Bool {
-        await AVCaptureDevice.requestAccess(for: .audio)
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized: return true
+        case .notDetermined: return await AVCaptureDevice.requestAccess(for: .audio)
+        default: return false
+        }
     }
 
     func start() async throws {
@@ -258,37 +325,33 @@ final class AudioRecorder: AudioRecording {
     func makeTapHandler(
         recordingID: UUID? = nil
     ) -> @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void {
-        { [buffer, onLevel] pcm, _ in
-            guard let processed = AudioRecorder.process(pcm) else { return }
-            guard buffer.appendResampled(
-                processed.samples,
-                sourceRate: pcm.format.sampleRate,
-                recordingID: recordingID
-            ) else { return }
-            onLevel?(processed.normalizedLevel)
+        let levelThrottle = LevelThrottle()
+        return { [buffer, onLevel, levelThrottle] pcm, _ in
+            guard let level = AudioRecorder.normalizedLevel(for: pcm) else { return }
+            guard buffer.appendResampled(pcm, recordingID: recordingID) else { return }
+            if let emitted = levelThrottle.emit(level) { onLevel?(emitted) }
         }
     }
 
-    nonisolated private static func process(
-        _ pcm: AVAudioPCMBuffer
-    ) -> (samples: [Float], normalizedLevel: Double)? {
+    nonisolated private static func normalizedLevel(for pcm: AVAudioPCMBuffer) -> Double? {
         guard let channels = pcm.floatChannelData else { return nil }
         let frames = Int(pcm.frameLength)
         let channelCount = Int(pcm.format.channelCount)
         guard frames > 0, channelCount > 0 else { return nil }
-        var mono = [Float](repeating: 0, count: frames)
+        var rmsSum: Float = 0
         for channel in 0..<channelCount {
-            for frame in 0..<frames { mono[frame] += channels[channel][frame] / Float(channelCount) }
+            var channelRMS: Float = 0
+            vDSP_rmsqv(channels[channel], 1, &channelRMS, vDSP_Length(frames))
+            rmsSum += channelRMS
         }
-        let rms = sqrt(mono.reduce(0) { $0 + $1 * $1 } / Float(frames))
+        let rms = rmsSum / Float(channelCount)
         let decibels = 20 * log10(max(Double(rms), 0.000_01))
-        let normalizedLevel = max(0, min(1, (decibels + 55) / 40))
-        return (mono, normalizedLevel)
+        return max(0, min(1, (decibels + 55) / 40))
     }
 
     func stop() async -> RecordedAudio {
         let recordingID = endSession()
-        await session.stop()
+        session.stop()
         let pcm = recordingID.map(buffer.finish) ?? Data()
         let duration = Double(pcm.count) / 2 / 16_000
         return RecordedAudio(wavData: WAVEncoder.encodePCM16(pcm), duration: duration)
@@ -310,7 +373,7 @@ final class AudioRecorder: AudioRecording {
         recoveryTask?.cancel()
         recoveryTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            await session.stop()
+            await session.invalidate()
             while activeRecordingID == recordingID, !Task.isCancelled {
                 do {
                     try await session.start(tapHandler: makeTapHandler(recordingID: recordingID))
@@ -334,6 +397,27 @@ final class AudioRecorder: AudioRecording {
     }
 }
 
+/// Throttles level meter callbacks to at most one emission per interval,
+/// reporting the loudest level observed since the previous emission.
+private final class LevelThrottle: @unchecked Sendable {
+    private static let minInterval = Duration.milliseconds(33)
+    private let lock = NSLock()
+    private var lastEmit: ContinuousClock.Instant?
+    private var maxLevel: Double = 0
+
+    func emit(_ level: Double) -> Double? {
+        lock.withLock {
+            maxLevel = max(maxLevel, level)
+            let now = ContinuousClock.now
+            if let lastEmit, now - lastEmit < Self.minInterval { return nil }
+            lastEmit = now
+            let emitted = maxLevel
+            maxLevel = 0
+            return emitted
+        }
+    }
+}
+
 private final class AudioBuffer: @unchecked Sendable {
     private static let outputSampleRate = 16_000.0
     private static let outputFormat = AVAudioFormat(
@@ -348,6 +432,8 @@ private final class AudioBuffer: @unchecked Sendable {
     private var activeRecordingID: UUID?
     private var converter: AVAudioConverter?
     private var converterSourceRate: Double?
+    private var converterChannelCount: AVAudioChannelCount?
+    private var reusableOutputBuffer: AVAudioPCMBuffer?
 
     func begin(_ recordingID: UUID) {
         lock.withLock {
@@ -376,36 +462,44 @@ private final class AudioBuffer: @unchecked Sendable {
         }
     }
 
-    func appendResampled(
-        _ samples: [Float],
-        sourceRate: Double,
-        recordingID: UUID?
-    ) -> Bool {
+    /// Feeds the captured buffer directly into the converter, which performs
+    /// the channel mixdown, resampling, and bit-depth conversion in one pass.
+    func appendResampled(_ pcm: AVAudioPCMBuffer, recordingID: UUID?) -> Bool {
         lock.withLock {
             guard recordingID == nil || activeRecordingID == recordingID else { return false }
-            guard prepareConverter(sourceRate: sourceRate),
-                  let input = Self.inputBuffer(samples: samples, sampleRate: sourceRate),
-                  let output = convert(input)
+            guard prepareConverter(
+                sourceRate: pcm.format.sampleRate,
+                channelCount: pcm.format.channelCount
+            ), let output = convert(pcm)
             else { return false }
             bytes.append(output)
             return true
         }
     }
 
-    private func prepareConverter(sourceRate: Double) -> Bool {
-        if converterSourceRate == sourceRate, converter != nil { return true }
+    private func prepareConverter(sourceRate: Double, channelCount: AVAudioChannelCount) -> Bool {
+        if converterSourceRate == sourceRate, converterChannelCount == channelCount,
+           converter != nil
+        {
+            return true
+        }
         if converter != nil { _ = finishConversion() }
         resetConverter()
         guard let inputFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: sourceRate,
-            channels: 1,
+            channels: channelCount,
             interleaved: false
         ), let converter = AVAudioConverter(from: inputFormat, to: Self.outputFormat)
         else { return false }
         converter.primeMethod = .normal
+        // Without this, the converter only takes the first channel when
+        // remapping to mono, silently dropping audio from a mic on any
+        // other input channel instead of mixing all channels down.
+        converter.downmix = true
         self.converter = converter
         converterSourceRate = sourceRate
+        converterChannelCount = channelCount
         return true
     }
 
@@ -414,10 +508,7 @@ private final class AudioBuffer: @unchecked Sendable {
         let outputFrameCapacity = AVAudioFrameCount(ceil(
             Double(input.frameLength) * Self.outputSampleRate / input.format.sampleRate
         )) + 1
-        guard let output = AVAudioPCMBuffer(
-            pcmFormat: Self.outputFormat,
-            frameCapacity: outputFrameCapacity
-        ) else { return nil }
+        guard let output = outputBuffer(capacity: outputFrameCapacity) else { return nil }
         let inputProvider = AudioConverterInputProvider(input)
         var conversionError: NSError?
         let status = converter.convert(to: output, error: &conversionError) { _, inputStatus in
@@ -434,10 +525,7 @@ private final class AudioBuffer: @unchecked Sendable {
             trailingFrames * Self.outputSampleRate / sourceRate
         )) + 1)
         while true {
-            guard let output = AVAudioPCMBuffer(
-                pcmFormat: Self.outputFormat,
-                frameCapacity: outputFrameCapacity
-            ) else { return false }
+            guard let output = outputBuffer(capacity: outputFrameCapacity) else { return false }
             var conversionError: NSError?
             let status = converter.convert(to: output, error: &conversionError) { _, inputStatus in
                 inputStatus.pointee = .endOfStream
@@ -452,26 +540,24 @@ private final class AudioBuffer: @unchecked Sendable {
         }
     }
 
+    /// Reuses the cached output buffer when it is already large enough,
+    /// avoiding an allocation on every converted chunk.
+    private func outputBuffer(capacity: AVAudioFrameCount) -> AVAudioPCMBuffer? {
+        if let existing = reusableOutputBuffer, existing.frameCapacity >= capacity {
+            existing.frameLength = 0
+            return existing
+        }
+        guard let fresh = AVAudioPCMBuffer(pcmFormat: Self.outputFormat, frameCapacity: capacity)
+        else { return nil }
+        reusableOutputBuffer = fresh
+        return fresh
+    }
+
     private func resetConverter() {
         converter?.reset()
         converter = nil
         converterSourceRate = nil
-    }
-
-    private static func inputBuffer(samples: [Float], sampleRate: Double) -> AVAudioPCMBuffer? {
-        guard let format = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: sampleRate,
-            channels: 1,
-            interleaved: false
-        ), let input = AVAudioPCMBuffer(
-            pcmFormat: format,
-            frameCapacity: AVAudioFrameCount(samples.count)
-        ), let channel = input.floatChannelData?[0]
-        else { return nil }
-        input.frameLength = AVAudioFrameCount(samples.count)
-        for index in samples.indices { channel[index] = samples[index] }
-        return input
+        converterChannelCount = nil
     }
 
     private static func pcm16Data(from buffer: AVAudioPCMBuffer) -> Data? {

@@ -1,4 +1,3 @@
-import AppKit
 import DictatorCore
 import Foundation
 import XCTest
@@ -6,47 +5,25 @@ import XCTest
 
 @MainActor
 final class HomePresentationTests: XCTestCase {
-    func testWindowChromeBackgroundMatchesSidebarAndContentAtEveryWidth() throws {
-        for width in [920.0, 1_400.0] {
-            let image = WindowChromeStyle.backgroundImage(windowWidth: width)
-            let bitmap = try XCTUnwrap(image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
-            func color(at point: CGFloat) -> NSColor? {
-                let pixel = min(bitmap.pixelsWide - 1, Int(point / image.size.width * CGFloat(bitmap.pixelsWide)))
-                return bitmap.colorAt(x: pixel, y: 0)
-            }
-
-            XCTAssertEqual(image.size.width, width)
-            assertColor(color(at: 0), red: 23, green: 21, blue: 26)
-            assertColor(color(at: DictatorDesign.sidebarWidth - 1), red: 23, green: 21, blue: 26)
-            assertColor(color(at: DictatorDesign.sidebarWidth), red: 246, green: 244, blue: 240)
-            assertColor(color(at: width - 1), red: 246, green: 244, blue: 240)
-        }
+    func testHomeHeaderTitleMapsDictationPhaseToState() {
+        XCTAssertEqual(HomeHeaderPresentation.title(for: .idle), "Ready")
+        XCTAssertEqual(HomeHeaderPresentation.title(for: .listening), "Listening…")
+        XCTAssertEqual(HomeHeaderPresentation.title(for: .processing), "Transcribing…")
     }
 
-    func testTranscriptMetadataLabelsSTTProviderAndLatency() {
-        let record = TranscriptRecord(
-            rawText: "Hello", finalText: "Hello", sttProvider: .groq, sttModel: "whisper",
-            audioDuration: 1, sttLatency: 0.301, insertionOutcome: "inserted"
-        )
-
-        XCTAssertEqual(
-            TranscriptMetadataFormatter.pipelineSegments(for: record),
-            ["STT: Groq, 301 ms", "Total: —"]
-        )
+    func testTranscriptRowFormatterUsesOnlyTheFirstLineOfFinalText() {
+        XCTAssertEqual(TranscriptRowFormatter.firstLine(of: "Hello"), "Hello")
+        XCTAssertEqual(TranscriptRowFormatter.firstLine(of: "Hello\nworld"), "Hello")
+        XCTAssertEqual(TranscriptRowFormatter.firstLine(of: "Hello\nworld\nagain"), "Hello")
     }
 
-    func testTranscriptMetadataLabelsCleanupAndTotalPipelineLatency() {
-        let record = TranscriptRecord(
-            rawText: "hello", finalText: "Hello.", sttProvider: .groq, sttModel: "whisper",
-            audioDuration: 1, sttLatency: 0.301, pipelineLatency: 0.612,
-            cleanup: .init(provider: .groq, model: "gpt-oss", latency: 0.184),
-            insertionOutcome: "inserted"
-        )
+    func testTranscriptRowFormatterProducesARelativeTimeString() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let twoMinutesAgo = now.addingTimeInterval(-120)
 
-        XCTAssertEqual(
-            TranscriptMetadataFormatter.pipelineSegments(for: record),
-            ["STT: Groq, 301 ms", "Cleanup: Groq, 184 ms", "Total: 612 ms"]
-        )
+        let relative = TranscriptRowFormatter.relativeTime(from: twoMinutesAgo, relativeTo: now)
+
+        XCTAssertTrue(relative.contains("2"))
     }
 
     func testHomeActivityBuildsSevenChronologicalDayBuckets() throws {
@@ -96,28 +73,12 @@ final class HomePresentationTests: XCTestCase {
         XCTAssertEqual(HomeDashboardAnalytics.formattedSpokenTime(4 * 3_600 + 23 * 60), "4 hr 23 min")
     }
 
-    func testHomeEstimatedMinutesSavedComparesSpeechWithFortyWPMTyping() {
-        let words = Array(repeating: "word", count: 240).joined(separator: " ")
-        let transcript = TranscriptRecord(
-            rawText: words, finalText: words, sttProvider: .groq, sttModel: "whisper",
-            audioDuration: 120, sttLatency: 0.1, insertionOutcome: "inserted"
-        )
-        var statistics = LifetimeStatistics()
-        statistics.record(transcript)
-
-        XCTAssertEqual(HomeDashboardAnalytics.estimatedMinutesSaved(from: statistics), 4)
-    }
-
-    func testHomeTranscriptSearchMatchesCurrentTextRawTextAndSourceApp() {
-        let revised = TranscriptRevision(
-            text: "Plan the September launch", origin: .manual, repairLatency: 0
-        )
+    func testHomeTranscriptSearchMatchesFinalTextRawTextAndSourceApp() {
         let launch = TranscriptRecord(
             createdAt: Date(timeIntervalSince1970: 300),
             rawText: "Plan the August launch", finalText: "Plan the August launch",
             sttProvider: .groq, sttModel: "whisper", sourceBundleID: "com.apple.mail",
-            audioDuration: 1, sttLatency: 0.1, insertionOutcome: "inserted",
-            revisions: [revised], preferredRevisionID: revised.id
+            audioDuration: 1, sttLatency: 0.1, insertionOutcome: "inserted"
         )
         let notes = TranscriptRecord(
             createdAt: Date(timeIntervalSince1970: 200),
@@ -126,10 +87,6 @@ final class HomePresentationTests: XCTestCase {
             audioDuration: 1, sttLatency: 0.1, insertionOutcome: "inserted"
         )
 
-        XCTAssertEqual(
-            HomeDashboardAnalytics.transcripts(matching: "september", in: [notes, launch]).map(\.id),
-            [launch.id]
-        )
         XCTAssertEqual(
             HomeDashboardAnalytics.transcripts(matching: "AUGUST", in: [notes, launch]).map(\.id),
             [launch.id]
@@ -142,60 +99,5 @@ final class HomePresentationTests: XCTestCase {
             HomeDashboardAnalytics.transcripts(matching: "mail", in: [notes, launch]).map(\.id),
             [launch.id]
         )
-    }
-
-    func testHomeTopApplicationRanksKnownBundleIdentifiersByUsage() {
-        let transcripts = [
-            TranscriptRecord(
-                rawText: "One", finalText: "One", sttProvider: .groq, sttModel: "whisper",
-                sourceBundleID: "com.apple.mail", audioDuration: 1, sttLatency: 0.1,
-                insertionOutcome: "inserted"
-            ),
-            TranscriptRecord(
-                rawText: "Two", finalText: "Two", sttProvider: .groq, sttModel: "whisper",
-                sourceBundleID: "com.apple.Notes", audioDuration: 1, sttLatency: 0.1,
-                insertionOutcome: "inserted"
-            ),
-            TranscriptRecord(
-                rawText: "Three", finalText: "Three", sttProvider: .groq, sttModel: "whisper",
-                sourceBundleID: "com.apple.mail", audioDuration: 1, sttLatency: 0.1,
-                insertionOutcome: "inserted"
-            ),
-            TranscriptRecord(
-                rawText: "No app", finalText: "No app", sttProvider: .groq, sttModel: "whisper",
-                audioDuration: 1, sttLatency: 0.1, insertionOutcome: "clipboard"
-            ),
-        ]
-
-        XCTAssertEqual(
-            HomeDashboardAnalytics.topApplication(in: transcripts),
-            HomeApplicationUsage(bundleIdentifier: "com.apple.mail", transcriptCount: 2)
-        )
-    }
-
-    func testUsageCurrencyFormattingUsesStableFractionPrecision() {
-        XCTAssertEqual(
-            UsageDisplayFormatter.currency(Decimal(string: "0.0119277777777777793024")!, complete: true),
-            "$0.0119"
-        )
-        XCTAssertEqual(UsageDisplayFormatter.currency(2, complete: true), "$2.00")
-        XCTAssertEqual(UsageDisplayFormatter.currency(1, complete: false), "Partially available")
-    }
-
-    private func assertColor(
-        _ color: NSColor?,
-        red: CGFloat,
-        green: CGFloat,
-        blue: CGFloat,
-        file: StaticString = #filePath,
-        line: UInt = #line
-    ) {
-        guard let color = color?.usingColorSpace(.deviceRGB) else {
-            return XCTFail("Expected an RGB color", file: file, line: line)
-        }
-        XCTAssertEqual(color.redComponent, red / 255, accuracy: 0.04, file: file, line: line)
-        XCTAssertEqual(color.greenComponent, green / 255, accuracy: 0.04, file: file, line: line)
-        XCTAssertEqual(color.blueComponent, blue / 255, accuracy: 0.04, file: file, line: line)
-        XCTAssertEqual(color.alphaComponent, 1, accuracy: 0.001, file: file, line: line)
     }
 }

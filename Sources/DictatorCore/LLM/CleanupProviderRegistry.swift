@@ -5,19 +5,17 @@ public enum CleanupProviderRegistry {
         switch kind {
         case .groq: OpenAICompatibleCleanupProvider.groq()
         case .cerebras: OpenAICompatibleCleanupProvider.cerebras()
-        case .cloudflare: CloudflareCleanupProvider()
-        case .gemini: GeminiCleanupProvider()
-        case .xAI: OpenAICompatibleCleanupProvider.xAI()
+        case .gemini: OpenAICompatibleCleanupProvider.gemini()
         case .openRouter: OpenAICompatibleCleanupProvider.openRouter()
         case .openAICompatible: OpenAICompatibleCleanupProvider.custom()
         default: nil
         }
     }
 
-    public static var metadata: [ProviderMetadata] {
-        [OpenAICompatibleCleanupProvider.groq().metadata, OpenAICompatibleCleanupProvider.cerebras().metadata,
-         CloudflareCleanupProvider().metadata, GeminiCleanupProvider().metadata,
-         OpenAICompatibleCleanupProvider.xAI().metadata, OpenAICompatibleCleanupProvider.openRouter().metadata,
-         OpenAICompatibleCleanupProvider.custom().metadata]
-    }
+    public static let metadata: [ProviderMetadata] = [
+        OpenAICompatibleCleanupProvider.groq().metadata, OpenAICompatibleCleanupProvider.cerebras().metadata,
+        OpenAICompatibleCleanupProvider.gemini().metadata,
+        OpenAICompatibleCleanupProvider.openRouter().metadata,
+        OpenAICompatibleCleanupProvider.custom().metadata
+    ]
 }

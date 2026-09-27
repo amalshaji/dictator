@@ -32,4 +32,26 @@ final class PersonalizationTests: XCTestCase {
         ]
         XCTAssertEqual(VocabularyNormalizer.normalize("Use post gress in dictater.", vocabulary: entries), "Use PostgreSQL in Dictator.")
     }
+
+    func testVocabularyNormalizerCachesCompiledMatchersForRepeatedEntries() {
+        let entries = [VocabularyEntry(value: "PersonalizationTestsVocabCacheProbe", variants: ["pztvcp"])]
+        let before = VocabularyNormalizer.compileCount
+        _ = VocabularyNormalizer.normalize("Use pztvcp now.", vocabulary: entries)
+        let afterFirstCall = VocabularyNormalizer.compileCount
+        XCTAssertEqual(afterFirstCall, before + 1)
+
+        _ = VocabularyNormalizer.normalize("Use pztvcp again.", vocabulary: entries)
+        XCTAssertEqual(VocabularyNormalizer.compileCount, afterFirstCall, "second call with identical entries should hit the cache, not recompile")
+    }
+
+    func testSnippetExpanderCachesCompiledMatchersForRepeatedEntries() {
+        let snippets = [SnippetEntry(trigger: "personalizationtestssnippetcacheprobe", expansion: "expanded-value")]
+        let before = SnippetExpander.compileCount
+        _ = SnippetExpander.expand("trigger personalizationtestssnippetcacheprobe here", snippets: snippets)
+        let afterFirstCall = SnippetExpander.compileCount
+        XCTAssertEqual(afterFirstCall, before + 1)
+
+        _ = SnippetExpander.expand("trigger personalizationtestssnippetcacheprobe again", snippets: snippets)
+        XCTAssertEqual(SnippetExpander.compileCount, afterFirstCall, "second call with identical entries should hit the cache, not recompile")
+    }
 }

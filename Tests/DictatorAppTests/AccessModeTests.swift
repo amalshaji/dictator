@@ -5,9 +5,9 @@ import XCTest
 @MainActor
 final class AccessModeTests: XCTestCase {
     func testMenuBarRecordingControlTracksRecordingPhase() {
-        XCTAssertEqual(MenuBarRecordingControl(phase: .idle).title, "Start Recording")
+        XCTAssertEqual(MenuBarRecordingControl(phase: .idle).title, "Start Dictation")
         XCTAssertTrue(MenuBarRecordingControl(phase: .idle).isEnabled)
-        XCTAssertEqual(MenuBarRecordingControl(phase: .listening).title, "Stop Recording")
+        XCTAssertEqual(MenuBarRecordingControl(phase: .listening).title, "Stop Dictation")
         XCTAssertTrue(MenuBarRecordingControl(phase: .listening).isEnabled)
         XCTAssertEqual(MenuBarRecordingControl(phase: .processing).title, "Transcribing…")
         XCTAssertFalse(MenuBarRecordingControl(phase: .processing).isEnabled)
@@ -21,8 +21,7 @@ final class AccessModeTests: XCTestCase {
         let model = AppModel(
             keychain: AppTestCredentialStore(),
             appleSpeechProvider: nil,
-            defaults: defaults,
-            connectivity: AppTestConnectivityMonitor()
+            defaults: defaults
         )
 
         XCTAssertEqual(model.accessMode, .leastPrivileges)
@@ -37,8 +36,7 @@ final class AccessModeTests: XCTestCase {
         let model = AppModel(
             keychain: AppTestCredentialStore(),
             appleSpeechProvider: nil,
-            defaults: defaults,
-            connectivity: AppTestConnectivityMonitor()
+            defaults: defaults
         )
 
         XCTAssertEqual(model.accessMode, .systemWide)
@@ -52,8 +50,7 @@ final class AccessModeTests: XCTestCase {
         let model = AppModel(
             keychain: AppTestCredentialStore(),
             appleSpeechProvider: nil,
-            defaults: defaults,
-            connectivity: AppTestConnectivityMonitor()
+            defaults: defaults
         )
 
         model.setAccessMode(.systemWide)
@@ -61,8 +58,7 @@ final class AccessModeTests: XCTestCase {
         let restored = AppModel(
             keychain: AppTestCredentialStore(),
             appleSpeechProvider: nil,
-            defaults: defaults,
-            connectivity: AppTestConnectivityMonitor()
+            defaults: defaults
         )
         XCTAssertEqual(restored.accessMode, .systemWide)
     }
@@ -70,19 +66,12 @@ final class AccessModeTests: XCTestCase {
     func testLeastPrivilegesAccessCapabilitiesAreClipboardOnly() {
         XCTAssertFalse(AppAccessMode.leastPrivileges.allowsGlobalShortcuts)
         XCTAssertFalse(AppAccessMode.leastPrivileges.allowsFocusedInsertion)
-        XCTAssertFalse(AppAccessMode.leastPrivileges.allowsScreenAwareDictation)
         XCTAssertTrue(AppAccessMode.leastPrivileges.deliversToClipboard)
     }
 
     func testAccessModePresentationExplainsItsPermissionBoundary() {
         XCTAssertEqual(AppAccessMode.leastPrivileges.title, "Use with least privileges")
-        XCTAssertEqual(AppAccessMode.leastPrivileges.statusTitle, "Microphone only")
-        XCTAssertEqual(
-            AppAccessMode.leastPrivileges.recordingInstruction,
-            "Start from the menu bar, stop from the pill, then press ⌘V to paste."
-        )
         XCTAssertEqual(AppAccessMode.systemWide.title, "Use system-wide")
-        XCTAssertEqual(AppAccessMode.systemWide.statusTitle, "System-wide enabled")
     }
 
     func testSwitchingAccessModesPreservesSystemWidePreferences() throws {
@@ -95,21 +84,16 @@ final class AccessModeTests: XCTestCase {
         let model = AppModel(
             keychain: AppTestCredentialStore(),
             appleSpeechProvider: nil,
-            defaults: defaults,
-            connectivity: AppTestConnectivityMonitor()
+            defaults: defaults
         )
-        model.screenAwareEnabled = true
-
         model.setAccessMode(.leastPrivileges)
 
         XCTAssertEqual(model.insertionMode, .clipboard)
         XCTAssertEqual(defaults.string(forKey: "insertionMode"), InsertionMode.insert.rawValue)
-        XCTAssertTrue(model.screenAwareEnabled)
 
         model.setAccessMode(.systemWide)
 
         XCTAssertEqual(model.insertionMode, .insert)
-        XCTAssertTrue(model.screenAwareEnabled)
     }
 
     func testLeastPrivilegesOnboardingRequiresOnlyMicrophone() throws {
@@ -119,8 +103,7 @@ final class AccessModeTests: XCTestCase {
         let model = AppModel(
             keychain: AppTestCredentialStore(),
             appleSpeechProvider: nil,
-            defaults: defaults,
-            connectivity: AppTestConnectivityMonitor()
+            defaults: defaults
         )
         model.microphoneGranted = true
         model.accessibilityGranted = false
@@ -137,8 +120,7 @@ final class AccessModeTests: XCTestCase {
         let model = AppModel(
             keychain: AppTestCredentialStore(),
             appleSpeechProvider: nil,
-            defaults: defaults,
-            connectivity: AppTestConnectivityMonitor()
+            defaults: defaults
         )
         model.setAccessMode(.systemWide)
         model.microphoneGranted = true
@@ -161,8 +143,7 @@ final class AccessModeTests: XCTestCase {
         let model = AppModel(
             keychain: AppTestCredentialStore(),
             appleSpeechProvider: nil,
-            defaults: defaults,
-            connectivity: AppTestConnectivityMonitor()
+            defaults: defaults
         )
 
         model.setInsertionMode(.insert)

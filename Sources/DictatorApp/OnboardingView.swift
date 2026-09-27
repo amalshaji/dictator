@@ -5,7 +5,6 @@ enum OnboardingStep: Int, CaseIterable {
     case welcome
     case permissions
     case provider
-    case offlineMode
     case ready
 
     var next: Self? { Self(rawValue: rawValue + 1) }
@@ -13,16 +12,10 @@ enum OnboardingStep: Int, CaseIterable {
 }
 
 struct OnboardingView: View {
-    @ObservedObject var model: AppModel
+    let model: AppModel
     @State private var step: OnboardingStep = .welcome
-    @State private var provider: ProviderKind = .groq
-    @State private var apiKey = ""
-    @State private var accountID = ""
-    @State private var providerStatus = ""
-    @State private var connecting = false
     @State private var scratchText = ""
     @FocusState private var scratchFocused: Bool
-    private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
         ZStack {
@@ -34,7 +27,6 @@ struct OnboardingView: View {
                     case .welcome: welcome
                     case .permissions: permissions
                     case .provider: providerSetup
-                    case .offlineMode: offlineModeSetup
                     case .ready: ready
                     }
                 }
@@ -43,8 +35,12 @@ struct OnboardingView: View {
             }
             .padding(38)
         }
-        .onReceive(timer) { _ in if step == .permissions { model.refreshPermissionState() } }
-        .onAppear { provider = model.selectedSTT }
+        .task(id: step) {
+            while step == .permissions && !Task.isCancelled {
+                model.refreshPermissionState()
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
         .onChange(of: step) { _, value in
             guard value == .ready else { return }
             Task { @MainActor in
@@ -66,17 +62,17 @@ struct OnboardingView: View {
     private var welcome: some View {
         VStack(alignment: .leading, spacing: 20) {
             WaveMarkLarge()
-            Text("Speak. Release. Keep moving.").font(.dictatorDisplay(38))
+            Text("Speak. Release. Keep moving.").font(.dictatorDisplay)
             Text("Record from the menu bar and turn speech into text on your clipboard. You can optionally enable system-wide shortcuts and direct insertion later.")
-                .font(.dictatorBody(16)).foregroundStyle(.secondary).lineSpacing(4)
+                .font(.dictatorBodyLarge).foregroundStyle(DictatorDesign.textSecondary).lineSpacing(4)
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var permissions: some View {
         VStack(alignment: .leading, spacing: 22) {
-            Text("Choose how Dictator works").font(.dictatorDisplay(30))
+            Text("Choose how Dictator works").font(.dictatorDisplay)
             Text("Least privilege needs only your microphone. System-wide mode adds shortcuts and direct insertion, which macOS protects with additional permissions.")
-                .font(.dictatorBody(14)).foregroundStyle(.secondary)
+                .font(.dictatorBodyLarge).foregroundStyle(DictatorDesign.textSecondary)
             HStack(spacing: 10) {
                 accessModeChoice(
                     .leastPrivileges,
@@ -91,14 +87,14 @@ struct OnboardingView: View {
                     recommended: false
                 )
             }
-            permissionRow(
-                "Microphone",
+            PermissionRow(
+                title: "Microphone",
                 detail: "Records only after you start a dictation",
                 granted: model.microphoneGranted
             )
             if model.accessMode == .systemWide {
-                permissionRow("Accessibility", detail: "Inserts text into the focused field", granted: model.accessibilityGranted)
-                permissionRow("Input Monitoring", detail: "Detects shortcuts while another app is active", granted: model.inputMonitoringGranted)
+                PermissionRow(title: "Accessibility", detail: "Inserts text into the focused field", granted: model.accessibilityGranted)
+                PermissionRow(title: "Input Monitoring", detail: "Detects shortcuts while another app is active", granted: model.inputMonitoringGranted)
             }
             Button(model.accessMode == .leastPrivileges ? "Allow microphone" : "Grant permissions") {
                 Task { await model.requestOnboardingPermissions() }
@@ -108,143 +104,49 @@ struct OnboardingView: View {
                 Text(model.accessMode == .leastPrivileges
                     ? "Allow microphone access to continue. No other macOS permission is required."
                     : "If System Settings opens, enable Dictator in the displayed list and come back here.")
-                    .font(.dictatorBody(12)).foregroundStyle(.orange)
+                    .font(.dictatorBody).foregroundStyle(DictatorDesign.textError)
             }
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var providerSetup: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("Connect speech-to-text").font(.dictatorDisplay(30))
-            Text("Apple keeps audio on this Mac after its initial model download. Cloud providers receive audio directly and keep their keys in macOS Keychain.")
-                .font(.dictatorBody(14)).foregroundStyle(.secondary)
-            VStack(alignment: .leading, spacing: 8) {
-                Text("CHOOSE A PROVIDER").font(.dictatorUtility(9)).foregroundStyle(DictatorDesign.muted)
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                    ForEach(model.sttMetadata, id: \.kind) { item in
-                        providerChoice(kind: item.kind, name: item.displayName)
-                    }
-                }
-            }
-            if provider == .appleSpeech {
-                AppleSpeechModelSetupView(model: model)
-            } else {
-                SecureField("API key", text: $apiKey).textFieldStyle(DictatorTextFieldStyle())
-                if provider == .cloudflare { TextField("Cloudflare account ID", text: $accountID).textFieldStyle(DictatorTextFieldStyle()) }
-            }
-            Button(connecting ? appleOrCloudProgressTitle : appleOrCloudActionTitle) { Task { await connect() } }
-                .dictatorButton().disabled(connecting || (provider != .appleSpeech && apiKey.isEmpty))
-            if !providerStatus.isEmpty {
-                Text(providerStatus).font(.dictatorBody(12, weight: .medium))
-                    .foregroundStyle(model.selectedSTTIsConfigured ? .green : .orange)
-            }
-        }.frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var offlineModeSetup: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("Keep dictating offline").font(.dictatorDisplay(30))
-            Text("Dictator can fall back to Apple On-Device Speech when your cloud provider can’t connect. The language model is downloaded and managed by macOS.")
-                .font(.dictatorBody(14)).foregroundStyle(.secondary).lineSpacing(3)
-
-            VStack(alignment: .leading, spacing: 8) {
-                Label("Audio stays on this Mac", systemImage: "lock.shield")
-                Label("Vocabulary and snippets still apply", systemImage: "text.badge.checkmark")
-                Label("Cloud cleanup and writing styles pause offline", systemImage: "wand.and.stars.inverse")
-            }
-            .font(.dictatorBody(12, weight: .medium))
-            .foregroundStyle(DictatorDesign.ink.opacity(0.72))
-
-            AppleSpeechModelSetupView(model: model)
-            OfflineFallbackControl(
-                model: model,
-                selectedAsPrimary: model.selectedSTT == .appleSpeech,
-                description: nil,
-                prominent: true
-            )
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                Text("Connect speech-to-text").font(.dictatorDisplay)
+                Text("Apple keeps audio on this Mac after its initial model download. Cloud providers receive audio directly and keep their keys in macOS Keychain.")
+                    .font(.dictatorBodyLarge).foregroundStyle(DictatorDesign.textSecondary)
+                ProviderPicker(model: model, purpose: .speechToText, providers: model.sttMetadata, expandAppleSpeechByDefault: true)
+            }.frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var appleOrCloudActionTitle: String {
-        provider == .appleSpeech ? "Prepare and use Apple On-Device" : "Verify and save"
-    }
-
-    private var appleOrCloudProgressTitle: String {
-        provider == .appleSpeech ? "Preparing model…" : "Verifying…"
-    }
-
-    private func providerChoice(kind: ProviderKind, name: String) -> some View {
-        let selected = provider == kind
-        return Button {
-            withAnimation(.easeOut(duration: 0.15)) { provider = kind }
-            apiKey = ""
-            accountID = ""
-            providerStatus = ""
-        } label: {
-            HStack(spacing: 10) {
-                ZStack {
-                    Circle()
-                        .fill(selected ? DictatorDesign.signalInk : DictatorDesign.fog)
-                        .frame(width: 28, height: 28)
-                    Image(systemName: selected ? "checkmark" : "waveform")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(selected ? .white : DictatorDesign.muted)
-                }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(name).font(.dictatorBody(12.5, weight: .semibold)).foregroundStyle(DictatorDesign.ink)
-                    Text(selected ? "Selected" : "Speech to text")
-                        .font(.dictatorBody(10)).foregroundStyle(selected ? DictatorDesign.focus : DictatorDesign.muted)
-                }
-                Spacer(minLength: 4)
-            }
-            .padding(.horizontal, 12)
-            .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
-            .background(selected ? DictatorDesign.orchid.opacity(0.24) : DictatorDesign.control, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(selected ? DictatorDesign.focus.opacity(0.65) : DictatorDesign.border, lineWidth: selected ? 1.5 : 1)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(name) provider")
-        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     private var ready: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .firstTextBaseline) {
-                Text("Try it here").font(.dictatorDisplay(32))
+                Text("Try it here").font(.dictatorDisplay)
                 Spacer()
                 if !scratchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Label("Dictation received", systemImage: "checkmark.circle.fill")
-                        .font(.dictatorUtility(10)).foregroundStyle(.green)
+                        .font(.dictatorCaption(weight: .medium)).foregroundStyle(DictatorDesign.textSuccess)
                 }
             }
             Text(model.accessMode == .leastPrivileges
                 ? "Start recording from the menu bar, stop from the pill, then press Command-V here to paste the copied transcript."
                 : "Click the scratchpad, use your dictation shortcut while speaking, then stop. This uses the transcription option you just selected.")
-                .font(.dictatorBody(14)).foregroundStyle(.secondary).lineSpacing(3)
-
-            HStack(spacing: 8) {
-                example("Schedule lunch with Maya tomorrow")
-                example("Draft a friendly follow-up email")
-                example("Dictator understands product names")
-            }
+                .font(.dictatorBodyLarge).foregroundStyle(DictatorDesign.textSecondary).lineSpacing(3)
 
             ZStack(alignment: .topLeading) {
                 TextEditor(text: $scratchText)
                     .focused($scratchFocused)
-                    .font(.dictatorBody(15))
+                    .font(.dictatorBodyLarge)
                     .scrollContentBackground(.hidden)
                     .padding(12)
                     .frame(minHeight: 130)
-                    .background(Color.white, in: RoundedRectangle(cornerRadius: 14))
-                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(scratchFocused ? DictatorDesign.signalInk : DictatorDesign.fog, lineWidth: scratchFocused ? 2 : 1))
+                    .background(DictatorDesign.control, in: RoundedRectangle(cornerRadius: DictatorDesign.radiusHero, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: DictatorDesign.radiusHero, style: .continuous).stroke(scratchFocused ? DictatorDesign.signalInk : DictatorDesign.fog, lineWidth: scratchFocused ? 2 : 1))
                 if scratchText.isEmpty {
                     Text("Your dictation will appear here…")
-                        .font(.dictatorBody(15)).foregroundStyle(.secondary.opacity(0.65))
+                        .font(.dictatorBodyLarge).foregroundStyle(DictatorDesign.textSecondary.opacity(0.65))
                         .padding(.horizontal, 18).padding(.vertical, 20).allowsHitTesting(false)
                 }
             }
@@ -253,22 +155,13 @@ struct OnboardingView: View {
                 Label(model.accessMode == .leastPrivileges
                     ? "Record from the menu bar · Paste with ⌘V"
                     : model.dictateInstruction, systemImage: "waveform")
-                    .font(.dictatorBody(12, weight: .semibold)).foregroundStyle(DictatorDesign.signalInk)
+                    .font(.dictatorBody(weight: .semibold)).foregroundStyle(DictatorDesign.accentForeground)
                 Spacer()
                 if !scratchText.isEmpty {
                     Button("Clear") { scratchText = ""; scratchFocused = true }.dictatorButton(.ghost)
                 }
             }
         }.frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func example(_ text: String) -> some View {
-        Text("“\(text)”")
-            .font(.dictatorBody(11, weight: .medium)).foregroundStyle(DictatorDesign.ink.opacity(0.62))
-            .padding(.horizontal, 10).padding(.vertical, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(DictatorDesign.fog.opacity(0.75), in: RoundedRectangle(cornerRadius: 9))
-            .lineLimit(2)
     }
 
     private var controls: some View {
@@ -281,8 +174,6 @@ struct OnboardingView: View {
                 switch step {
                 case .ready:
                     model.finishOnboarding()
-                case .offlineMode where !model.offlineFallbackEnabled:
-                    skipOfflineSetup()
                 default:
                     if let next = step.next { step = next }
                 }
@@ -295,7 +186,6 @@ struct OnboardingView: View {
     private var controlTitle: String {
         switch step {
         case .ready: scratchText.isEmpty ? "Skip and finish" : "Finish onboarding"
-        case .offlineMode: model.offlineFallbackEnabled ? "Continue" : "Skip for now"
         default: "Continue"
         }
     }
@@ -317,44 +207,20 @@ struct OnboardingView: View {
                     Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                     Spacer()
                     if recommended {
-                        Text("RECOMMENDED").font(.dictatorUtility(8)).foregroundStyle(DictatorDesign.focus)
+                        Text("Recommended").font(.dictatorCaption(weight: .semibold)).foregroundStyle(DictatorDesign.focus)
                     }
                 }
-                Text(title).font(.dictatorBody(13, weight: .semibold))
-                Text(detail).font(.dictatorBody(11)).foregroundStyle(.secondary)
+                Text(title).font(.dictatorBody(weight: .semibold))
+                Text(detail).font(.dictatorCaption).foregroundStyle(DictatorDesign.textSecondary)
             }
             .padding(12)
             .frame(maxWidth: .infinity, minHeight: 92, alignment: .leading)
-            .background(selected ? DictatorDesign.orchid.opacity(0.24) : DictatorDesign.control, in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(selected ? DictatorDesign.focus : DictatorDesign.border, lineWidth: selected ? 1.5 : 1))
+            .background(selected ? DictatorDesign.orchid.opacity(0.24) : DictatorDesign.control, in: RoundedRectangle(cornerRadius: DictatorDesign.radiusCard, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: DictatorDesign.radiusCard, style: .continuous).stroke(selected ? DictatorDesign.focus : DictatorDesign.border, lineWidth: selected ? 1.5 : 1))
         }
         .buttonStyle(.plain)
     }
 
-    private func permissionRow(_ title: String, detail: String, granted: Bool) -> some View {
-        HStack(spacing: 13) {
-            Image(systemName: granted ? "checkmark.circle.fill" : "circle.dashed")
-                .foregroundStyle(granted ? .green : .secondary).font(.system(size: 19))
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.dictatorBody(14, weight: .semibold))
-                Text(detail).font(.dictatorBody(12)).foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private func connect() async {
-        connecting = true
-        defer { connecting = false }
-        do {
-            try await model.configureOnboardingProvider(kind: provider, apiKey: apiKey, accountID: accountID)
-            providerStatus = provider == .appleSpeech ? "Apple On-Device is ready" : "Connection verified"
-        } catch { providerStatus = error.localizedDescription }
-    }
-
-    private func skipOfflineSetup() {
-        model.disableOfflineFallback()
-        if let next = step.next { step = next }
-    }
 }
 
 private struct WaveMarkLarge: View {
@@ -366,5 +232,3 @@ private struct WaveMarkLarge: View {
         }.frame(height: 44)
     }
 }
-
-private extension String { var nilIfEmpty: String? { isEmpty ? nil : self } }

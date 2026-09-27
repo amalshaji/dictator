@@ -38,16 +38,27 @@ public enum CleanupSafetyValidator {
         }
     }
 
-    private static let protectedPatterns = [
+    // Compiled once: NSRegularExpression is safe to share and reuse across calls, and compiling
+    // it per call was showing up as measurable per-validation overhead.
+    private static let protectedPatternRegexes: [NSRegularExpression] = [
         #"https?://[^\s]+"#,
         #"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}"#,
         #"\b\d+(?:[.,:/-]\d+)*%?\b"#,
         #"`[^`]+`"#
-    ]
+    ].compactMap { try? NSRegularExpression(pattern: $0, options: [.caseInsensitive]) }
 
-    private static let withdrawalCuePattern = #"^\s*(?:[.!?,;:—-]\s*)?(?:(?:i\s+)?(?:retract|withdraw)\s+(?:that|this|it|all\s+of\s+that|everything\s+i\s+(?:just\s+)?said|what\s+i\s+(?:just\s+)?said|(?:the\s+(?:last|previous)|that|this)\s+(?:statement|sentence|instruction))|i\s+(?:take|took)\s+back\s+(?:that|this|it|all\s+of\s+that|everything\s+i\s+(?:just\s+)?said|what\s+i\s+(?:just\s+)?said|(?:the\s+(?:last|previous)|that|this)\s+(?:statement|sentence|instruction))|i\s+(?:take|took)\s+(?:that|this|it|all\s+of\s+that|everything\s+i\s+(?:just\s+)?said|what\s+i\s+(?:just\s+)?said|(?:the\s+(?:last|previous)|that|this)\s+(?:statement|sentence|instruction))\s+back|scratch\s+that|forget\s+(?:that|this|it|everything\s+i\s+(?:just\s+)?said|what\s+i\s+(?:just\s+)?said)|disregard\s+(?:that|this|it|(?:the\s+(?:last|previous)|that|this)\s+(?:statement|sentence|instruction))|never\s+mind(?:\s+(?:that|this|it))?)\b(?=\s*(?:[.!?,;:—-]|$))"#
-    private static let broadWithdrawalCuePattern = #"\b(?:all\s+of\s+that|everything\s+i\s+(?:just\s+)?said)\b"#
-    private static let sentenceEndingPattern = #"[.!?](?=\s|$)"#
+    private static let withdrawalCueRegex = try? NSRegularExpression(
+        pattern: #"^\s*(?:[.!?,;:—-]\s*)?(?:(?:i\s+)?(?:retract|withdraw)\s+(?:that|this|it|all\s+of\s+that|everything\s+i\s+(?:just\s+)?said|what\s+i\s+(?:just\s+)?said|(?:the\s+(?:last|previous)|that|this)\s+(?:statement|sentence|instruction))|i\s+(?:take|took)\s+back\s+(?:that|this|it|all\s+of\s+that|everything\s+i\s+(?:just\s+)?said|what\s+i\s+(?:just\s+)?said|(?:the\s+(?:last|previous)|that|this)\s+(?:statement|sentence|instruction))|i\s+(?:take|took)\s+(?:that|this|it|all\s+of\s+that|everything\s+i\s+(?:just\s+)?said|what\s+i\s+(?:just\s+)?said|(?:the\s+(?:last|previous)|that|this)\s+(?:statement|sentence|instruction))\s+back|scratch\s+that|forget\s+(?:that|this|it|everything\s+i\s+(?:just\s+)?said|what\s+i\s+(?:just\s+)?said)|disregard\s+(?:that|this|it|(?:the\s+(?:last|previous)|that|this)\s+(?:statement|sentence|instruction))|never\s+mind(?:\s+(?:that|this|it))?)\b(?=\s*(?:[.!?,;:—-]|$))"#,
+        options: [.caseInsensitive]
+    )
+    private static let broadWithdrawalCueRegex = try? NSRegularExpression(
+        pattern: #"\b(?:all\s+of\s+that|everything\s+i\s+(?:just\s+)?said)\b"#,
+        options: [.caseInsensitive]
+    )
+    private static let sentenceEndingRegex = try? NSRegularExpression(
+        pattern: #"[.!?](?=\s|$)"#,
+        options: [.caseInsensitive]
+    )
 
     public struct RenderedSpan: Equatable, Sendable {
         public let startUTF16: Int
@@ -99,9 +110,9 @@ public enum CleanupSafetyValidator {
             throw ProviderError.cleanupRejected("unexpected length change")
         }
 
-        for pattern in protectedPatterns {
-            let rawValues = occurrenceCounts(matches(pattern, in: baseline))
-            let cleanedValues = occurrenceCounts(matches(pattern, in: trimmed))
+        for regex in protectedPatternRegexes {
+            let rawValues = occurrenceCounts(matches(regex, in: baseline))
+            let cleanedValues = occurrenceCounts(matches(regex, in: trimmed))
             guard rawValues.allSatisfy({ value, count in cleanedValues[value, default: 0] >= count }) else {
                 throw ProviderError.cleanupRejected("protected token changed")
             }
@@ -199,8 +210,7 @@ public enum CleanupSafetyValidator {
 
         let claimed = occurrenceCounts(replacements.map(\.replacement))
         for (value, count) in claimed {
-            let pattern = NSRegularExpression.escapedPattern(for: value)
-            guard matches(pattern, in: cleaned).count >= count else {
+            guard occurrenceCount(of: value, in: cleaned) >= count else {
                 throw ProviderError.cleanupRejected("rendered value missing from output")
             }
         }
@@ -279,8 +289,7 @@ public enum CleanupSafetyValidator {
 
         let claimed = occurrenceCounts(replacements.map(\.replacement))
         for (value, count) in claimed {
-            let pattern = NSRegularExpression.escapedPattern(for: value)
-            guard matches(pattern, in: cleaned).count >= count else {
+            guard occurrenceCount(of: value, in: cleaned) >= count else {
                 throw ProviderError.cleanupRejected("correction replacement missing from output")
             }
         }
@@ -288,7 +297,7 @@ public enum CleanupSafetyValidator {
     }
 
     private static func isVerifiedCorrectionCue(_ cue: String) -> Bool {
-        if !matches(withdrawalCuePattern, in: cue).isEmpty {
+        if let withdrawalCueRegex, !matches(withdrawalCueRegex, in: cue).isEmpty {
             return true
         }
 
@@ -374,10 +383,7 @@ public enum CleanupSafetyValidator {
     }
 
     private static func withdrawalCue(after index: String.Index, in raw: String) -> Range<String.Index>? {
-        guard let expression = try? NSRegularExpression(
-            pattern: withdrawalCuePattern,
-            options: [.caseInsensitive]
-        ) else { return nil }
+        guard let expression = withdrawalCueRegex else { return nil }
         let searchRange = NSRange(index..., in: raw)
         guard let match = expression.firstMatch(in: raw, range: searchRange),
               match.range.location == searchRange.location,
@@ -387,12 +393,11 @@ public enum CleanupSafetyValidator {
     }
 
     private static func cueAllows(_ withdrawnText: String, cue: String) -> Bool {
-        let sentenceEndings = matches(sentenceEndingPattern, in: withdrawnText).count
-        return sentenceEndings <= 1 || !matches(broadWithdrawalCuePattern, in: cue).isEmpty
+        let sentenceEndings = sentenceEndingRegex.map { matches($0, in: withdrawnText).count } ?? 0
+        return sentenceEndings <= 1 || (broadWithdrawalCueRegex.map { !matches($0, in: cue).isEmpty } ?? false)
     }
 
-    private static func matches(_ pattern: String, in text: String) -> [String] {
-        guard let expression = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return [] }
+    private static func matches(_ expression: NSRegularExpression, in text: String) -> [String] {
         let range = NSRange(text.startIndex..., in: text)
         return expression.matches(in: text, range: range).compactMap { match in
             Range(match.range, in: text).map { String(text[$0]) }
@@ -401,6 +406,19 @@ public enum CleanupSafetyValidator {
 
     private static func occurrenceCounts(_ values: [String]) -> [String: Int] {
         values.reduce(into: [:]) { counts, value in counts[value, default: 0] += 1 }
+    }
+
+    // Non-regex equivalent of counting occurrences of an exact, case-insensitive literal
+    // substring — used for dynamically claimed replacement values, which can't be precompiled.
+    private static func occurrenceCount(of value: String, in text: String) -> Int {
+        guard !value.isEmpty else { return 0 }
+        var count = 0
+        var searchRange = text.startIndex..<text.endIndex
+        while let found = text.range(of: value, options: [.caseInsensitive], range: searchRange) {
+            count += 1
+            searchRange = found.upperBound..<text.endIndex
+        }
+        return count
     }
 
 }

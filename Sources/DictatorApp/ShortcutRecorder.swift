@@ -63,7 +63,7 @@ struct ShortcutRecorder: View {
             .accessibilityLabel(isRecording ? "Waiting for shortcut" : "Change shortcut, currently \(shortcut.displayName)")
 
             if let hint {
-                Text(hint).font(.dictatorUtility(9)).foregroundStyle(.orange)
+                Text(hint).font(.dictatorCaption(weight: .medium)).foregroundStyle(DictatorDesign.textError)
             }
         }
         .onDisappear { stopRecording() }

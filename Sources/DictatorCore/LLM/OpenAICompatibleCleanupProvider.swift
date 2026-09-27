@@ -15,8 +15,7 @@ public struct OpenAICompatibleCleanupProvider: CleanupLLMProvider {
             kind: kind,
             displayName: displayName,
             defaultModel: defaultModel,
-            models: [defaultModel],
-            requiresAccountID: false
+            models: [defaultModel]
         )
         client = OpenAICompatibleClient(kind: kind, defaultBaseURL: defaultBaseURL, transport: transport)
     }
@@ -49,7 +48,6 @@ public struct OpenAICompatibleCleanupProvider: CleanupLLMProvider {
             model: model,
             inputTokens: result.inputTokens,
             outputTokens: result.outputTokens,
-            providerReportedCostUSD: result.providerReportedCostUSD,
             latency: result.latency
         )
     }
@@ -64,8 +62,8 @@ public extension OpenAICompatibleCleanupProvider {
         .init(kind: .cerebras, displayName: "Cerebras", defaultModel: "gpt-oss-120b", defaultBaseURL: URL(string: "https://api.cerebras.ai/v1")!, transport: transport)
     }
 
-    static func xAI(transport: any HTTPTransport = URLSessionTransport()) -> Self {
-        .init(kind: .xAI, displayName: "xAI", defaultModel: "grok-4.20-0309-non-reasoning", defaultBaseURL: URL(string: "https://api.x.ai/v1")!, transport: transport)
+    static func gemini(transport: any HTTPTransport = URLSessionTransport()) -> Self {
+        .init(kind: .gemini, displayName: "Gemini", defaultModel: "gemini-2.5-flash-lite", defaultBaseURL: URL(string: "https://generativelanguage.googleapis.com/v1beta/openai")!, transport: transport)
     }
 
     static func openRouter(transport: any HTTPTransport = URLSessionTransport()) -> Self {

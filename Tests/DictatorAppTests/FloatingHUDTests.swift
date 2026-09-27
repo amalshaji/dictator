@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SwiftUI
 import XCTest
 @testable import Dictator
 
@@ -113,20 +114,39 @@ final class FloatingHUDTests: XCTestCase {
         )
     }
 
-    func testHUDSuccessPresentationDefinesItsOwnLabelAndWidth() {
-        let presentations: [(HUDSuccess, String, CGFloat)] = [
-            (.cancelled, "Cancelled", 124),
-            (.copied, "Copied — press ⌘V", 196),
-            (.pasteSent, "Paste sent", 124),
-            (.offlineSaved, "Offline · Saved", 174),
-            (.offlineCopied, "Offline · Copied", 196),
-            (.offlinePasteSent, "Offline · Paste sent", 174),
+    func testHUDSuccessPresentationDefinesItsOwnLabel() {
+        let presentations: [(HUDSuccess, String)] = [
+            (.cancelled, "Cancelled"),
+            (.copied, "Copied — press ⌘V"),
+            (.pasteSent, "Paste sent"),
+            (.copiedViaAppleFallback, "Used Apple On-Device · Copied"),
+            (.pasteSentViaAppleFallback, "Used Apple On-Device · Paste sent"),
         ]
 
-        for (success, label, width) in presentations {
+        for (success, label) in presentations {
             XCTAssertEqual(success.label, label)
-            XCTAssertEqual(success.panelWidth, width)
             XCTAssertEqual(HUDPhase.success(success).label, label)
+        }
+    }
+
+    func testHUDFeedbackTaxonomyMapsPhaseToGlyphAndColor() {
+        let model = HUDModel()
+        let view = FloatingHUDView(model: model, onStop: {})
+        let cases: [(HUDPhase, String, Color)] = [
+            (.success(.pasteSent), "checkmark", DictatorDesign.orchid),
+            (.success(.copied), "checkmark", DictatorDesign.orchid),
+            (.success(.pasteSentViaAppleFallback), "exclamationmark.triangle.fill", DictatorDesign.hudWarning),
+            (.success(.copiedViaAppleFallback), "exclamationmark.triangle.fill", DictatorDesign.hudWarning),
+            (.warning("Cleanup failed—used raw transcript"), "exclamationmark.triangle.fill", DictatorDesign.hudWarning),
+            (.error("Too short"), "xmark.octagon.fill", DictatorDesign.hudError),
+            (.success(.cancelled), "xmark", Color.white.opacity(0.7)),
+            (.clipboard(shortcut: "⌘V"), "doc.on.clipboard", Color.white),
+        ]
+
+        for (phase, icon, color) in cases {
+            model.phase = phase
+            XCTAssertEqual(view.resultIcon, icon, "icon for \(phase)")
+            XCTAssertEqual(view.resultColor, color, "color for \(phase)")
         }
     }
 }

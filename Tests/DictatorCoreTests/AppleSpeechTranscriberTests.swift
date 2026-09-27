@@ -227,6 +227,84 @@ final class AppleSpeechTranscriberTests: XCTestCase {
         }
     }
 
+    func testFastPathSkipsProbingWhenReadyLocaleIsSupplied() async throws {
+        let runtime = FakeAppleSpeechRuntime(
+            statuses: [.speechTranscriber: .installed],
+            segments: [.speechTranscriber: [.init(text: "fast", isFinal: true)]]
+        )
+        let readyLocale = AppleSpeechLocale(identifier: "en_US", engine: .speechTranscriber)
+
+        let result = try await AppleSpeechTranscriber(runtime: runtime).transcribe(
+            audio: audio,
+            localeIdentifier: "en_US",
+            vocabulary: [],
+            readyLocale: readyLocale
+        )
+
+        XCTAssertEqual(result.text, "fast")
+        let assetStatusCallCount = await runtime.assetStatusCallCount
+        let canAnalyzeCallCount = await runtime.canAnalyzeCallCount
+        let reserveCallCount = await runtime.reserveCallCount
+        XCTAssertEqual(assetStatusCallCount, 0)
+        XCTAssertEqual(canAnalyzeCallCount, 0)
+        XCTAssertEqual(reserveCallCount, 0)
+        let engines = await runtime.transcribedEngines
+        XCTAssertEqual(engines, [.speechTranscriber])
+    }
+
+    func testFastPathFallsBackToProbingWhenReadyLocaleFails() async throws {
+        let runtime = FakeAppleSpeechRuntime(
+            statuses: [.speechTranscriber: .installed],
+            segments: [.speechTranscriber: [.init(text: "recovered", isFinal: true)]],
+            // A readiness/analyzer failure, not an empty transcript: the
+            // fast path must still fall back to full probing for this.
+            transcriptionFailures: [.dictationTranscriber: ProviderError.invalidResponse]
+        )
+        // A stale ready locale (e.g. resolved before an asset-registry desync)
+        // that no longer produces a usable transcript.
+        let staleLocale = AppleSpeechLocale(identifier: "en_US", engine: .dictationTranscriber)
+
+        let result = try await AppleSpeechTranscriber(runtime: runtime).transcribe(
+            audio: audio,
+            localeIdentifier: "en_US",
+            vocabulary: [],
+            readyLocale: staleLocale
+        )
+
+        XCTAssertEqual(result.text, "recovered")
+        let engines = await runtime.transcribedEngines
+        XCTAssertEqual(engines, [.dictationTranscriber, .speechTranscriber])
+        let assetStatusCallCount = await runtime.assetStatusCallCount
+        XCTAssertGreaterThan(assetStatusCallCount, 0)
+    }
+
+    func testFastPathRethrowsEmptyTranscriptWithoutFallingBackToProbing() async throws {
+        let runtime = FakeAppleSpeechRuntime(
+            statuses: [.speechTranscriber: .installed],
+            segments: [.speechTranscriber: [.init(text: "draft", isFinal: false)]]
+        )
+        let readyLocale = AppleSpeechLocale(identifier: "en_US", engine: .speechTranscriber)
+
+        do {
+            _ = try await AppleSpeechTranscriber(runtime: runtime).transcribe(
+                audio: audio,
+                localeIdentifier: "en_US",
+                vocabulary: [],
+                readyLocale: readyLocale
+            )
+            XCTFail("Expected an empty transcript error")
+        } catch {
+            XCTAssertEqual(error as? ProviderError, .emptyTranscript)
+        }
+
+        // A silent recording must not run analysis a second time through the
+        // full probing path.
+        let assetStatusCallCount = await runtime.assetStatusCallCount
+        XCTAssertEqual(assetStatusCallCount, 0)
+        let engines = await runtime.transcribedEngines
+        XCTAssertEqual(engines, [.speechTranscriber])
+    }
+
     func testCancellationStopsTranscriptionWithoutTryingFallback() async {
         let runtime = FakeAppleSpeechRuntime(
             statuses: [.speechTranscriber: .installed, .dictationTranscriber: .installed],
@@ -263,8 +341,12 @@ private actor FakeAppleSpeechRuntime: AppleSpeechRuntime {
     private let installUpdatesStatus: Bool
     private var analyzable: [AppleTranscriptionEngine: Bool]
     private let installMakesAnalyzable: Bool
+    private let transcriptionFailures: [AppleTranscriptionEngine: Error]
     private(set) var transcribedEngines: [AppleTranscriptionEngine] = []
     private(set) var reservedLocales: [AppleSpeechLocale] = []
+    private(set) var assetStatusCallCount = 0
+    private(set) var canAnalyzeCallCount = 0
+    private(set) var reserveCallCount = 0
 
     init(
         statuses: [AppleTranscriptionEngine: AppleSpeechAssetStatus],
@@ -272,7 +354,8 @@ private actor FakeAppleSpeechRuntime: AppleSpeechRuntime {
         transcriptionDelay: Duration? = nil,
         installUpdatesStatus: Bool = true,
         analyzable: [AppleTranscriptionEngine: Bool] = [:],
-        installMakesAnalyzable: Bool = false
+        installMakesAnalyzable: Bool = false,
+        transcriptionFailures: [AppleTranscriptionEngine: Error] = [:]
     ) {
         self.statuses = statuses
         self.segments = segments
@@ -280,6 +363,7 @@ private actor FakeAppleSpeechRuntime: AppleSpeechRuntime {
         self.installUpdatesStatus = installUpdatesStatus
         self.analyzable = analyzable
         self.installMakesAnalyzable = installMakesAnalyzable
+        self.transcriptionFailures = transcriptionFailures
     }
 
     func supportedLocaleIdentifiers(for engine: AppleTranscriptionEngine) async -> [String] {
@@ -291,14 +375,17 @@ private actor FakeAppleSpeechRuntime: AppleSpeechRuntime {
     }
 
     func assetStatus(for locale: AppleSpeechLocale) async -> AppleSpeechAssetStatus {
-        statuses[locale.engine] ?? .unsupported
+        assetStatusCallCount += 1
+        return statuses[locale.engine] ?? .unsupported
     }
 
     func canAnalyze(locale: AppleSpeechLocale) async -> Bool {
-        analyzable[locale.engine] ?? (statuses[locale.engine] == .installed)
+        canAnalyzeCallCount += 1
+        return analyzable[locale.engine] ?? (statuses[locale.engine] == .installed)
     }
 
     func reserve(locale: AppleSpeechLocale) async {
+        reserveCallCount += 1
         reservedLocales.append(locale)
     }
 
@@ -317,6 +404,7 @@ private actor FakeAppleSpeechRuntime: AppleSpeechRuntime {
     ) async throws -> [AppleSpeechSegment] {
         transcribedEngines.append(locale.engine)
         if let transcriptionDelay { try await Task.sleep(for: transcriptionDelay) }
+        if let failure = transcriptionFailures[locale.engine] { throw failure }
         return segments[locale.engine] ?? []
     }
 }

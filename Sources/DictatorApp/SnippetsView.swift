@@ -2,7 +2,8 @@ import DictatorCore
 import SwiftUI
 
 struct SnippetsView: View {
-    @ObservedObject var model: AppModel
+    let model: AppModel
+    @Environment(\.undoManager) private var undoManager
     @State private var trigger = ""
     @State private var expansion = ""
     @State private var editingRule: RuleDraft?
@@ -12,12 +13,12 @@ struct SnippetsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Snippets").font(.dictatorDisplay(30))
+                    Text("Snippets").font(.dictatorDisplay)
                     Text("Say a trigger phrase and it expands locally before any text is sent.")
-                        .font(.dictatorBody(14)).foregroundStyle(DictatorDesign.inkSecondary)
+                        .font(.dictatorBodyLarge).foregroundStyle(DictatorDesign.textSecondary)
                 }
                 creationCard
-                sectionLabel("Your snippets")
+                SectionLabel("Your snippets")
                 if model.data.snippets.isEmpty {
                     DictatorEmptyState(icon: "curlybraces", title: "No snippets yet", detail: "Add a phrase you say often and the text it should expand into.")
                 } else {
@@ -29,7 +30,9 @@ struct SnippetsView: View {
                                 Toggle("", isOn: Binding(get: { snippet.isEnabled }, set: { model.setSnippetEnabled(snippet.id, $0) })).labelsHidden().toggleStyle(.switch).controlSize(.small).tint(DictatorDesign.signalInk)
                                     .accessibilityLabel("Enable \(snippet.trigger)")
                                 Button("Edit") { editingRule = .snippet(snippet) }.dictatorButton(.ghost)
-                                Button(role: .destructive) { model.deleteSnippet(snippet.id) } label: { Image(systemName: "trash") }.dictatorButton(.destructive)
+                                    .help("Edit \(snippet.trigger)")
+                                Button(role: .destructive) { model.deleteSnippetWithUndo(snippet.id, undoManager: undoManager) } label: { Image(systemName: "trash") }.dictatorButton(.destructive)
+                                    .help("Delete \(snippet.trigger)")
                                     .accessibilityLabel("Delete \(snippet.trigger)")
                             }
                         }
@@ -46,14 +49,14 @@ struct SnippetsView: View {
     private var creationCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 3) {
-                Text("New snippet").font(.dictatorBody(14, weight: .semibold))
-                Text("Replace a spoken phrase locally before cleanup or transcription text leaves your Mac.").font(.dictatorBody(11)).foregroundStyle(DictatorDesign.muted)
+                Text("New snippet").font(.dictatorBodyLarge(weight: .semibold))
+                Text("Replace a spoken phrase locally before cleanup or transcription text leaves your Mac.").font(.dictatorCaption).foregroundStyle(DictatorDesign.textSecondary)
             }
-            formField("Spoken trigger") {
+            FormField("Spoken trigger") {
                 TextField("e.g. my support signature", text: $trigger).textFieldStyle(DictatorTextFieldStyle())
             }
-            formField("Replacement text") {
-                TextEditor(text: $expansion).font(.dictatorBody(13)).frame(minHeight: 76)
+            FormField("Replacement text") {
+                TextEditor(text: $expansion).font(.dictatorBody).frame(minHeight: 76)
                     .dictatorEditor()
             }
             Button("Add snippet") {
@@ -64,7 +67,7 @@ struct SnippetsView: View {
             }.disabled(trigger.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || expansion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .dictatorButton()
             if let snippetError {
-                Text(snippetError).font(.dictatorBody(11, weight: .medium)).foregroundStyle(.red)
+                Text(snippetError).font(.dictatorCaption(weight: .medium)).foregroundStyle(DictatorDesign.textError)
             }
         }
         .padding(16)
@@ -74,23 +77,13 @@ struct SnippetsView: View {
     private func snippetRow(_ snippet: SnippetEntry) -> some View {
         HStack(spacing: 12) {
             Circle().fill(DictatorDesign.fog).frame(width: 24, height: 24)
-                .overlay(Image(systemName: "curlybraces").font(.system(size: 9, weight: .bold)))
+                .overlay(Image(systemName: "curlybraces").font(DictatorDesign.glyphFont(size: 9, weight: .bold)))
             VStack(alignment: .leading, spacing: 3) {
-                Text("“\(snippet.trigger)”").font(.dictatorBody(14, weight: .semibold))
-                Text(snippet.expansion).font(.dictatorBody(12)).foregroundStyle(.secondary).lineLimit(2)
+                Text("“\(snippet.trigger)”").font(.dictatorBodyLarge(weight: .semibold))
+                Text(snippet.expansion).font(.dictatorBody).foregroundStyle(DictatorDesign.textSecondary).lineLimit(2)
             }
             Spacer()
         }.padding(.horizontal, 14).padding(.vertical, 12).contentShape(Rectangle())
     }
 
-    private func formField<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(label).font(.dictatorBody(11, weight: .semibold)).foregroundStyle(DictatorDesign.ink.opacity(0.72))
-            content()
-        }
-    }
-
-    private func sectionLabel(_ title: String) -> some View {
-        Text(title.uppercased()).font(.dictatorUtility(9)).foregroundStyle(DictatorDesign.muted)
-    }
 }

@@ -682,7 +682,7 @@ final class CleanupProcessingTests: XCTestCase {
 }
 
 private struct FormattingCleanupProvider: CleanupLLMProvider {
-    let metadata = ProviderMetadata(kind: .groq, displayName: "Formatting", defaultModel: "formatting-model", models: ["formatting-model"], requiresAccountID: false)
+    let metadata = ProviderMetadata(kind: .groq, displayName: "Formatting", defaultModel: "formatting-model", models: ["formatting-model"])
     func validate(credentials: ProviderCredentials) async throws {}
     func listModels(credentials: ProviderCredentials) async throws -> [String] { metadata.models }
     func clean(request: CleanupRequest, model: String, credentials: ProviderCredentials) async throws -> CleanupResult {
@@ -691,7 +691,7 @@ private struct FormattingCleanupProvider: CleanupLLMProvider {
 }
 
 private struct SelectionTransformingCleanupProvider: CleanupLLMProvider {
-    let metadata = ProviderMetadata(kind: .groq, displayName: "Transforming", defaultModel: "transforming-model", models: ["transforming-model"], requiresAccountID: false)
+    let metadata = ProviderMetadata(kind: .groq, displayName: "Transforming", defaultModel: "transforming-model", models: ["transforming-model"])
     func validate(credentials: ProviderCredentials) async throws {}
     func listModels(credentials: ProviderCredentials) async throws -> [String] { metadata.models }
     func clean(request: CleanupRequest, model: String, credentials: ProviderCredentials) async throws -> CleanupResult {
@@ -701,7 +701,7 @@ private struct SelectionTransformingCleanupProvider: CleanupLLMProvider {
 }
 
 private struct FailingCleanupProvider: CleanupLLMProvider {
-    let metadata = ProviderMetadata(kind: .groq, displayName: "Failing", defaultModel: "failing-model", models: ["failing-model"], requiresAccountID: false)
+    let metadata = ProviderMetadata(kind: .groq, displayName: "Failing", defaultModel: "failing-model", models: ["failing-model"])
     func validate(credentials: ProviderCredentials) async throws {}
     func listModels(credentials: ProviderCredentials) async throws -> [String] { metadata.models }
     func clean(request: CleanupRequest, model: String, credentials: ProviderCredentials) async throws -> CleanupResult {

@@ -1,16 +1,11 @@
 import DictatorCore
 import Foundation
 
-enum TranscriptionMode: Equatable {
-    case online
-    case offline
-}
-
 struct TranscriptionRun: Equatable {
     let result: TranscriptionResult
-    let mode: TranscriptionMode
+    let usedAppleFallback: Bool
 
-    var allowsCleanup: Bool { mode == .online }
+    var allowsCleanup: Bool { !usedAppleFallback }
 }
 
 @MainActor
@@ -19,47 +14,33 @@ protocol TranscriptionCoordinating: AnyObject, Sendable {
         audio: RecordedAudio,
         selectedProvider: ProviderKind,
         selectedModel: String?,
-        fallbackEnabled: Bool,
-        vocabulary: [VocabularyEntry],
-        onModeChange: (TranscriptionMode) -> Void
+        vocabulary: [VocabularyEntry]
     ) async throws -> TranscriptionRun
+
+    /// Opens the selected cloud provider's HTTPS connection ahead of the
+    /// transcribe request so the DNS/TCP/TLS handshake overlaps recording
+    /// instead of adding to post-dictation latency. A no-op for Apple
+    /// On-Device transcription, which makes no network request.
+    func warmUp(selectedProvider: ProviderKind) async
 }
 
 extension TranscriptionCoordinating {
-    func transcribe(
-        audio: RecordedAudio,
-        selectedProvider: ProviderKind,
-        selectedModel: String?,
-        fallbackEnabled: Bool,
-        vocabulary: [VocabularyEntry]
-    ) async throws -> TranscriptionRun {
-        try await transcribe(
-            audio: audio,
-            selectedProvider: selectedProvider,
-            selectedModel: selectedModel,
-            fallbackEnabled: fallbackEnabled,
-            vocabulary: vocabulary,
-            onModeChange: { _ in }
-        )
-    }
+    func warmUp(selectedProvider: ProviderKind) async {}
 }
 
 @MainActor
 final class TranscriptionCoordinator: TranscriptionCoordinating {
     private let keychain: any CredentialStoring
     private let appleSpeech: AppleSpeechCoordinator
-    private let connectivity: any ConnectivityMonitoring
     private let provider: (ProviderKind) -> (any SpeechToTextProvider)?
 
     init(
         keychain: any CredentialStoring,
         appleSpeech: AppleSpeechCoordinator,
-        connectivity: any ConnectivityMonitoring,
         provider: @escaping (ProviderKind) -> (any SpeechToTextProvider)? = ProviderRegistry.sttProvider
     ) {
         self.keychain = keychain
         self.appleSpeech = appleSpeech
-        self.connectivity = connectivity
         self.provider = provider
     }
 
@@ -67,31 +48,19 @@ final class TranscriptionCoordinator: TranscriptionCoordinating {
         audio: RecordedAudio,
         selectedProvider: ProviderKind,
         selectedModel: String?,
-        fallbackEnabled: Bool,
-        vocabulary: [VocabularyEntry],
-        onModeChange: (TranscriptionMode) -> Void = { _ in }
+        vocabulary: [VocabularyEntry]
     ) async throws -> TranscriptionRun {
         if selectedProvider == .appleSpeech {
-            let mode = currentMode
-            onModeChange(mode)
             if !appleSpeech.state.readiness.isReady { await appleSpeech.refresh() }
             do {
                 let result = try await appleSpeech.transcribe(audio: audio, vocabulary: vocabulary)
-                return .init(result: result, mode: mode)
+                return .init(result: result, usedAppleFallback: false)
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
                 await appleSpeech.refresh()
                 throw error
             }
-        }
-
-        if fallbackEnabled, connectivity.state == .offline {
-            return try await transcribeWithApple(
-                audio: audio,
-                vocabulary: vocabulary,
-                onModeChange: onModeChange
-            )
         }
 
         guard let provider = provider(selectedProvider) else {
@@ -112,16 +81,14 @@ final class TranscriptionCoordinator: TranscriptionCoordinating {
                     options: options,
                     credentials: credentials
                 )
-                let mode = currentMode
-                onModeChange(mode)
-                return .init(result: result, mode: mode)
+                return .init(result: result, usedAppleFallback: false)
             } catch {
-                if fallbackEnabled, TransportFailureClassifier.isOfflineEligible(error) {
-                    return try await transcribeWithApple(
-                        audio: audio,
-                        vocabulary: vocabulary,
-                        onModeChange: onModeChange
-                    )
+                if TransportFailureClassifier.isOfflineEligible(error) {
+                    if !appleSpeech.state.readiness.isReady { await appleSpeech.refresh() }
+                    if appleSpeech.state.readiness.isReady {
+                        let fallbackResult = try await appleSpeech.transcribe(audio: audio, vocabulary: vocabulary)
+                        return .init(result: fallbackResult, usedAppleFallback: true)
+                    }
                 }
                 guard attempt < 2, isRetryable(error) else { throw error }
                 try? await Task.sleep(for: .milliseconds(250 * (attempt + 1)))
@@ -130,36 +97,21 @@ final class TranscriptionCoordinator: TranscriptionCoordinating {
         throw ProviderError.invalidResponse
     }
 
-    private var currentMode: TranscriptionMode {
-        connectivity.state == .offline ? .offline : .online
-    }
-
-    private func transcribeWithApple(
-        audio: RecordedAudio,
-        vocabulary: [VocabularyEntry],
-        onModeChange: (TranscriptionMode) -> Void
-    ) async throws -> TranscriptionRun {
-        onModeChange(.offline)
-        if !appleSpeech.state.readiness.isReady { await appleSpeech.refresh() }
-        guard appleSpeech.state.readiness.isReady else { throw offlineModelUnavailableError }
-        do {
-            let result = try await appleSpeech.transcribe(audio: audio, vocabulary: vocabulary)
-            return .init(result: result, mode: .offline)
-        } catch {
-            await appleSpeech.refresh()
-            guard appleSpeech.state.readiness.isReady else { throw offlineModelUnavailableError }
-            throw error
-        }
-    }
-
-    private var offlineModelUnavailableError: ProviderError {
-        .invalidConfiguration("Offline model unavailable—connect and repair offline mode in Providers.")
-    }
-
     private func isRetryable(_ error: any Error) -> Bool {
         if case ProviderError.httpStatus(let status, _) = error {
             return [408, 429, 502, 503].contains(status)
         }
-        return TransportFailureClassifier.code(for: error) != nil
+        // A 20 s request timeout should surface immediately rather than
+        // tripling the wait, so `.timedOut` is excluded from the retryable codes.
+        guard let code = TransportFailureClassifier.code(for: error) else { return false }
+        return code != .timedOut
+    }
+
+    func warmUp(selectedProvider: ProviderKind) async {
+        guard selectedProvider != .appleSpeech,
+              let provider = provider(selectedProvider),
+              let credentials = try? keychain.load(for: .speechToText, provider: selectedProvider)
+        else { return }
+        await provider.warmUpConnection(credentials: credentials)
     }
 }

@@ -1,50 +1,39 @@
 import Foundation
 
+/// Decodes an array element that may fail (e.g. a `TranscriptRecord` referencing a
+/// retired `ProviderKind` such as "gladia") without failing the whole array decode.
+private struct FailableDecodable<T: Decodable>: Decodable {
+    let value: T?
+
+    init(from decoder: Decoder) throws {
+        value = try? T(from: decoder)
+    }
+}
+
 public struct PersistedData: Codable, Equatable, Sendable {
     public var transcripts: [TranscriptRecord]
     public var lifetimeStatistics: LifetimeStatistics
     public var vocabulary: [VocabularyEntry]
-    public var clipboard: [ClipboardEntry]
     public var styles: [WritingStyle]
     public var snippets: [SnippetEntry]
-    public var appStyleOverrides: [String: UUID]
 
-    public init(transcripts: [TranscriptRecord] = [], lifetimeStatistics: LifetimeStatistics = LifetimeStatistics(), vocabulary: [VocabularyEntry] = [], clipboard: [ClipboardEntry] = [], styles: [WritingStyle] = [], snippets: [SnippetEntry] = [], appStyleOverrides: [String: UUID] = [:]) {
+    public init(transcripts: [TranscriptRecord] = [], lifetimeStatistics: LifetimeStatistics = LifetimeStatistics(), vocabulary: [VocabularyEntry] = [], styles: [WritingStyle] = [], snippets: [SnippetEntry] = []) {
         self.transcripts = transcripts
         self.lifetimeStatistics = lifetimeStatistics
         self.vocabulary = vocabulary
-        self.clipboard = clipboard
         self.styles = styles
         self.snippets = snippets
-        self.appStyleOverrides = appStyleOverrides
     }
 
-    private enum CodingKeys: String, CodingKey { case transcripts, lifetimeStatistics, vocabulary, clipboard, styles, snippets, appStyleOverrides }
+    private enum CodingKeys: String, CodingKey { case transcripts, lifetimeStatistics, vocabulary, styles, snippets }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
-        transcripts = try values.decodeIfPresent([TranscriptRecord].self, forKey: .transcripts) ?? []
+        let failableTranscripts = try values.decodeIfPresent([FailableDecodable<TranscriptRecord>].self, forKey: .transcripts) ?? []
+        transcripts = failableTranscripts.compactMap(\.value)
         lifetimeStatistics = try values.decodeIfPresent(LifetimeStatistics.self, forKey: .lifetimeStatistics) ?? LifetimeStatistics()
         vocabulary = try values.decodeIfPresent([VocabularyEntry].self, forKey: .vocabulary) ?? []
-        clipboard = try values.decodeIfPresent([ClipboardEntry].self, forKey: .clipboard) ?? []
         styles = try values.decodeIfPresent([WritingStyle].self, forKey: .styles) ?? []
         snippets = try values.decodeIfPresent([SnippetEntry].self, forKey: .snippets) ?? []
-        appStyleOverrides = try values.decodeIfPresent([String: UUID].self, forKey: .appStyleOverrides) ?? [:]
-    }
-}
-
-public struct ClipboardEntry: Identifiable, Codable, Equatable, Sendable {
-    public let id: UUID
-    public let createdAt: Date
-    public var text: String
-    public var rawText: String
-    public var sourceBundleID: String?
-
-    public init(id: UUID = UUID(), createdAt: Date = Date(), text: String, rawText: String, sourceBundleID: String? = nil) {
-        self.id = id
-        self.createdAt = createdAt
-        self.text = text
-        self.rawText = rawText
-        self.sourceBundleID = sourceBundleID
     }
 }
 
@@ -57,7 +46,7 @@ public actor LocalStore {
         self.fileURL = fileURL
         self.encoder = JSONEncoder()
         self.encoder.dateEncodingStrategy = .iso8601
-        self.encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        self.encoder.outputFormatting = [.sortedKeys]
         self.decoder = JSONDecoder()
         self.decoder.dateDecodingStrategy = .iso8601
     }
@@ -76,7 +65,6 @@ public actor LocalStore {
         var cleaned = data
         let cutoff = Calendar.current.date(byAdding: .day, value: -30, to: now)!
         cleaned.transcripts = Array(cleaned.transcripts.filter { $0.createdAt >= cutoff }.prefix(500))
-        cleaned.clipboard = Array(cleaned.clipboard.filter { $0.createdAt >= cutoff }.prefix(50))
         try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try encoder.encode(cleaned).write(to: fileURL, options: .atomic)
     }

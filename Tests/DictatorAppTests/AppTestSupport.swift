@@ -42,9 +42,7 @@ final class TestTranscriptionCoordinator: TranscriptionCoordinating {
         audio: RecordedAudio,
         selectedProvider: ProviderKind,
         selectedModel: String?,
-        fallbackEnabled: Bool,
-        vocabulary: [VocabularyEntry],
-        onModeChange: (TranscriptionMode) -> Void
+        vocabulary: [VocabularyEntry]
     ) async throws -> TranscriptionRun {
         result
     }
@@ -53,22 +51,21 @@ final class TestTranscriptionCoordinator: TranscriptionCoordinating {
 @MainActor
 final class TestTargetInserter: FocusedTargetInserting {
     let target: FocusedTarget
-    let window: FocusedWindowSnapshot
     private(set) var insertedText: String?
     private(set) var pastedText: String?
     private(set) var captureCount = 0
 
-    init(target: FocusedTarget, window: FocusedWindowSnapshot) {
+    init(target: FocusedTarget) {
         self.target = target
-        self.window = window
     }
 
     func captureFocusedTarget(processIdentifier: pid_t?) -> FocusedTarget? {
         captureCount += 1
         return target
     }
-    func captureFocusedWindow(for target: FocusedTarget) -> FocusedWindowSnapshot? { window }
     func insert(_ insertion: TextInsertion, into target: FocusedTarget?) async -> InsertionResult {
+        // Mirror the real inserter: blocked (secure) targets never receive text.
+        if case .blocked(_, let reason)? = target { return .privateClipboard(reason) }
         insertedText = insertion.text
         return .pasteCommandPosted(.activeApplication)
     }
@@ -76,8 +73,4 @@ final class TestTargetInserter: FocusedTargetInserting {
         pastedText = text
         return true
     }
-}
-
-struct AppTestConnectivityMonitor: ConnectivityMonitoring {
-    let state: ConnectivityState = .online
 }

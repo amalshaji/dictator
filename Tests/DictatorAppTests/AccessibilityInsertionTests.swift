@@ -72,6 +72,9 @@ final class AccessibilityInsertionTests: XCTestCase {
 
         XCTAssertEqual(result, .pasteCommandPosted(.activeApplication))
         XCTAssertEqual(fixture.events.events, Self.expectedPasteEvents)
+        // The pasteboard restore now runs in a detached task after `insert`
+        // returns, so give it a moment to complete before checking it.
+        try? await Task.sleep(for: .milliseconds(50))
         XCTAssertTrue(fixture.clipboard.didRestore)
     }
 
@@ -189,10 +192,125 @@ final class AccessibilityInsertionTests: XCTestCase {
         XCTAssertTrue(fixture.events.events.isEmpty)
     }
 
+    /// Before the merged walk, `captureFocusedTarget` always fetched both the
+    /// system-wide AND app-scoped focused elements (usually the same one),
+    /// then ran two independent 8-hop ancestor walks (secure, then editable)
+    /// per fetched element. For this 6-deep non-secure editable target that
+    /// is 2 initial fetches + 2 x (14-call secure walk + 26-call editable
+    /// walk) = 82 attribute/settable fetches. The merged walk below fetches
+    /// only the system-wide element and walks the ancestor chain once.
+    func testCaptureFocusedTargetWalksAncestorsOnceForASixDeepEditableTarget() {
+        let oldDesignCallCount = 82
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        let walk = FakeAccessibilityWalk()
+        let leaf = walk.addNode(pid: ownPID)
+        var parentPID = ownPID
+        for depth in 1...6 {
+            let pid = ownPID + pid_t(depth)
+            walk.addNode(pid: pid, valueSettable: depth == 6)
+            walk.setParent(ofPID: parentPID, toPID: pid)
+            parentPID = pid
+        }
+        walk.focusedElement = leaf
+
+        let resolver = AccessibilityTargetResolver(primitives: walk.primitives)
+        let target = resolver.captureFocusedTarget(processIdentifier: ownPID)
+
+        guard case .field = target else {
+            return XCTFail("Expected the 6-deep non-secure target to resolve as an editable field")
+        }
+        XCTAssertEqual(walk.rootQueryCount, 1, "the app element must not be queried once the system-wide lookup succeeds")
+        XCTAssertEqual(walk.callCount, 34, "old design: \(oldDesignCallCount) calls; new merged/deduped walk: \(walk.callCount)")
+        XCTAssertLessThanOrEqual(walk.callCount, oldDesignCallCount / 2)
+    }
+
     private static let expectedPasteEvents = [
         PostedKeyEvent(keyCode: 0x09, keyDown: true, flags: .maskCommand),
         PostedKeyEvent(keyCode: 0x09, keyDown: false, flags: .maskCommand),
     ]
+}
+
+/// A synthetic focused-element ancestor chain used to exercise
+/// `AccessibilityTargetResolver`'s walk without live AXUIElements. Nodes are
+/// keyed by the pid given to `AXUIElementCreateApplication`, which is a
+/// stable identifier for these fake elements even without Accessibility
+/// trust. Any queried element that isn't a registered node is treated as one
+/// of the two capture roots (system-wide or the app element) and only
+/// answers the focused-element attribute.
+@MainActor
+final class FakeAccessibilityWalk {
+    private struct Node {
+        var subrole: String?
+        var role: String?
+        var selectedTextSettable = false
+        var valueSettable = false
+        var parent: AXUIElement?
+    }
+
+    private var nodes: [pid_t: Node] = [:]
+    private var elements: [pid_t: AXUIElement] = [:]
+    private(set) var callCount = 0
+    private(set) var rootQueryCount = 0
+    var focusedElement: AXUIElement?
+
+    @discardableResult
+    func addNode(
+        pid: pid_t,
+        subrole: String? = nil,
+        role: String? = nil,
+        selectedTextSettable: Bool = false,
+        valueSettable: Bool = false
+    ) -> AXUIElement {
+        let element = AXUIElementCreateApplication(pid)
+        nodes[pid] = Node(
+            subrole: subrole,
+            role: role,
+            selectedTextSettable: selectedTextSettable,
+            valueSettable: valueSettable
+        )
+        elements[pid] = element
+        return element
+    }
+
+    func setParent(ofPID childPID: pid_t, toPID parentPID: pid_t) {
+        nodes[childPID]?.parent = elements[parentPID]
+    }
+
+    private func pid(of element: AXUIElement) -> pid_t? {
+        var value: pid_t = 0
+        return AXUIElementGetPid(element, &value) == .success ? value : nil
+    }
+
+    var primitives: AccessibilityWalkPrimitives {
+        AccessibilityWalkPrimitives(
+            copyAttribute: { [weak self] element, attribute in
+                guard let self else { return nil }
+                guard let pid = self.pid(of: element), let node = self.nodes[pid] else {
+                    guard attribute as String == kAXFocusedUIElementAttribute else { return nil }
+                    self.rootQueryCount += 1
+                    self.callCount += 1
+                    return self.focusedElement
+                }
+                self.callCount += 1
+                switch attribute as String {
+                case kAXParentAttribute: return node.parent
+                case kAXSubroleAttribute: return node.subrole as CFTypeRef?
+                case kAXRoleAttribute: return node.role as CFTypeRef?
+                default: return nil
+                }
+            },
+            isAttributeSettable: { [weak self] element, attribute in
+                guard let self, let pid = self.pid(of: element), let node = self.nodes[pid] else { return false }
+                self.callCount += 1
+                switch attribute as String {
+                case kAXSelectedTextAttribute: return node.selectedTextSettable
+                case kAXValueAttribute: return node.valueSettable
+                default: return false
+                }
+            },
+            setMessagingTimeout: { _, _ in }
+        )
+    }
 }
 
 @MainActor

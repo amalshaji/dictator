@@ -6,55 +6,44 @@ struct HomeTranscriptRow: View {
     let record: TranscriptRecord
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            Text(record.currentText)
-                .font(.dictatorBody(14))
-                .lineLimit(3)
-                .textSelection(.enabled)
-            HStack(spacing: 10) {
-                if let bundleIdentifier = record.sourceBundleID {
-                    let identity = HomeApplicationIdentity(bundleIdentifier: bundleIdentifier)
-                    HStack(spacing: 5) {
-                        HomeApplicationIcon(identity: identity, size: 16)
-                        Text(identity.name)
-                            .lineLimit(1)
-                    }
-                }
-                Text(record.createdAt.dictatorTimestamp)
-                ForEach(TranscriptMetadataFormatter.pipelineSegments(for: record), id: \.self) { segment in
-                    Text(segment)
-                }
+        HStack(alignment: .top, spacing: 12) {
+            if let bundleIdentifier = record.sourceBundleID {
+                HomeApplicationIcon(identity: HomeApplicationIdentity(bundleIdentifier: bundleIdentifier), size: 30)
             }
-            .font(.dictatorUtility(10))
-            .foregroundStyle(DictatorDesign.ink.opacity(0.42))
-            .lineLimit(1)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    if let bundleIdentifier = record.sourceBundleID {
+                        Text(HomeApplicationIdentity(bundleIdentifier: bundleIdentifier).name)
+                        Text("·")
+                    }
+                    Text(TranscriptRowFormatter.relativeTime(from: record.createdAt))
+                }
+                .font(.dictatorCaption(weight: .medium))
+                .foregroundStyle(DictatorDesign.textSecondary)
+                .lineLimit(1)
+
+                Text(TranscriptRowFormatter.firstLine(of: record.finalText))
+                    .font(.dictatorBodyLarge)
+                    .lineLimit(1)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 13)
     }
 }
 
-enum TranscriptMetadataFormatter {
-    static func pipelineSegments(for record: TranscriptRecord) -> [String] {
-        var segments = ["STT: \(sttDisplayName(for: record.sttProvider)), \(milliseconds(record.sttLatency))"]
-        if let execution = record.llmExecution {
-            let providerName = llmDisplayName(for: execution.provider)
-            let label = execution.purpose == .cleanup ? "Cleanup" : "Screen aware"
-            segments.append("\(label): \(providerName), \(milliseconds(execution.latency))")
-        }
-        segments.append(record.pipelineLatency.map { "Total: \(milliseconds($0))" } ?? "Total: —")
-        return segments
+enum TranscriptRowFormatter {
+    nonisolated(unsafe) private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter
+    }()
+
+    static func firstLine(of text: String) -> String {
+        text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? text
     }
 
-    private static func sttDisplayName(for kind: ProviderKind) -> String {
-        ProviderRegistry.sttMetadata(includeAppleSpeech: true).first { $0.kind == kind }?.displayName ?? kind.rawValue
-    }
-
-    private static func llmDisplayName(for kind: ProviderKind) -> String {
-        CleanupProviderRegistry.metadata.first { $0.kind == kind }?.displayName ?? kind.rawValue
-    }
-
-    private static func milliseconds(_ latency: TimeInterval) -> String {
-        String(format: "%.0f ms", latency * 1_000)
+    static func relativeTime(from date: Date, relativeTo now: Date = Date()) -> String {
+        relativeFormatter.localizedString(for: date, relativeTo: now)
     }
 }

@@ -32,11 +32,7 @@ final class LiveProviderTests: XCTestCase {
         let audio = try referenceAudio()
         let configurations: [(ProviderKind, ProviderCredentials)] = [
             (.groq, .init(apiKey: environment["GROQ_API_KEY"] ?? "")),
-            (.cloudflare, .init(apiKey: environment["CLOUDFLARE_API_TOKEN"] ?? "", accountID: environment["CLOUDFLARE_ACCOUNT_ID"])),
-            (.xAI, .init(apiKey: environment["XAI_API_KEY"] ?? "")),
-            (.deepgram, .init(apiKey: environment["DEEPGRAM_API_KEY"] ?? "")),
-            (.assemblyAI, .init(apiKey: environment["ASSEMBLYAI_API_KEY"] ?? "")),
-            (.gladia, .init(apiKey: environment["GLADIA_API_KEY"] ?? ""))
+            (.deepgram, .init(apiKey: environment["DEEPGRAM_API_KEY"] ?? ""))
         ]
 
         var tested = 0
@@ -59,9 +55,7 @@ final class LiveProviderTests: XCTestCase {
         let raw = "Um, Dictator version 2.4 is at https://example.com, and and it works."
         let configurations: [(ProviderKind, ProviderCredentials)] = [
             (.groq, .init(apiKey: environment["GROQ_API_KEY"] ?? "")),
-            (.cloudflare, .init(apiKey: environment["CLOUDFLARE_API_TOKEN"] ?? "", accountID: environment["CLOUDFLARE_ACCOUNT_ID"])),
             (.gemini, .init(apiKey: environment["GEMINI_API_KEY"] ?? "")),
-            (.xAI, .init(apiKey: environment["XAI_API_KEY"] ?? "")),
             (.openRouter, .init(apiKey: environment["OPENROUTER_API_KEY"] ?? "")),
             (.cerebras, .init(apiKey: environment["CEREBRAS_API_KEY"] ?? ""))
         ]

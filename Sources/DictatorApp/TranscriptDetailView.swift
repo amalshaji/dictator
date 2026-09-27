@@ -2,28 +2,10 @@ import DictatorCore
 import SwiftUI
 
 struct TranscriptDetailView: View {
-    @ObservedObject var model: AppModel
+    let model: AppModel
     let transcriptID: UUID
     @Environment(\.dismiss) private var dismiss
-    @State private var presentation: Presentation?
-    @State private var processingError: String?
-    @State private var working = false
-
-    private enum Presentation: Identifiable {
-        case edit(String)
-        case teach
-        case confirmReprocess
-        case preview(TranscriptRevision)
-
-        var id: String {
-            switch self {
-            case .edit: "edit"
-            case .teach: "teach"
-            case .confirmReprocess: "confirmReprocess"
-            case .preview(let revision): "preview-\(revision.id)"
-            }
-        }
-    }
+    @State private var showingTeach = false
 
     private var record: TranscriptRecord? {
         model.data.transcripts.first { $0.id == transcriptID }
@@ -32,202 +14,117 @@ struct TranscriptDetailView: View {
     var body: some View {
         Group {
             if let record {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        header(record)
-                        Divider()
-                        actionBar(record)
-                        if let processingError {
-                            Label(processingError, systemImage: "exclamationmark.triangle.fill")
-                                .font(.dictatorBody(11, weight: .medium))
-                                .foregroundStyle(.red)
-                                .padding(10)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(Color.red.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+                VStack(alignment: .leading, spacing: 0) {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 16) {
+                            header(record)
+                            Divider()
+                            finalTextSection(record)
+                            latencySection(record)
+                            sourceTextSection(record)
+                            technicalDetailsSection(record)
                         }
-                        currentTextSection(record)
-                        latencySection(record)
-                        revisionsSection(record)
-                        sourceTextSection(record)
-                        technicalDetailsSection(record)
+                        .padding(24)
                     }
-                    .padding(24)
+                    Divider()
+                    actionBar(record)
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 16)
                 }
             } else {
                 Text("Transcript is no longer available.").padding(30)
             }
         }
-        .frame(width: 620, height: 560)
-        .sheet(item: sheetPresentation) { sheetContent($0) }
-        .confirmationDialog(
-            "Reprocess raw transcript?",
-            isPresented: confirmationPresented,
-            titleVisibility: .visible
-        ) {
-            Button("Reprocess") { Task { await createPreview() } }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            if model.cleanupEnabled {
-                Text("This sends stored text to \(model.selectedLLM.rawValue) using \(model.configuredModel(for: .cleanup, provider: model.selectedLLM) ?? "the default model") and may incur cost.")
-            } else {
-                Text("This reapplies current vocabulary and snippets locally.")
-            }
+        .frame(minWidth: 560, minHeight: 480)
+        .onExitCommand { dismiss() }
+        .sheet(isPresented: $showingTeach) {
+            TranscriptTeachingEditor(model: model) { showingTeach = false }
         }
     }
 
     private func header(_ record: TranscriptRecord) -> some View {
-        HStack(alignment: .top, spacing: 16) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Transcript details").font(.dictatorDisplay(23))
-                Text(record.createdAt.dictatorTimestamp)
-                    .font(.dictatorUtility(10))
-                    .foregroundStyle(DictatorDesign.muted)
-            }
-            Spacer()
-            Button("Done") { dismiss() }
-                .keyboardShortcut(.cancelAction)
-                .dictatorButton(.ghost)
-        }
-    }
-
-    private var sheetPresentation: Binding<Presentation?> {
-        Binding(
-            get: {
-                guard let presentation else { return nil }
-                if case .confirmReprocess = presentation { return nil }
-                return presentation
-            },
-            set: { if $0 == nil { presentation = nil } }
-        )
-    }
-
-    private var confirmationPresented: Binding<Bool> {
-        Binding(
-            get: { if case .confirmReprocess = presentation { true } else { false } },
-            set: { if !$0 { presentation = nil } }
-        )
-    }
-
-    @ViewBuilder
-    private func sheetContent(_ presentation: Presentation) -> some View {
-        switch presentation {
-        case .edit(let text):
-            TranscriptManualEditor(initialText: text) { text in
-                model.appendRevision(.init(text: text, origin: .manual, repairLatency: 0), to: transcriptID)
-                self.presentation = nil
-            }
-        case .teach:
-            TranscriptTeachingEditor(model: model) { self.presentation = nil }
-        case .preview(let revision):
-            previewView(revision)
-        case .confirmReprocess:
-            EmptyView()
+        VStack(alignment: .leading, spacing: 3) {
+            Text("Transcript details").font(.dictatorDisplay)
+            Text(record.createdAt.dictatorTimestamp)
+                .font(.dictatorCaption(weight: .medium))
+                .foregroundStyle(DictatorDesign.textSecondary)
         }
     }
 
     private func actionBar(_ record: TranscriptRecord) -> some View {
         HStack(spacing: 8) {
-            Button { model.copyTranscriptText(record.currentText) } label: {
+            // Hidden so Esc always closes the sheet even if some other control
+            // has claimed the Escape key equivalent elsewhere in the app.
+            Button("Cancel") { dismiss() }
+                .keyboardShortcut(.cancelAction)
+                .hidden()
+                .accessibilityHidden(true)
+
+            Spacer()
+            Button { model.copyTranscriptText(record.finalText) } label: {
                 Label("Copy", systemImage: "doc.on.doc")
             }
             .dictatorButton(.secondary)
+            .help("Copy the final transcript to the clipboard")
 
             if model.insertionMode == .insert {
-                Button { Task { await model.pasteTranscriptText(record.currentText) } } label: {
+                Button { Task { await model.pasteTranscriptText(record.finalText) } } label: {
                     Label("Paste", systemImage: "doc.on.clipboard")
                 }
                 .dictatorButton(.secondary)
+                .help("Paste the final transcript into the frontmost app")
             }
 
-            Button { presentation = .edit(record.currentText) } label: {
-                Label("Edit", systemImage: "pencil")
-            }
-            .dictatorButton(.secondary)
+            Button("Teach Dictator…") { showingTeach = true }
+                .dictatorButton(.secondary)
+                .help("Add a vocabulary correction from this transcript")
 
-            Spacer(minLength: 4)
-
-            Button { presentation = .confirmReprocess } label: {
-                Label(working ? "Processing…" : "Reprocess", systemImage: "arrow.triangle.2.circlepath")
-            }
-            .disabled(working)
-            .dictatorButton()
-
-            Menu {
-                Button("Copy raw transcription") { model.copyTranscriptText(record.rawText) }
-                Divider()
-                Button("Teach Dictator…") { presentation = .teach }
-            } label: {
-                HStack(spacing: 5) {
-                    Text("More")
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(DictatorDesign.muted)
-                }
-                .font(.dictatorBody(12.5, weight: .semibold))
-                .foregroundStyle(DictatorDesign.ink)
-                .padding(.horizontal, 13)
-                .frame(minHeight: 34)
-                .background(DictatorDesign.control, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(DictatorDesign.border))
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .accessibilityHint("Shows raw-copy and vocabulary teaching actions")
+            Button("Done") { dismiss() }
+                .keyboardShortcut(.defaultAction)
+                .dictatorButton()
+                .help("Close this transcript")
         }
     }
 
-    private func currentTextSection(_ record: TranscriptRecord) -> some View {
+    private func finalTextSection(_ record: TranscriptRecord) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("CURRENT TEXT").font(.dictatorUtility(9)).foregroundStyle(DictatorDesign.muted)
-                Spacer()
-                if record.preferredRevisionID != nil {
-                    Text("REVISION").font(.dictatorUtility(8)).foregroundStyle(DictatorDesign.focus)
-                }
-            }
-            Text(record.currentText)
-                .font(.dictatorBody(14))
+            Text("Final text").font(.dictatorBody(weight: .semibold)).foregroundStyle(DictatorDesign.textSecondary)
+            Text(record.finalText)
+                .font(.dictatorBodyLarge)
                 .lineSpacing(3)
                 .textSelection(.enabled)
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(DictatorDesign.paper.opacity(0.72), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(DictatorDesign.border.opacity(0.8)))
+        .background(DictatorDesign.paper.opacity(0.72), in: RoundedRectangle(cornerRadius: DictatorDesign.radiusCard, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: DictatorDesign.radiusCard, style: .continuous).stroke(DictatorDesign.border.opacity(0.8)))
     }
 
     private func latencySection(_ record: TranscriptRecord) -> some View {
-        let total = record.pipelineLatency
-        let overhead = total.map { max(0, $0 - record.sttLatency - (record.llmExecution?.latency ?? 0)) }
-        return VStack(alignment: .leading, spacing: 8) {
-            Text("LATENCY").font(.dictatorUtility(9)).foregroundStyle(DictatorDesign.muted)
-            HStack(spacing: 0) {
-                value("Total pipeline", total.map(latency) ?? "—")
-                value("STT request", latency(record.sttLatency))
-                value("LLM processing", record.llmExecution.map { latency($0.latency) } ?? "—")
-                value("Other overhead", overhead.map(latency) ?? "—")
-            }
+        Text(latencySummary(record))
+            .font(.dictatorBody(weight: .medium))
+            .foregroundStyle(DictatorDesign.textSecondary)
+    }
+
+    private func latencySummary(_ record: TranscriptRecord) -> String {
+        var parts = [record.pipelineLatency.map { "\(milliseconds($0)) ms total" } ?? "— total"]
+        parts.append("STT \(milliseconds(record.sttLatency))")
+        if let execution = record.llmExecution {
+            parts.append("cleanup \(milliseconds(execution.latency))")
         }
-        .padding(.horizontal, 2)
+        return parts.joined(separator: " · ")
     }
 
     private func sourceTextSection(_ record: TranscriptRecord) -> some View {
         DisclosureGroup {
-            VStack(alignment: .leading, spacing: 12) {
-                if record.currentText != record.finalText {
-                    compactTextSection("Original processed text", record.finalText)
-                    Divider()
-                }
-                compactTextSection("Raw transcription", record.rawText)
-            }
-            .padding(.top, 10)
+            compactTextSection("Raw transcription", record.rawText)
+                .padding(.top, 10)
         } label: {
             Label("Source text", systemImage: "text.alignleft")
-                .font(.dictatorBody(12, weight: .semibold))
+                .font(.dictatorBody(weight: .semibold))
         }
         .disclosureGroupStyle(FullWidthDisclosureGroupStyle())
-        .tint(DictatorDesign.muted)
+        .tint(DictatorDesign.textSecondary)
     }
 
     private func technicalDetailsSection(_ record: TranscriptRecord) -> some View {
@@ -235,104 +132,29 @@ struct TranscriptDetailView: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text("STT: \(record.sttProvider.rawValue) · \(record.sttModel)")
                 if let execution = record.llmExecution {
-                    Text("\(llmPurposeLabel(execution.purpose)): \(execution.provider.rawValue) · \(execution.model)")
+                    Text("Cleanup: \(execution.provider.rawValue) · \(execution.model)")
                 }
                 Text("Insertion: \(record.insertionOutcome)" + (record.sourceBundleID.map { " · \($0)" } ?? ""))
                 if let execution = record.llmExecution, let usage = execution.usage {
                     Text("Tokens: \(tokenText(usage))")
-                    Text("LLM cost: \(costText(execution: execution))")
                 }
             }
-            .font(.dictatorBody(11))
-            .foregroundStyle(DictatorDesign.ink.opacity(0.72))
+            .font(.dictatorCaption)
+            .foregroundStyle(DictatorDesign.textSecondary)
             .padding(.top, 10)
         } label: {
             Label("Technical details", systemImage: "info.circle")
-                .font(.dictatorBody(12, weight: .semibold))
+                .font(.dictatorBody(weight: .semibold))
         }
         .disclosureGroupStyle(FullWidthDisclosureGroupStyle())
-        .tint(DictatorDesign.muted)
+        .tint(DictatorDesign.textSecondary)
     }
 
     private func compactTextSection(_ title: String, _ text: String) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(title.uppercased()).font(.dictatorUtility(8)).foregroundStyle(DictatorDesign.muted)
-            Text(text).font(.dictatorBody(12)).lineSpacing(2).textSelection(.enabled)
+            Text(title).font(.dictatorBody(weight: .semibold)).foregroundStyle(DictatorDesign.textSecondary)
+            Text(text).font(.dictatorBody).lineSpacing(2).textSelection(.enabled)
         }
-    }
-
-    @ViewBuilder
-    private func revisionsSection(_ record: TranscriptRecord) -> some View {
-        if !record.revisions.isEmpty {
-            Text("Revisions").font(.dictatorDisplay(16))
-            ForEach(record.revisions.reversed()) { revision in
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(revision.text).textSelection(.enabled)
-                    Text(revisionMetadata(revision)).font(.dictatorUtility(10)).foregroundStyle(.secondary)
-                }
-                .padding(12)
-                .background(DictatorDesign.control, in: RoundedRectangle(cornerRadius: 10))
-            }
-        }
-    }
-
-    private func previewView(_ revision: TranscriptRevision) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Reprocessed preview").font(.dictatorDisplay(22))
-            Text(revision.text).font(.dictatorBody(13)).textSelection(.enabled)
-                .padding(12).background(DictatorDesign.control, in: RoundedRectangle(cornerRadius: 10))
-            Text("\(revision.origin.label) · \(latency(revision.repairLatency))")
-                .font(.dictatorBody(11)).foregroundStyle(.secondary)
-            HStack {
-                Spacer()
-                Button("Cancel") { presentation = nil }.dictatorButton(.ghost)
-                Button("Save revision") {
-                    model.appendRevision(revision, to: transcriptID)
-                    presentation = nil
-                }
-                .dictatorButton()
-            }
-        }
-        .padding(24)
-        .frame(width: 520)
-    }
-
-    private func createPreview() async {
-        working = true
-        processingError = nil
-        defer { working = false }
-        do {
-            presentation = .preview(try await model.reprocessTranscript(transcriptID))
-        } catch {
-            presentation = nil
-            processingError = error.localizedDescription
-        }
-    }
-
-    private func revisionMetadata(_ revision: TranscriptRevision) -> String {
-        var parts = [revision.origin.label, latency(revision.repairLatency), revision.createdAt.dictatorTimestamp]
-        if case .cleanup(let cleanup) = revision.origin, let usage = cleanup.usage {
-            parts.append(tokenText(usage))
-            parts.append(costText(execution: cleanup))
-        }
-        return parts.joined(separator: " · ")
-    }
-
-    private func costText(execution: LLMExecution) -> String {
-        guard let usage = execution.usage,
-              let cost = PricingCatalog.estimatedLLMCost(
-                  provider: execution.provider,
-                  model: execution.model,
-                  usage: usage,
-                  rates: model.pricing.snapshot?.rates ?? PricingCatalog.fallbackRates
-              )
-        else { return "unavailable" }
-        return "$" + NSDecimalNumber(decimal: cost).stringValue
-            + (usage.providerReportedCostUSD == nil ? " estimated" : " reported")
-    }
-
-    private func llmPurposeLabel(_ purpose: LLMExecutionPurpose) -> String {
-        purpose == .cleanup ? "Cleanup" : "Screen aware"
     }
 
     private func tokenText(_ usage: LLMUsage) -> String {
@@ -340,16 +162,8 @@ struct TranscriptDetailView: View {
         return "\(input) in / \(output) out"
     }
 
-    private func value(_ label: String, _ text: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(text).font(.dictatorDisplay(14))
-            Text(label).font(.dictatorBody(9)).foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func latency(_ value: TimeInterval) -> String {
-        String(format: "%.0f ms", value * 1_000)
+    private func milliseconds(_ value: TimeInterval) -> String {
+        String(format: "%.0f", value * 1_000)
     }
 }
 
@@ -361,8 +175,8 @@ private struct FullWidthDisclosureGroupStyle: DisclosureGroupStyle {
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: configuration.isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(DictatorDesign.muted)
+                        .font(DictatorDesign.glyphFont(size: 10, weight: .semibold))
+                        .foregroundStyle(DictatorDesign.textSecondary)
                         .frame(width: 10)
                     configuration.label
                     Spacer()
@@ -370,6 +184,7 @@ private struct FullWidthDisclosureGroupStyle: DisclosureGroupStyle {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .help(configuration.isExpanded ? "Collapse section" : "Expand section")
 
             if configuration.isExpanded {
                 configuration.content
@@ -379,38 +194,8 @@ private struct FullWidthDisclosureGroupStyle: DisclosureGroupStyle {
     }
 }
 
-private struct TranscriptManualEditor: View {
-    @Environment(\.dismiss) private var dismiss
-    @State private var text: String
-    let onSave: (String) -> Void
-
-    init(initialText: String, onSave: @escaping (String) -> Void) {
-        _text = State(initialValue: initialText)
-        self.onSave = onSave
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Edit transcript").font(.dictatorDisplay(22))
-            TextEditor(text: $text).frame(minHeight: 180).dictatorEditor()
-            HStack {
-                Spacer()
-                Button("Cancel") { dismiss() }.dictatorButton(.ghost)
-                Button("Save revision") {
-                    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !trimmed.isEmpty else { return }
-                    onSave(trimmed)
-                }
-                .dictatorButton()
-            }
-        }
-        .padding(24)
-        .frame(width: 520)
-    }
-}
-
 private struct TranscriptTeachingEditor: View {
-    @ObservedObject var model: AppModel
+    let model: AppModel
     @Environment(\.dismiss) private var dismiss
     let onSave: () -> Void
     @State private var incorrect = ""
@@ -419,13 +204,13 @@ private struct TranscriptTeachingEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Teach Dictator").font(.dictatorDisplay(22))
+            Text("Teach Dictator").font(.dictatorDisplay)
             TextField("Incorrect phrase", text: $incorrect).textFieldStyle(DictatorTextFieldStyle())
             TextField("Correct phrase", text: $correct).textFieldStyle(DictatorTextFieldStyle())
             Text("Nothing is learned automatically. Saving creates or updates a vocabulary rule.")
-                .font(.dictatorBody(11)).foregroundStyle(.secondary)
+                .font(.dictatorCaption).foregroundStyle(DictatorDesign.textSecondary)
             if let validationError {
-                Text(validationError).font(.dictatorBody(11, weight: .medium)).foregroundStyle(.red)
+                Text(validationError).font(.dictatorCaption(weight: .medium)).foregroundStyle(DictatorDesign.textError)
             }
             HStack {
                 Spacer()

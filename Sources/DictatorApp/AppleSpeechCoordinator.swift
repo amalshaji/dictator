@@ -1,5 +1,6 @@
 import DictatorCore
 import Foundation
+import Observation
 
 struct AppleSpeechSetupState: Equatable {
     var selectedLocaleIdentifier: String
@@ -15,8 +16,9 @@ struct AppleSpeechSetupState: Equatable {
 }
 
 @MainActor
-final class AppleSpeechCoordinator: ObservableObject {
-    @Published private(set) var state: AppleSpeechSetupState
+@Observable
+final class AppleSpeechCoordinator {
+    private(set) var state: AppleSpeechSetupState
 
     let isAvailable: Bool
     private let provider: (any LocalSpeechTranscribing)?
@@ -117,7 +119,8 @@ final class AppleSpeechCoordinator: ObservableObject {
         return try await provider.transcribe(
             audio: audio,
             localeIdentifier: locale.identifier,
-            vocabulary: vocabulary
+            vocabulary: vocabulary,
+            readyLocale: locale
         )
     }
 

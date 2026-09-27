@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import Observation
 import Sparkle
 
 @MainActor
@@ -67,17 +68,18 @@ private final class SparkleUpdateEngine: UpdateEngine {
 }
 
 @MainActor
-final class AppUpdater: ObservableObject {
+@Observable
+final class AppUpdater {
     private static let receivesCanaryUpdatesKey = "receiveCanaryUpdates"
 
-    @Published private(set) var canCheckForUpdates = false
-    @Published var automaticallyChecksForUpdates: Bool {
+    private(set) var canCheckForUpdates = false
+    var automaticallyChecksForUpdates: Bool {
         didSet {
             guard automaticallyChecksForUpdates != oldValue else { return }
             engine.automaticallyChecksForUpdates = automaticallyChecksForUpdates
         }
     }
-    @Published var receivesCanaryUpdates: Bool {
+    var receivesCanaryUpdates: Bool {
         didSet {
             guard receivesCanaryUpdates != oldValue else { return }
             defaults.set(receivesCanaryUpdates, forKey: Self.receivesCanaryUpdatesKey)

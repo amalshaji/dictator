@@ -13,6 +13,26 @@ public protocol LocalSpeechTranscribing: Sendable {
         localeIdentifier: String,
         vocabulary: [VocabularyEntry]
     ) async throws -> TranscriptionResult
+    /// Fast path for callers (the coordinator) that already resolved a ready
+    /// locale, letting the implementation skip redundant readiness probing.
+    func transcribe(
+        audio: RecordedAudio,
+        localeIdentifier: String,
+        vocabulary: [VocabularyEntry],
+        readyLocale: AppleSpeechLocale?
+    ) async throws -> TranscriptionResult
+}
+
+extension LocalSpeechTranscribing {
+    /// Providers with nothing smarter to do just run the normal (probing) transcribe.
+    public func transcribe(
+        audio: RecordedAudio,
+        localeIdentifier: String,
+        vocabulary: [VocabularyEntry],
+        readyLocale: AppleSpeechLocale?
+    ) async throws -> TranscriptionResult {
+        try await transcribe(audio: audio, localeIdentifier: localeIdentifier, vocabulary: vocabulary)
+    }
 }
 
 @available(macOS 26.0, *)
@@ -144,17 +164,7 @@ public actor AppleSpeechTranscriber: LocalSpeechTranscribing {
             let status = await runtime.assetStatus(for: candidate)
             guard await isUsable(candidate, status: status) else { continue }
             do {
-                let segments = try await runtime.transcribe(audio: audio, locale: candidate, vocabulary: vocabulary)
-                let text = segments.filter(\.isFinal).map(\.text).joined()
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !text.isEmpty else { throw ProviderError.emptyTranscript }
-                return TranscriptionResult(
-                    text: text,
-                    language: candidate.identifier,
-                    provider: .appleSpeech,
-                    model: candidate.engine.rawValue,
-                    latency: seconds(since: started)
-                )
+                return try await transcribe(audio: audio, locale: candidate, vocabulary: vocabulary, started: started)
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
@@ -163,6 +173,65 @@ public actor AppleSpeechTranscriber: LocalSpeechTranscribing {
         }
         if let lastError { throw lastError }
         throw ProviderError.invalidConfiguration("Download the selected Apple speech model before dictating.")
+    }
+
+    /// Fast path: the coordinator already knows a ready locale (see
+    /// `AppleSpeechCoordinator.state.readyLocale`), so this skips the
+    /// `supportedLocale`/`assetStatus`/`canAnalyze`/`reserve` probing entirely
+    /// and analyzes straight away. Any failure falls back to the full probing
+    /// path once, which also carries the existing idle-exit recovery (see
+    /// `isUsable`).
+    ///
+    /// This does not keep a prepared `SpeechAnalyzer`/`SpeechTranscriber` alive
+    /// across dictations. `SpeechAnalyzer.analyzeSequence(_:)` is documented as
+    /// analyzing one input sequence at a time, and there is no documented
+    /// guarantee that, after `finalize(through:)` (which keeps the analyzer
+    /// alive), every result for *this* dictation has already been drained from
+    /// `transcriber.results` before the next dictation starts feeding the same
+    /// analyzer — risking dropped or cross-dictation-mixed segments. That can't
+    /// be verified here against the real framework, since these unit tests only
+    /// exercise a fake `AppleSpeechRuntime`. A fresh analyzer per dictation keeps
+    /// that boundary unambiguous, so only the readiness-probing cost is cut.
+    public func transcribe(
+        audio: RecordedAudio,
+        localeIdentifier: String,
+        vocabulary: [VocabularyEntry],
+        readyLocale: AppleSpeechLocale?
+    ) async throws -> TranscriptionResult {
+        guard let readyLocale else {
+            return try await transcribe(audio: audio, localeIdentifier: localeIdentifier, vocabulary: vocabulary)
+        }
+        do {
+            return try await transcribe(audio: audio, locale: readyLocale, vocabulary: vocabulary, started: ContinuousClock.now)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch ProviderError.emptyTranscript {
+            // A genuinely silent recording, not a readiness/analyzer failure.
+            // Falling back would just run the same (empty) audio through the
+            // full probing path a second time.
+            throw ProviderError.emptyTranscript
+        } catch {
+            return try await transcribe(audio: audio, localeIdentifier: localeIdentifier, vocabulary: vocabulary)
+        }
+    }
+
+    private func transcribe(
+        audio: RecordedAudio,
+        locale: AppleSpeechLocale,
+        vocabulary: [VocabularyEntry],
+        started: ContinuousClock.Instant
+    ) async throws -> TranscriptionResult {
+        let segments = try await runtime.transcribe(audio: audio, locale: locale, vocabulary: vocabulary)
+        let text = segments.filter(\.isFinal).map(\.text).joined()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { throw ProviderError.emptyTranscript }
+        return TranscriptionResult(
+            text: text,
+            language: locale.identifier,
+            provider: .appleSpeech,
+            model: locale.engine.rawValue,
+            latency: seconds(since: started)
+        )
     }
 
     private func isUsable(_ candidate: AppleSpeechLocale, status: AppleSpeechAssetStatus) async -> Bool {
@@ -378,7 +447,10 @@ private struct SystemAppleSpeechRuntime: AppleSpeechRuntime {
             throw ProviderError.unsupported("No compatible Apple speech audio format is available.")
         }
         let buffer = try AppleSpeechTranscriber.convert(sourceBuffer, to: targetFormat)
-        let analyzer = SpeechAnalyzer(modules: [transcriber])
+        // Retain the loaded model across dictations (default is .whileInUse, which cold-loads
+        // it every time) while keeping the caller's task priority unchanged.
+        let options = SpeechAnalyzer.Options(priority: Task.currentPriority, modelRetention: .processLifetime)
+        let analyzer = SpeechAnalyzer(modules: [transcriber], options: options)
         try await analyzer.setContext(context)
         try await analyzer.prepareToAnalyze(in: targetFormat)
 

@@ -9,7 +9,7 @@ final class SettingsLayoutTests: XCTestCase {
 
     func testShortcutRecorderPillsShareTheTrailingEdgeRegardlessOfLabelWidth() throws {
         let shortest = try trailingEdge(of: ShortcutRecorder(shortcut: .dictate, allowsFunctionModifier: true) { _ in true })
-        let longest = try trailingEdge(of: ShortcutRecorder(shortcut: .openClipboard) { _ in true })
+        let longest = try trailingEdge(of: ShortcutRecorder(shortcut: .pasteLatest) { _ in true })
 
         XCTAssertEqual(shortest, rowWidth, accuracy: 1)
         XCTAssertEqual(longest, rowWidth, accuracy: 1)

@@ -83,28 +83,11 @@ final class HotkeyEventTapContextTests: XCTestCase {
         context.configure(
             dictate: .dictate,
             dictateActivation: .toggle,
-            pasteLatest: .pasteLatest,
-            openClipboard: .openClipboard
+            pasteLatest: .pasteLatest
         )
 
         XCTAssertEqual(context.process(up, type: .flagsChanged), .ignored)
         XCTAssertEqual(context.process(down, type: .flagsChanged).action, .press(nil))
-    }
-
-    func testScreenAwareModifierChordEmitsOnePressAndRelease() throws {
-        let context = makeContext()
-        let down = try makeEvent(flags: [.maskControl, .maskAlternate], targetProcessIdentifier: 84)
-        let up = try makeEvent(flags: [.maskControl])
-
-        XCTAssertEqual(
-            context.process(down, type: .flagsChanged),
-            HotkeyEventOutcome(action: .screenAwarePress(84), consumesEvent: false)
-        )
-        XCTAssertEqual(context.process(down, type: .flagsChanged), .ignored)
-        XCTAssertEqual(
-            context.process(up, type: .flagsChanged),
-            HotkeyEventOutcome(action: .screenAwareRelease, consumesEvent: false)
-        )
     }
 
     func testKeyShortcutConsumesInitialPressAutorepeatAndRelease() throws {
@@ -140,21 +123,13 @@ final class HotkeyEventTapContextTests: XCTestCase {
         )
     }
 
-    func testClipboardShortcutsEmitActionsAndConsumeKeyDown() throws {
+    func testPasteLatestShortcutEmitsActionAndConsumesKeyDown() throws {
         let context = makeContext()
         let paste = try makeEvent(keyCode: 9, flags: [.maskCommand, .maskAlternate])
-        let clipboard = try makeEvent(
-            keyCode: 9,
-            flags: [.maskCommand, .maskAlternate, .maskShift]
-        )
 
         XCTAssertEqual(
             context.process(paste, type: .keyDown),
             HotkeyEventOutcome(action: .pasteLatest, consumesEvent: true)
-        )
-        XCTAssertEqual(
-            context.process(clipboard, type: .keyDown),
-            HotkeyEventOutcome(action: .openClipboard, consumesEvent: true)
         )
     }
 
@@ -166,7 +141,6 @@ final class HotkeyEventTapContextTests: XCTestCase {
             dictate: dictate,
             dictateActivation: dictateActivation,
             pasteLatest: .pasteLatest,
-            openClipboard: .openClipboard,
             onAction: { _ in }
         )
     }

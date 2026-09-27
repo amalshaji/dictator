@@ -8,14 +8,7 @@ struct HomeActivityPoint: Equatable, Identifiable {
     var id: Date { date }
 }
 
-struct HomeApplicationUsage: Equatable {
-    let bundleIdentifier: String
-    let transcriptCount: Int
-}
-
 enum HomeDashboardAnalytics {
-    static let assumedTypingWordsPerMinute = 40.0
-
     static func activity(
         in transcripts: [TranscriptRecord],
         endingAt now: Date = Date(),
@@ -50,12 +43,6 @@ enum HomeDashboardAnalytics {
         return "\(total) sec"
     }
 
-    static func estimatedMinutesSaved(from statistics: LifetimeStatistics) -> Double {
-        let typingMinutes = Double(statistics.words) / assumedTypingWordsPerMinute
-        let speechMinutes = statistics.audioSeconds / 60
-        return max(0, typingMinutes - speechMinutes)
-    }
-
     static func transcripts(
         matching query: String,
         in transcripts: [TranscriptRecord]
@@ -65,7 +52,7 @@ enum HomeDashboardAnalytics {
         guard !query.isEmpty else { return ordered }
 
         return ordered.filter { transcript in
-            [transcript.currentText, transcript.rawText, transcript.sourceBundleID ?? ""]
+            [transcript.finalText, transcript.rawText, transcript.sourceBundleID ?? ""]
                 .contains { candidate in
                     candidate.range(
                         of: query,
@@ -73,30 +60,5 @@ enum HomeDashboardAnalytics {
                     ) != nil
                 }
         }
-    }
-
-    static func topApplication(in transcripts: [TranscriptRecord]) -> HomeApplicationUsage? {
-        var usage: [String: (count: Int, lastUsedAt: Date)] = [:]
-
-        for transcript in transcripts {
-            guard let bundleIdentifier = transcript.sourceBundleID?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !bundleIdentifier.isEmpty else { continue }
-            let current = usage[bundleIdentifier]
-            usage[bundleIdentifier] = (
-                count: (current?.count ?? 0) + 1,
-                lastUsedAt: max(current?.lastUsedAt ?? .distantPast, transcript.createdAt)
-            )
-        }
-
-        guard let top = usage.max(by: { lhs, rhs in
-            if lhs.value.count != rhs.value.count { return lhs.value.count < rhs.value.count }
-            if lhs.value.lastUsedAt != rhs.value.lastUsedAt { return lhs.value.lastUsedAt < rhs.value.lastUsedAt }
-            return lhs.key > rhs.key
-        }) else { return nil }
-
-        return HomeApplicationUsage(
-            bundleIdentifier: top.key,
-            transcriptCount: top.value.count
-        )
     }
 }

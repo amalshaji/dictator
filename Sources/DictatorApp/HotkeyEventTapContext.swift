@@ -1,13 +1,11 @@
 @preconcurrency import CoreGraphics
 import Foundation
+import os
 
 enum HotkeyAction: Equatable, Sendable {
     case press(pid_t?)
     case release
-    case screenAwarePress(pid_t?)
-    case screenAwareRelease
     case pasteLatest
-    case openClipboard
 }
 
 struct HotkeyEventOutcome: Equatable, Sendable {
@@ -19,50 +17,52 @@ struct HotkeyEventOutcome: Equatable, Sendable {
 
 /// Mutable state used only by the event tap attached to the main CFRunLoop.
 ///
-/// CoreGraphics invokes its C callback from that run loop without entering a
-/// Swift main-actor executor. Keep this context actor-neutral and forward typed
-/// actions across the actor boundary instead of assuming executor isolation.
-final class HotkeyEventTapContext {
-    private var dictateShortcut: GlobalShortcut
-    private var dictateActivation: HotkeyActivationMode
-    private var pasteShortcut: GlobalShortcut
-    private var clipboardShortcut: GlobalShortcut
-    private var dictateIsDown = false
-    private var screenAwareIsDown = false
-    private var eventTap: CFMachPort?
+/// CoreGraphics invokes its C callback from a dedicated background thread with
+/// its own CFRunLoop, while `configure(...)` is called from the main actor.
+/// All mutable state is protected by a lock so both sides can touch it safely.
+final class HotkeyEventTapContext: @unchecked Sendable {
+    private struct State {
+        var dictateShortcut: GlobalShortcut
+        var dictateActivation: HotkeyActivationMode
+        var pasteShortcut: GlobalShortcut
+        var dictateIsDown = false
+        var eventTap: CFMachPort?
+    }
+
+    private let state: OSAllocatedUnfairLock<State>
     private let onAction: @Sendable (HotkeyAction) -> Void
 
     init(
         dictate: GlobalShortcut,
         dictateActivation: HotkeyActivationMode = .hold,
         pasteLatest: GlobalShortcut,
-        openClipboard: GlobalShortcut,
         onAction: @escaping @Sendable (HotkeyAction) -> Void
     ) {
-        dictateShortcut = dictate
-        self.dictateActivation = dictateActivation
-        pasteShortcut = pasteLatest
-        clipboardShortcut = openClipboard
+        state = OSAllocatedUnfairLock(initialState: State(
+            dictateShortcut: dictate,
+            dictateActivation: dictateActivation,
+            pasteShortcut: pasteLatest
+        ))
         self.onAction = onAction
     }
 
     func configure(
         dictate: GlobalShortcut,
         dictateActivation: HotkeyActivationMode,
-        pasteLatest: GlobalShortcut,
-        openClipboard: GlobalShortcut
+        pasteLatest: GlobalShortcut
     ) {
-        // A shortcut held across a mode switch can never deliver a matching
-        // release under the new mode, so drop the stale held state.
-        if dictateActivation != self.dictateActivation { dictateIsDown = false }
-        dictateShortcut = dictate
-        self.dictateActivation = dictateActivation
-        pasteShortcut = pasteLatest
-        clipboardShortcut = openClipboard
+        state.withLock { state in
+            // A shortcut held across a mode switch can never deliver a matching
+            // release under the new mode, so drop the stale held state.
+            if dictateActivation != state.dictateActivation { state.dictateIsDown = false }
+            state.dictateShortcut = dictate
+            state.dictateActivation = dictateActivation
+            state.pasteShortcut = pasteLatest
+        }
     }
 
     func attach(eventTap: CFMachPort) {
-        self.eventTap = eventTap
+        state.withLock { $0.eventTap = eventTap }
     }
 
     func process(_ event: CGEvent, type: CGEventType) -> HotkeyEventOutcome {
@@ -70,59 +70,51 @@ final class HotkeyEventTapContext {
         let eventTargetPID = event.getIntegerValueField(.eventTargetUnixProcessID)
         let targetPID = eventTargetPID > 0 ? pid_t(eventTargetPID) : nil
 
-        if case .functionModifier = dictateShortcut.trigger,
-           type == .flagsChanged,
-           event.flags.contains(.maskSecondaryFn) || dictateIsDown {
-            let down = event.flags.contains(.maskSecondaryFn)
-            guard down != dictateIsDown else { return .ignored }
-            dictateIsDown = down
-            return HotkeyEventOutcome(
-                action: down ? .press(targetPID) : releaseAction,
-                consumesEvent: false
-            )
-        }
+        return state.withLock { state in
+            if case .functionModifier = state.dictateShortcut.trigger,
+               type == .flagsChanged,
+               event.flags.contains(.maskSecondaryFn) || state.dictateIsDown {
+                let down = event.flags.contains(.maskSecondaryFn)
+                guard down != state.dictateIsDown else { return .ignored }
+                state.dictateIsDown = down
+                return HotkeyEventOutcome(
+                    action: down ? .press(targetPID) : Self.releaseAction(for: state.dictateActivation),
+                    consumesEvent: false
+                )
+            }
 
-        if type == .flagsChanged {
-            let down = ShortcutMatcher.matchesModifiers(.screenAware, flags: event.flags)
-            guard down != screenAwareIsDown else { return .ignored }
-            screenAwareIsDown = down
-            return HotkeyEventOutcome(
-                action: down ? .screenAwarePress(targetPID) : .screenAwareRelease,
-                consumesEvent: false
-            )
-        }
-
-        if case .key(let configuredKeyCode, _, _) = dictateShortcut.trigger,
-           keyCode == configuredKeyCode {
-            if type == .keyDown,
-               ShortcutMatcher.matches(dictateShortcut, keyCode: keyCode, flags: event.flags) {
-                guard !dictateIsDown,
-                      event.getIntegerValueField(.keyboardEventAutorepeat) == 0
-                else {
-                    return HotkeyEventOutcome(action: nil, consumesEvent: true)
+            if case .key(let configuredKeyCode, _, _) = state.dictateShortcut.trigger,
+               keyCode == configuredKeyCode {
+                if type == .keyDown,
+                   ShortcutMatcher.matches(state.dictateShortcut, keyCode: keyCode, flags: event.flags) {
+                    guard !state.dictateIsDown,
+                          event.getIntegerValueField(.keyboardEventAutorepeat) == 0
+                    else {
+                        return HotkeyEventOutcome(action: nil, consumesEvent: true)
+                    }
+                    state.dictateIsDown = true
+                    return HotkeyEventOutcome(action: .press(targetPID), consumesEvent: true)
                 }
-                dictateIsDown = true
-                return HotkeyEventOutcome(action: .press(targetPID), consumesEvent: true)
+                if type == .keyUp, state.dictateIsDown {
+                    state.dictateIsDown = false
+                    return HotkeyEventOutcome(
+                        action: Self.releaseAction(for: state.dictateActivation),
+                        consumesEvent: true
+                    )
+                }
             }
-            if type == .keyUp, dictateIsDown {
-                dictateIsDown = false
-                return HotkeyEventOutcome(action: releaseAction, consumesEvent: true)
-            }
-        }
 
-        guard type == .keyDown else { return .ignored }
-        if ShortcutMatcher.matches(clipboardShortcut, keyCode: keyCode, flags: event.flags) {
-            return HotkeyEventOutcome(action: .openClipboard, consumesEvent: true)
+            guard type == .keyDown else { return .ignored }
+            if ShortcutMatcher.matches(state.pasteShortcut, keyCode: keyCode, flags: event.flags) {
+                return HotkeyEventOutcome(action: .pasteLatest, consumesEvent: true)
+            }
+            return .ignored
         }
-        if ShortcutMatcher.matches(pasteShortcut, keyCode: keyCode, flags: event.flags) {
-            return HotkeyEventOutcome(action: .pasteLatest, consumesEvent: true)
-        }
-        return .ignored
     }
 
     /// Toggle mode drives both edges from presses, so letting go emits nothing.
-    private var releaseAction: HotkeyAction? {
-        dictateActivation == .toggle ? nil : .release
+    private static func releaseAction(for activation: HotkeyActivationMode) -> HotkeyAction? {
+        activation == .toggle ? nil : .release
     }
 
     static let callback: CGEventTapCallBack = { _, type, event, userInfo in
@@ -144,7 +136,8 @@ final class HotkeyEventTapContext {
     }
 
     private func reenableTap() {
-        guard let eventTap else { return }
-        CGEvent.tapEnable(tap: eventTap, enable: true)
+        let tap = state.withLock { $0.eventTap }
+        guard let tap else { return }
+        CGEvent.tapEnable(tap: tap, enable: true)
     }
 }

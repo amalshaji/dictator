@@ -175,9 +175,7 @@ final class HotkeyLifecycleControllerTests: XCTestCase {
         )
         controller.start()
         var pasteCount = 0
-        var clipboardCount = 0
         controller.onPasteLatest = { pasteCount += 1 }
-        controller.onOpenClipboard = { clipboardCount += 1 }
 
         for _ in 0..<2 {
             notifications.post(
@@ -191,12 +189,10 @@ final class HotkeyLifecycleControllerTests: XCTestCase {
             )
         }
         hotkey.onPasteLatest?()
-        hotkey.onOpenClipboard?()
 
         XCTAssertEqual(hotkey.stopCount, 4)
         XCTAssertEqual(hotkey.startCount, 2)
         XCTAssertEqual(pasteCount, 1)
-        XCTAssertEqual(clipboardCount, 1)
         XCTAssertEqual(controller.state, .available)
     }
 
@@ -325,7 +321,6 @@ final class HotkeyLifecycleControllerTests: XCTestCase {
             keychain: LifecycleCredentialStore(),
             appleSpeechProvider: nil,
             defaults: defaults,
-            connectivity: LifecycleConnectivityMonitor(),
             hotkeys: hotkeys,
             recorder: recorder
         )
@@ -337,10 +332,7 @@ final class HotkeyLifecycleControllerTests: XCTestCase {
 private final class TestHotkeyMonitor: HotkeyMonitoring {
     var onPress: ((pid_t?) -> Void)?
     var onRelease: (() -> Void)?
-    var onScreenAwarePress: ((pid_t?) -> Void)?
-    var onScreenAwareRelease: (() -> Void)?
     var onPasteLatest: (() -> Void)?
-    var onOpenClipboard: (() -> Void)?
     private(set) var isRunning: Bool
     private(set) var startCount = 0
     private(set) var stopCount = 0
@@ -360,8 +352,7 @@ private final class TestHotkeyMonitor: HotkeyMonitoring {
     func configure(
         dictate: GlobalShortcut,
         dictateActivation: HotkeyActivationMode,
-        pasteLatest: GlobalShortcut,
-        openClipboard: GlobalShortcut
+        pasteLatest: GlobalShortcut
     ) {}
 
     func start() throws {
@@ -438,8 +429,4 @@ private struct LifecycleCredentialStore: CredentialStoring {
     ) throws -> ProviderCredentials? {
         nil
     }
-}
-
-private struct LifecycleConnectivityMonitor: ConnectivityMonitoring {
-    let state: ConnectivityState = .online
 }

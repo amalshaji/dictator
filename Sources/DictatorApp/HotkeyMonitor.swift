@@ -15,7 +15,6 @@ struct GlobalShortcut: Codable, Equatable, Sendable {
     enum Trigger: Codable, Equatable, Sendable {
         case key(keyCode: Int64, modifiersRawValue: UInt64, label: String)
         case functionModifier
-        case modifierChord(modifiersRawValue: UInt64)
     }
 
     let trigger: Trigger
@@ -38,7 +37,7 @@ struct GlobalShortcut: Codable, Equatable, Sendable {
 
     var modifiers: CGEventFlags {
         let rawValue = switch trigger {
-        case .key(_, let modifiersRawValue, _), .modifierChord(let modifiersRawValue): modifiersRawValue
+        case .key(_, let modifiersRawValue, _): modifiersRawValue
         case .functionModifier: UInt64(0)
         }
         return CGEventFlags(rawValue: rawValue).shortcutModifiers
@@ -57,7 +56,7 @@ struct GlobalShortcut: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case trigger
-        case keyCode, modifiersRawValue, keyLabel, isFunctionModifier, isModifierOnly
+        case keyCode, modifiersRawValue, keyLabel, isFunctionModifier
     }
 
     init(from decoder: Decoder) throws {
@@ -71,8 +70,6 @@ struct GlobalShortcut: Codable, Equatable, Sendable {
         let label = try values.decode(String.self, forKey: .keyLabel)
         if try values.decodeIfPresent(Bool.self, forKey: .isFunctionModifier) == true {
             trigger = .functionModifier
-        } else if try values.decodeIfPresent(Bool.self, forKey: .isModifierOnly) == true {
-            trigger = .modifierChord(modifiersRawValue: modifiersRawValue)
         } else {
             trigger = .key(keyCode: keyCode, modifiersRawValue: modifiersRawValue, label: label)
         }
@@ -83,13 +80,8 @@ struct GlobalShortcut: Codable, Equatable, Sendable {
         try values.encode(trigger, forKey: .trigger)
     }
 
-    private static let screenAwareModifiers: CGEventFlags = [.maskControl, .maskAlternate]
     static let dictate = GlobalShortcut(trigger: .functionModifier)
-    static let screenAware = GlobalShortcut(trigger: .modifierChord(
-        modifiersRawValue: screenAwareModifiers.rawValue
-    ))
     static let pasteLatest = GlobalShortcut(keyCode: 9, modifiers: [.maskCommand, .maskAlternate], keyLabel: "V")
-    static let openClipboard = GlobalShortcut(keyCode: 9, modifiers: [.maskCommand, .maskAlternate, .maskShift], keyLabel: "V")
 }
 
 extension CGEventFlags {
@@ -102,36 +94,37 @@ extension CGEventFlags {
 protocol HotkeyMonitoring: AnyObject {
     var onPress: ((pid_t?) -> Void)? { get set }
     var onRelease: (() -> Void)? { get set }
-    var onScreenAwarePress: ((pid_t?) -> Void)? { get set }
-    var onScreenAwareRelease: (() -> Void)? { get set }
     var onPasteLatest: (() -> Void)? { get set }
-    var onOpenClipboard: (() -> Void)? { get set }
     var isRunning: Bool { get }
 
     func configure(
         dictate: GlobalShortcut,
         dictateActivation: HotkeyActivationMode,
-        pasteLatest: GlobalShortcut,
-        openClipboard: GlobalShortcut
+        pasteLatest: GlobalShortcut
     )
     func start() throws
     func stop()
+}
+
+/// Bridges the result of creating the event tap out of its dedicated thread.
+/// Mutated only before `setupComplete` is signaled and read only after it is
+/// waited on, so the semaphore hand-off is the sole synchronization needed.
+private final class TapCreationResult: @unchecked Sendable {
+    var tap: CFMachPort?
+    var runLoop: CFRunLoop?
 }
 
 @MainActor
 final class HotkeyMonitor: HotkeyMonitoring {
     var onPress: ((pid_t?) -> Void)?
     var onRelease: (() -> Void)?
-    var onScreenAwarePress: ((pid_t?) -> Void)?
-    var onScreenAwareRelease: (() -> Void)?
     var onPasteLatest: (() -> Void)?
-    var onOpenClipboard: (() -> Void)?
     private var dictateShortcut = GlobalShortcut.dictate
     private var dictateActivation = HotkeyActivationMode.hold
     private var pasteShortcut = GlobalShortcut.pasteLatest
-    private var clipboardShortcut = GlobalShortcut.openClipboard
     private var eventTap: CFMachPort?
-    private var runLoopSource: CFRunLoopSource?
+    private var eventTapThread: Thread?
+    private var tapRunLoop: CFRunLoop?
     private var eventTapContext: HotkeyEventTapContext?
     var isRunning: Bool {
         guard let eventTap else { return false }
@@ -148,18 +141,15 @@ final class HotkeyMonitor: HotkeyMonitoring {
     func configure(
         dictate: GlobalShortcut,
         dictateActivation: HotkeyActivationMode,
-        pasteLatest: GlobalShortcut,
-        openClipboard: GlobalShortcut
+        pasteLatest: GlobalShortcut
     ) {
         dictateShortcut = dictate
         self.dictateActivation = dictateActivation
         pasteShortcut = pasteLatest
-        clipboardShortcut = openClipboard
         eventTapContext?.configure(
             dictate: dictate,
             dictateActivation: dictateActivation,
-            pasteLatest: pasteLatest,
-            openClipboard: openClipboard
+            pasteLatest: pasteLatest
         )
     }
 
@@ -172,39 +162,71 @@ final class HotkeyMonitor: HotkeyMonitoring {
         let context = HotkeyEventTapContext(
             dictate: dictateShortcut,
             dictateActivation: dictateActivation,
-            pasteLatest: pasteShortcut,
-            openClipboard: clipboardShortcut
+            pasteLatest: pasteShortcut
         ) { [weak self] action in
             Task { @MainActor [weak self] in
                 self?.dispatch(action)
             }
         }
-        let pointer = Unmanaged.passUnretained(context).toOpaque()
-        guard let tap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .defaultTap,
-            eventsOfInterest: mask,
-            callback: HotkeyEventTapContext.callback,
-            userInfo: pointer
-        ) else { throw HotkeyError.permissionRequired }
+
+        // The tap's run loop source runs on its own thread instead of the
+        // main one, so a main-actor stall (e.g. the Accessibility capture
+        // walk, a cleanup network call) never delays keyboard event delivery
+        // system-wide. `start()` still waits for setup to finish so it can
+        // keep throwing `HotkeyError.permissionRequired` synchronously.
+        let result = TapCreationResult()
+        let setupComplete = DispatchSemaphore(value: 0)
+        let thread = Thread {
+            let pointer = Unmanaged.passUnretained(context).toOpaque()
+            guard let tap = CGEvent.tapCreate(
+                tap: .cgSessionEventTap,
+                place: .headInsertEventTap,
+                options: .defaultTap,
+                eventsOfInterest: mask,
+                callback: HotkeyEventTapContext.callback,
+                userInfo: pointer
+            ) else {
+                setupComplete.signal()
+                return
+            }
+            let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+            let runLoop = CFRunLoopGetCurrent()
+            CFRunLoopAddSource(runLoop, source, .commonModes)
+            CGEvent.tapEnable(tap: tap, enable: true)
+            result.tap = tap
+            result.runLoop = runLoop
+            setupComplete.signal()
+            // The C callback only holds an unretained reference to `context`
+            // via `pointer`, so keep it alive for as long as this thread's
+            // run loop may still be invoking it, even if `stop()` drops
+            // `eventTapContext` on the main thread while a callback is
+            // in flight here.
+            withExtendedLifetime(context) { CFRunLoopRun() }
+        }
+        thread.name = "ai.dictator.hotkey-event-tap"
+        thread.qualityOfService = .userInteractive
+        thread.start()
+        setupComplete.wait()
+
+        guard let tap = result.tap, let runLoop = result.runLoop else {
+            throw HotkeyError.permissionRequired
+        }
         context.attach(eventTap: tap)
         eventTapContext = context
         eventTap = tap
-        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        runLoopSource = source
-        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
-        CGEvent.tapEnable(tap: tap, enable: true)
+        eventTapThread = thread
+        tapRunLoop = runLoop
     }
 
     func stop() {
-        if let runLoopSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes) }
         if let eventTap {
             CGEvent.tapEnable(tap: eventTap, enable: false)
             CFMachPortInvalidate(eventTap)
         }
-        runLoopSource = nil
+        if let tapRunLoop { CFRunLoopStop(tapRunLoop) }
         eventTap = nil
+        eventTapThread = nil
+        tapRunLoop = nil
         eventTapContext = nil
     }
 
@@ -214,14 +236,8 @@ final class HotkeyMonitor: HotkeyMonitoring {
             onPress?(targetPID)
         case .release:
             onRelease?()
-        case .screenAwarePress(let targetPID):
-            onScreenAwarePress?(targetPID)
-        case .screenAwareRelease:
-            onScreenAwareRelease?()
         case .pasteLatest:
             onPasteLatest?()
-        case .openClipboard:
-            onOpenClipboard?()
         }
     }
 }
@@ -233,11 +249,6 @@ enum ShortcutMatcher {
         }
         return configuredKeyCode == keyCode
             && CGEventFlags(rawValue: modifiersRawValue).shortcutModifiers == flags.shortcutModifiers
-    }
-
-    static func matchesModifiers(_ shortcut: GlobalShortcut, flags: CGEventFlags) -> Bool {
-        guard case .modifierChord(let modifiersRawValue) = shortcut.trigger else { return false }
-        return CGEventFlags(rawValue: modifiersRawValue).shortcutModifiers == flags.shortcutModifiers
     }
 }
 

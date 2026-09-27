@@ -9,19 +9,27 @@ struct HomeDashboardOverview: View {
     let averageWPM: Int?
     let averageLatency: TimeInterval?
     let lifetimeStatistics: LifetimeStatistics
-    let topApplication: HomeApplicationUsage?
 
     var body: some View {
-        VStack(spacing: 14) {
+        VStack(alignment: .leading, spacing: 10) {
             HomeActivityChart(
                 activity: activity,
                 words: words,
                 averageWPM: averageWPM,
                 averageLatency: averageLatency
             )
-            HomeAllTimeCard(statistics: lifetimeStatistics)
-            HomeTopApplicationCard(usage: topApplication)
+            Text(lifetimeSummary)
+                .font(.dictatorCaption)
+                .foregroundStyle(DictatorDesign.textSecondary)
+                .padding(.horizontal, 4)
         }
+    }
+
+    private var lifetimeSummary: String {
+        let dictations = lifetimeStatistics.dictations
+        let spoken = HomeDashboardAnalytics.formattedSpokenTime(lifetimeStatistics.audioSeconds)
+        let words = lifetimeStatistics.words
+        return "\(dictations.formatted()) \(dictations == 1 ? "dictation" : "dictations") · \(spoken) spoken · \(words.formatted()) words all time"
     }
 }
 
@@ -36,10 +44,10 @@ private struct HomeActivityChart: View {
             HStack(alignment: .top, spacing: 20) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Speech activity")
-                        .font(.dictatorDisplay(18))
-                    Text("LAST 7 DAYS · \(totalSpeechMinutes, specifier: "%.1f") MIN SPOKEN")
-                        .font(.dictatorUtility(9))
-                        .foregroundStyle(DictatorDesign.muted)
+                        .font(.dictatorTitle)
+                    Text("Last 7 days · \(totalSpeechMinutes, specifier: "%.1f") min spoken")
+                        .font(.dictatorCaption(weight: .semibold))
+                        .foregroundStyle(DictatorDesign.textSecondary)
                 }
                 Spacer(minLength: 20)
                 HStack(spacing: 22) {
@@ -57,21 +65,21 @@ private struct HomeActivityChart: View {
                     x: .value("Day", point.date, unit: .day),
                     y: .value("Speech minutes", point.speechMinutes)
                 )
-                .foregroundStyle(DictatorDesign.signalInk)
+                .foregroundStyle(DictatorDesign.accentForeground)
                 .cornerRadius(4)
             }
             .chartYScale(domain: 0...chartMaximum)
             .chartXAxis {
                 AxisMarks(values: activity.map(\.date)) {
                     AxisValueLabel(format: .dateTime.weekday(.abbreviated))
-                        .foregroundStyle(DictatorDesign.muted)
+                        .foregroundStyle(DictatorDesign.textSecondary)
                     AxisTick().foregroundStyle(DictatorDesign.border)
                 }
             }
             .chartYAxis {
                 AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) {
                     AxisGridLine().foregroundStyle(DictatorDesign.fog)
-                    AxisValueLabel().foregroundStyle(DictatorDesign.muted)
+                    AxisValueLabel().foregroundStyle(DictatorDesign.textSecondary)
                 }
             }
             .frame(height: 126)
@@ -79,9 +87,9 @@ private struct HomeActivityChart: View {
             .accessibilityValue("\(totalSpeechMinutes, specifier: "%.1f") minutes spoken")
         }
         .padding(18)
-        .background(DictatorDesign.control, in: RoundedRectangle(cornerRadius: DictatorDesign.cornerRadius, style: .continuous))
+        .background(DictatorDesign.control, in: RoundedRectangle(cornerRadius: DictatorDesign.radiusHero, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: DictatorDesign.cornerRadius, style: .continuous)
+            RoundedRectangle(cornerRadius: DictatorDesign.radiusHero, style: .continuous)
                 .stroke(DictatorDesign.border.opacity(0.82))
         }
     }
@@ -97,120 +105,11 @@ private struct HomeActivityChart: View {
     private func chartMetric(value: String, label: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(value)
-                .font(.dictatorDisplay(17))
+                .font(.dictatorTitle)
                 .monospacedDigit()
             Text(label)
-                .font(.dictatorUtility(9))
-                .foregroundStyle(DictatorDesign.muted)
+                .font(.dictatorCaption(weight: .medium))
+                .foregroundStyle(DictatorDesign.textSecondary)
         }
-    }
-}
-
-private struct HomeAllTimeCard: View {
-    let statistics: LifetimeStatistics
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 20) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("ALL TIME")
-                    .font(.dictatorUtility(9))
-                    .foregroundStyle(DictatorDesign.orchid)
-                Text(spokenTime)
-                    .font(.dictatorDisplay(26))
-                    .monospacedDigit()
-                    .foregroundStyle(DictatorDesign.paper)
-                Text("time spoken")
-                    .font(.dictatorBody(10.5))
-                    .foregroundStyle(DictatorDesign.paper.opacity(0.55))
-            }
-            Spacer(minLength: 18)
-            metric(value: statistics.dictations.formatted(), label: "dictations")
-            metricDivider
-            metric(value: statistics.words.formatted(), label: "words")
-            metricDivider
-            metric(value: statistics.averageWPM.map(String.init) ?? "—", label: "avg wpm")
-            metricDivider
-            metric(value: timeSaved, label: "typing saved")
-        }
-        .frame(maxWidth: .infinity, minHeight: 78, alignment: .leading)
-        .padding(.horizontal, 20)
-        .padding(.vertical, 16)
-        .background(DictatorDesign.signalInk, in: RoundedRectangle(cornerRadius: DictatorDesign.cornerRadius, style: .continuous))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(
-            "All time: \(spokenTime) spoken across \(statistics.dictations) dictations and \(statistics.words) words"
-                + ", estimated typing time saved \(timeSaved), based on 40 words per minute"
-        )
-    }
-
-    private var spokenTime: String {
-        HomeDashboardAnalytics.formattedSpokenTime(statistics.audioSeconds)
-    }
-
-    private var timeSaved: String {
-        HomeDashboardAnalytics.formattedSpokenTime(HomeDashboardAnalytics.estimatedMinutesSaved(from: statistics) * 60)
-    }
-
-    private var metricDivider: some View {
-        Rectangle()
-            .fill(DictatorDesign.paper.opacity(0.14))
-            .frame(width: 1, height: 32)
-    }
-
-    private func metric(value: String, label: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(value)
-                .font(.dictatorDisplay(17))
-                .monospacedDigit()
-                .foregroundStyle(DictatorDesign.paper)
-            Text(label)
-                .font(.dictatorUtility(9))
-                .foregroundStyle(DictatorDesign.paper.opacity(0.55))
-        }
-    }
-}
-
-private struct HomeTopApplicationCard: View {
-    let usage: HomeApplicationUsage?
-
-    var body: some View {
-        HStack(spacing: 14) {
-            if let usage {
-                let identity = HomeApplicationIdentity(bundleIdentifier: usage.bundleIdentifier)
-                HomeApplicationIcon(identity: identity)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("TOP APP · 30 DAYS")
-                        .font(.dictatorUtility(9))
-                        .foregroundStyle(DictatorDesign.muted)
-                    Text(identity.name)
-                        .font(.dictatorDisplay(20))
-                        .lineLimit(1)
-                    Text("\(usage.transcriptCount) \(usage.transcriptCount == 1 ? "transcript" : "transcripts")")
-                        .font(.dictatorBody(10.5))
-                        .foregroundStyle(DictatorDesign.muted)
-                }
-            } else {
-                HomeApplicationIcon(identity: nil)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("TOP APP · 30 DAYS")
-                        .font(.dictatorUtility(9))
-                        .foregroundStyle(DictatorDesign.muted)
-                    Text("No app data yet")
-                        .font(.dictatorDisplay(18))
-                    Text("Apps appear after your first insertion")
-                        .font(.dictatorBody(10.5))
-                        .foregroundStyle(DictatorDesign.muted)
-                }
-            }
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, minHeight: 78, alignment: .leading)
-        .padding(16)
-        .background(DictatorDesign.control, in: RoundedRectangle(cornerRadius: DictatorDesign.cornerRadius, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: DictatorDesign.cornerRadius, style: .continuous)
-                .stroke(DictatorDesign.border.opacity(0.82))
-        }
-        .accessibilityElement(children: .combine)
     }
 }

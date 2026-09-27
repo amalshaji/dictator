@@ -5,26 +5,18 @@ public enum ProviderRegistry {
         kind: .appleSpeech,
         displayName: "Apple On-Device",
         defaultModel: AppleTranscriptionEngine.speechTranscriber.rawValue,
-        models: [AppleTranscriptionEngine.speechTranscriber.rawValue, AppleTranscriptionEngine.dictationTranscriber.rawValue],
-        requiresAccountID: false
+        models: [AppleTranscriptionEngine.speechTranscriber.rawValue, AppleTranscriptionEngine.dictationTranscriber.rawValue]
     )
 
     public static func sttProvider(for kind: ProviderKind) -> (any SpeechToTextProvider)? {
         switch kind {
         case .groq: GroqSTTProvider()
-        case .cloudflare: CloudflareSTTProvider()
-        case .xAI: XAISTTProvider()
         case .deepgram: DeepgramSTTProvider()
-        case .assemblyAI: AssemblyAISTTProvider()
-        case .gladia: GladiaSTTProvider()
         default: nil
         }
     }
 
-    public static var sttMetadata: [ProviderMetadata] {
-        [GroqSTTProvider().metadata, CloudflareSTTProvider().metadata, XAISTTProvider().metadata,
-         DeepgramSTTProvider().metadata, AssemblyAISTTProvider().metadata, GladiaSTTProvider().metadata]
-    }
+    public static let sttMetadata: [ProviderMetadata] = [GroqSTTProvider().metadata, DeepgramSTTProvider().metadata]
 
     public static func sttMetadata(includeAppleSpeech: Bool) -> [ProviderMetadata] {
         includeAppleSpeech ? [appleSpeechMetadata] + sttMetadata : sttMetadata
@@ -62,9 +54,4 @@ public enum STTProviderSelection {
         }
         return next
     }
-}
-
-func seconds(since instant: ContinuousClock.Instant) -> TimeInterval {
-    let duration = instant.duration(to: .now)
-    return Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
 }

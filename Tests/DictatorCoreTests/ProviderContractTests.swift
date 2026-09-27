@@ -49,23 +49,8 @@ final class ProviderContractTests: XCTestCase {
         XCTAssertEqual(result.language, "fr")
     }
 
-    func testXAIUsesRepeatableKeytermFields() async throws {
-        let transport = MockTransport { request in
-            let body = request.httpBody ?? Data()
-            let marker = Data("name=\"keyterm\"".utf8)
-            XCTAssertEqual(body.ranges(of: marker).count, 2)
-            return (#"{"text":"Dictator and Roughdraft","language":"en"}"#.data(using: .utf8)!, 200)
-        }
-        let result = try await XAISTTProvider(transport: transport).transcribe(
-            audio: audio,
-            options: .init(model: "grok-transcribe", vocabulary: [.init(value: "Dictator"), .init(value: "Roughdraft")]),
-            credentials: .init(apiKey: "test")
-        )
-        XCTAssertEqual(result.text, "Dictator and Roughdraft")
-    }
-
     func testOpenAICompatibleCleanupParsesJSONAndUsage() async throws {
-        let response = #"{"choices":[{"message":{"content":"{\"intent\":\"transcription\",\"text\":\"Ship Dictator 2.4 at https://example.com.\"}"}}],"usage":{"prompt_tokens":20,"completion_tokens":9,"cost":0.004}}"#
+        let response = #"{"choices":[{"message":{"content":"{\"intent\":\"transcription\",\"text\":\"Ship Dictator 2.4 at https://example.com.\"}"}}],"usage":{"prompt_tokens":20,"completion_tokens":9}}"#
         let transport = MockTransport { _ in (response.data(using: .utf8)!, 200) }
         let provider = OpenAICompatibleCleanupProvider(
             kind: .groq,
@@ -84,18 +69,21 @@ final class ProviderContractTests: XCTestCase {
         )
         XCTAssertEqual(result.text, "Ship Dictator 2.4 at https://example.com.")
         XCTAssertEqual(result.inputTokens, 20)
-        XCTAssertEqual(result.providerReportedCostUSD, Decimal(string: "0.004"))
     }
 
-    func testCloudflareCleanupParsesUsage() async throws {
-        let response = #"{"result":{"response":"{\"intent\":\"transcription\",\"text\":\"Hello Dictator.\"}","usage":{"prompt_tokens":12,"completion_tokens":4}}}"#
-        let provider = CloudflareCleanupProvider(transport: MockTransport { _ in (response.data(using: .utf8)!, 200) })
-        let result = try await provider.clean(
-            request: .init(input: .transcription("Hello Dictator."), vocabulary: [.init(value: "Dictator")]),
-            model: "test",
-            credentials: .init(apiKey: "test", accountID: "account")
+    func testGeminiCleanupSendsBearerAuthToOpenAICompatibleEndpoint() async throws {
+        let response = #"{"choices":[{"message":{"content":"{\"intent\":\"transcription\",\"text\":\"Hello Dictator.\"}"}}]}"#
+        let transport = MockTransport { request in
+            XCTAssertTrue(request.url?.path.hasSuffix("/v1beta/openai/chat/completions") == true)
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test")
+            return (response.data(using: .utf8)!, 200)
+        }
+        let result = try await OpenAICompatibleCleanupProvider.gemini(transport: transport).clean(
+            request: .init(input: .transcription("Hello Dictator.")),
+            model: "gemini-2.5-flash-lite",
+            credentials: .init(apiKey: "test")
         )
-        XCTAssertEqual(result.inputTokens, 12); XCTAssertEqual(result.outputTokens, 4)
+        XCTAssertEqual(result.text, "Hello Dictator.")
     }
 
     func testOpenAICompatibleCleanupRoutesSelectedTextTransformation() async throws {
@@ -176,6 +164,59 @@ final class ProviderContractTests: XCTestCase {
         )
     }
 
+    func testGroqWarmUpConnectionSendsHeadRequestToHost() async {
+        let warmed = expectation(description: "Groq warm-up request sent")
+        let transport = MockTransport { request in
+            XCTAssertEqual(request.httpMethod, "HEAD")
+            XCTAssertEqual(request.url?.host, "api.groq.com")
+            warmed.fulfill()
+            return (Data(), 200)
+        }
+
+        await GroqSTTProvider(transport: transport).warmUpConnection(credentials: .init(apiKey: "test"))
+
+        await fulfillment(of: [warmed], timeout: 1)
+    }
+
+    func testGroqTranscribeRequestUsesTwentySecondTimeout() async throws {
+        let transport = MockTransport { request in
+            XCTAssertEqual(request.timeoutInterval, 20)
+            return (#"{"text":"Hello"}"#.data(using: .utf8)!, 200)
+        }
+        _ = try await GroqSTTProvider(transport: transport).transcribe(
+            audio: audio,
+            options: .init(model: "whisper-large-v3-turbo"),
+            credentials: .init(apiKey: "test")
+        )
+    }
+
+    func testDeepgramWarmUpConnectionSendsHeadRequestToHost() async {
+        let warmed = expectation(description: "Deepgram warm-up request sent")
+        let transport = MockTransport { request in
+            XCTAssertEqual(request.httpMethod, "HEAD")
+            XCTAssertEqual(request.url?.host, "api.deepgram.com")
+            warmed.fulfill()
+            return (Data(), 200)
+        }
+
+        await DeepgramSTTProvider(transport: transport).warmUpConnection(credentials: .init(apiKey: "test"))
+
+        await fulfillment(of: [warmed], timeout: 1)
+    }
+
+    func testDeepgramTranscribeRequestUsesTwentySecondTimeout() async throws {
+        let json = #"{"results":{"channels":[{"alternatives":[{"transcript":"Hi"}]}]}}"#
+        let transport = MockTransport { request in
+            XCTAssertEqual(request.timeoutInterval, 20)
+            return (json.data(using: .utf8)!, 200)
+        }
+        _ = try await DeepgramSTTProvider(transport: transport).transcribe(
+            audio: audio,
+            options: .init(model: "nova-3"),
+            credentials: .init(apiKey: "test")
+        )
+    }
+
     func testWarmUpConnectionSendsHeadRequestToBaseURL() async {
         let warmed = expectation(description: "warm-up request sent")
         let transport = MockTransport { request in
@@ -191,126 +232,6 @@ final class ProviderContractTests: XCTestCase {
         await fulfillment(of: [warmed], timeout: 1)
     }
 
-    func testOpenAICompatibleScreenAwareSendsImageAndParsesInsertResult() async throws {
-        let response = #"{"choices":[{"message":{"content":"{\"intent\":\"insert\",\"text\":\"Thanks — Tuesday works for me.\"}"}}],"usage":{"prompt_tokens":42,"completion_tokens":8}}"#
-        let transport = MockTransport { request in
-            let body = try XCTUnwrap(request.httpBody)
-            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
-            let messages = try XCTUnwrap(json["messages"] as? [[String: Any]])
-            let user = try XCTUnwrap(messages.last)
-            let content = try XCTUnwrap(user["content"] as? [[String: Any]])
-            XCTAssertEqual(content.compactMap { $0["type"] as? String }, ["text", "image_url"])
-            let image = try XCTUnwrap(content.last?["image_url"] as? [String: Any])
-            XCTAssertEqual(image["url"] as? String, "data:image/jpeg;base64,/9g=")
-            return (response.data(using: .utf8)!, 200)
-        }
-        let provider = OpenAICompatibleScreenAwareProvider(
-            kind: .groq,
-            displayName: "Groq",
-            defaultModel: "vision-test",
-            defaultBaseURL: URL(string: "https://example.com/v1")!,
-            transport: transport
-        )
-
-        let result = try await provider.generate(
-            request: ScreenAwareRequest(
-                command: "Reply that Tuesday works",
-                imageData: Data([0xff, 0xd8]),
-                imageMIMEType: "image/jpeg",
-                applicationName: "Mail",
-                bundleIdentifier: "com.apple.mail",
-                windowTitle: "Project update"
-            ),
-            model: "vision-test",
-            credentials: .init(apiKey: "test")
-        )
-
-        XCTAssertEqual(result.intent, .insert)
-        XCTAssertEqual(result.text, "Thanks — Tuesday works for me.")
-        XCTAssertEqual(result.inputTokens, 42)
-    }
-
-    func testGroqScreenAwareDefaultsToDocumentedVisionModel() throws {
-        let provider = try XCTUnwrap(ScreenAwareProviderRegistry.provider(for: .groq))
-
-        XCTAssertEqual(provider.metadata.defaultModel, "meta-llama/llama-4-scout-17b-16e-instruct")
-        XCTAssertEqual(
-            ScreenAwareModelCapabilities.capability(provider: .groq, model: provider.metadata.defaultModel),
-            .supported
-        )
-    }
-
-    func testGeminiScreenAwareSendsInlineImageAndParsesSelectionReplacement() async throws {
-        let response = #"{"candidates":[{"content":{"parts":[{"text":"{\"intent\":\"replaceSelection\",\"text\":\"Concise copy\"}"}]}}],"usageMetadata":{"promptTokenCount":21,"candidatesTokenCount":4}}"#
-        let transport = MockTransport { request in
-            let body = try XCTUnwrap(request.httpBody)
-            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
-            let contents = try XCTUnwrap(json["contents"] as? [[String: Any]])
-            let parts = try XCTUnwrap(contents.first?["parts"] as? [[String: Any]])
-            let inlineData = try XCTUnwrap(parts.last?["inlineData"] as? [String: Any])
-            XCTAssertEqual(inlineData["mimeType"] as? String, "image/jpeg")
-            XCTAssertEqual(inlineData["data"] as? String, "/9g=")
-            return (response.data(using: .utf8)!, 200)
-        }
-
-        let result = try await GeminiScreenAwareProvider(transport: transport).generate(
-            request: ScreenAwareRequest(
-                command: "Make this concise",
-                imageData: Data([0xff, 0xd8]),
-                imageMIMEType: "image/jpeg",
-                selectedText: "A long paragraph"
-            ),
-            model: "gemini-2.5-flash-lite",
-            credentials: .init(apiKey: "test")
-        )
-
-        XCTAssertEqual(result.intent, .replaceSelection)
-        XCTAssertEqual(result.text, "Concise copy")
-        XCTAssertEqual(result.outputTokens, 4)
-    }
-
-    func testScreenAwareDecoderRejectsSelectionReplacementWithoutCapturedSelection() throws {
-        XCTAssertThrowsError(
-            try ScreenAwareResponseDecoder.decode(
-                #"{"intent":"replaceSelection","text":"Unsafe"}"#,
-                selectedText: nil
-            )
-        ) { error in
-            XCTAssertEqual(error as? ProviderError, .invalidResponse)
-        }
-    }
-
-    func testScreenAwarePromptRequiresDestinationAppropriateFormatting() {
-        let prompt = ScreenAwarePrompt.system
-
-        XCTAssertTrue(prompt.contains("Match the destination's writing format"))
-        XCTAssertTrue(prompt.contains("email body"))
-        XCTAssertTrue(prompt.contains("single-line field"))
-        XCTAssertTrue(prompt.contains("plain text"))
-    }
-
-    func testScreenAwareDecoderPreservesParagraphBreaks() throws {
-        let result = try ScreenAwareResponseDecoder.decode(
-            #"{"intent":"insert","text":"Hi Sam,\n\nThanks for the update. I will review it today.\n\nBest,\nAmal"}"#,
-            selectedText: nil
-        )
-
-        XCTAssertEqual(result.0, .insert)
-        XCTAssertEqual(result.1, "Hi Sam,\n\nThanks for the update. I will review it today.\n\nBest,\nAmal")
-    }
-}
-
-
-private extension Data {
-    func ranges(of needle: Data) -> [Range<Data.Index>] {
-        var result: [Range<Data.Index>] = []
-        var start = startIndex
-        while start < endIndex, let range = self[start...].range(of: needle) {
-            result.append(range)
-            start = range.upperBound
-        }
-        return result
-    }
 }
 
 private struct MockTransport: HTTPTransport {

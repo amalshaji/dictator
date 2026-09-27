@@ -31,26 +31,18 @@ final class CoreTests: XCTestCase {
     }
 
     func testRegistriesExposeAllPlannedProviders() {
-        XCTAssertEqual(Set(ProviderRegistry.sttMetadata.map(\.kind)), Set([.groq, .cloudflare, .xAI, .deepgram, .assemblyAI, .gladia]))
-        XCTAssertEqual(Set(CleanupProviderRegistry.metadata.map(\.kind)), Set([.groq, .cerebras, .cloudflare, .gemini, .xAI, .openRouter, .openAICompatible]))
-        XCTAssertEqual(Set(ScreenAwareProviderRegistry.metadata.map(\.kind)), Set([.groq, .gemini, .xAI, .openRouter, .openAICompatible]))
-        XCTAssertNil(ScreenAwareProviderRegistry.provider(for: .cloudflare))
-    }
-
-    func testScreenAwareCapabilityRequiresProofForUnknownModels() {
-        XCTAssertEqual(ScreenAwareModelCapabilities.capability(provider: .gemini, model: "gemini-2.5-flash-lite"), .supported)
-        XCTAssertEqual(ScreenAwareModelCapabilities.capability(provider: .groq, model: "openai/gpt-oss-20b"), .unsupported)
-        XCTAssertEqual(ScreenAwareModelCapabilities.capability(provider: .openAICompatible, model: "vision-model"), .requiresConfirmation)
+        XCTAssertEqual(Set(ProviderRegistry.sttMetadata.map(\.kind)), Set([.groq, .deepgram]))
+        XCTAssertEqual(Set(CleanupProviderRegistry.metadata.map(\.kind)), Set([.groq, .cerebras, .gemini, .openRouter, .openAICompatible]))
     }
 
     func testSTTCatalogIncludesAppleOnlyWhenTheOSSupportsIt() {
         XCTAssertEqual(
             ProviderRegistry.sttMetadata(includeAppleSpeech: false).map(\.kind),
-            [.groq, .cloudflare, .xAI, .deepgram, .assemblyAI, .gladia]
+            [.groq, .deepgram]
         )
         XCTAssertEqual(
             ProviderRegistry.sttMetadata(includeAppleSpeech: true).map(\.kind),
-            [.appleSpeech, .groq, .cloudflare, .xAI, .deepgram, .assemblyAI, .gladia]
+            [.appleSpeech, .groq, .deepgram]
         )
     }
 
@@ -76,9 +68,9 @@ final class CoreTests: XCTestCase {
             STTProviderSelection.resolve(
                 savedRawValue: ProviderKind.appleSpeech.rawValue,
                 appleSpeechAvailable: false,
-                lastCloudRawValue: ProviderKind.xAI.rawValue
+                lastCloudRawValue: ProviderKind.deepgram.rawValue
             ),
-            .xAI
+            .deepgram
         )
         XCTAssertEqual(
             STTProviderSelection.resolve(

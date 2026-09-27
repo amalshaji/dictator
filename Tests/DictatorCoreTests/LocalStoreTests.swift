@@ -74,14 +74,43 @@ final class LocalStoreTests: XCTestCase {
         XCTAssertEqual(decoded.lifetimeStatistics, LifetimeStatistics())
     }
 
-    func testStorePersistsAndPrunesPrivateClipboard() async throws {
+    func testLoadDropsTranscriptsWithRetiredProviderKinds() async throws {
         let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "data.json")
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let json = """
+        {
+            "transcripts": [
+                {
+                    "id": "\(UUID().uuidString)",
+                    "createdAt": "2026-01-01T00:00:00Z",
+                    "rawText": "valid",
+                    "finalText": "Valid",
+                    "sttProvider": "groq",
+                    "sttModel": "whisper",
+                    "audioDuration": 1,
+                    "sttLatency": 0.1,
+                    "insertionOutcome": "typed"
+                },
+                {
+                    "id": "\(UUID().uuidString)",
+                    "createdAt": "2026-01-01T00:00:00Z",
+                    "rawText": "retired",
+                    "finalText": "Retired",
+                    "sttProvider": "gladia",
+                    "sttModel": "solaria-1",
+                    "audioDuration": 1,
+                    "sttLatency": 0.1,
+                    "insertionOutcome": "typed"
+                }
+            ]
+        }
+        """
+        try json.data(using: .utf8)!.write(to: url)
         let store = LocalStore(fileURL: url)
-        let old = ClipboardEntry(createdAt: Date(timeIntervalSinceNow: -40 * 86_400), text: "old", rawText: "old")
-        let recent = (0..<55).map { ClipboardEntry(createdAt: Date(timeIntervalSinceNow: TimeInterval(-$0)), text: "item \($0)", rawText: "item \($0)") }
-        try await store.save(PersistedData(clipboard: [old] + recent))
+
         let loaded = try await store.load()
-        XCTAssertEqual(loaded.clipboard.count, 50)
-        XCTAssertFalse(loaded.clipboard.contains { $0.text == "old" })
+
+        XCTAssertEqual(loaded.transcripts.count, 1)
+        XCTAssertEqual(loaded.transcripts.first?.rawText, "valid")
     }
 }

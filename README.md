@@ -1,36 +1,30 @@
 # Dictator
 
-Dictator is a native macOS menu-bar app for dictation and screen-aware writing. In the default least-privilege mode, start recording from the menu bar, stop from the pill below the notch or menu bar, and press `Command-V` to paste the copied transcript. This mode requests Microphone access only.
+Dictator is a native macOS menu-bar app for dictation. In the default least-privilege mode, start dictation from the Home screen's Dictate button or the menu bar, and press `Command-V` to paste the copied transcript. This mode requests Microphone access only.
 
 > ⚠️ Dictator is still in the early stages of development. Expect rough edges.
-
-![Dictator's Providers screen on macOS](docs/images/dictator-providers.jpg)
 
 ## Recording and access modes
 
 During onboarding, choose one of two access modes:
 
 - **Use with least privileges** (recommended): Microphone permission only. Start and stop from Dictator's menu-bar menu or stop from the recording pill; every transcript is copied to the system clipboard.
-- **Use system-wide**: adds global shortcuts, focused-field insertion, and optional screen-aware dictation. This mode requires Accessibility and Input Monitoring; Screen Recording is requested only when you enable Screen Aware.
+- **Use system-wide**: adds global shortcuts and focused-field insertion. This mode requires Accessibility and Input Monitoring.
 
 You can switch modes later under **Settings → Access mode**. Switching to least privileges disables privileged features and returns result delivery to the clipboard.
 
 System-wide mode provides these shortcuts:
 
 - Hold `Fn`: record dictation
-- Hold `Control-Option`: compose or transform text using the focused window
-- `Option-Command-V`: paste the latest private-clipboard item
-- `Option-Shift-Command-V`: open the private clipboard
+- `Option-Command-V`: paste the latest transcript
 
 ## Providers
 
 On macOS 26 and later, Apple On-Device is available without an API key and is the default for new installations. Its language model may require an initial download; after that, audio transcription stays on the Mac. SpeechTranscriber is preferred, with DictationTranscriber used when needed for the selected language or hardware.
 
-Cloud speech-to-text adapters remain available: Groq, Cloudflare Workers AI, xAI, Deepgram, AssemblyAI, and Gladia. On macOS 14 and 15, these are the available speech providers and Groq remains the new-install default.
+Cloud speech-to-text adapters remain available: Groq and Deepgram. On macOS 14 and 15, these are the available speech providers and Groq remains the new-install default. If a cloud speech provider cannot be reached and Apple On-Device speech is ready, Dictator transcribes that recording on-device instead.
 
-Optional cleanup adapters use BYOK credentials: Groq, Cerebras, Cloudflare Workers AI, Gemini, xAI, OpenRouter, and any OpenAI-compatible endpoint. Cleanup sends transcript text, never audio. When speech-to-text and cleanup use the same provider, Dictator reuses that provider credential unless you configure a separate cleanup credential. Keys are stored in macOS Keychain. Transcript history, vocabulary, styles, snippets, and private-clipboard data stay in local Application Support storage. Cloud recordings are sent to the selected speech provider and are not stored by Dictator after processing; the provider's own data-handling policy applies.
-
-Screen Aware is a separate, disabled-by-default mode for composing or transforming text from the focused window. Hold `Control-Option`, speak an instruction, and release; Dictator transcribes the audio, captures only the focused window, and sends the image, spoken instruction, app and window details, and selected text when available to your selected vision-capable provider. Screen Aware supports Groq, Gemini, xAI, OpenRouter, and OpenAI-compatible endpoints. Focused-window images are never saved by Dictator; the selected provider's own data-handling policy applies.
+Optional cleanup adapters use BYOK credentials: Groq, Cerebras, Gemini, OpenRouter, and any OpenAI-compatible endpoint. Cleanup sends transcript text, never audio. When speech-to-text and cleanup use the same provider, Dictator reuses that provider credential unless you configure a separate cleanup credential. Keys are stored in macOS Keychain. Transcript history, vocabulary, styles, and snippets stay in local Application Support storage. Cloud recordings are sent to the selected speech provider and are not stored by Dictator after processing; the provider's own data-handling policy applies.
 
 ## Install
 
@@ -68,18 +62,13 @@ Live integration tests read provider keys from `.env` and skip providers that ar
 
 ```dotenv
 GROQ_API_KEY=
-CLOUDFLARE_API_TOKEN=
-CLOUDFLARE_ACCOUNT_ID=
-XAI_API_KEY=
 DEEPGRAM_API_KEY=
-ASSEMBLYAI_API_KEY=
-GLADIA_API_KEY=
 GEMINI_API_KEY=
 OPENROUTER_API_KEY=
 CEREBRAS_API_KEY=
 ```
 
-Least-privilege mode needs only Microphone permission. System-wide mode additionally needs Accessibility and Input Monitoring for global shortcuts, focus detection, and insertion. Screen Recording permission is required only for Screen Aware.
+Least-privilege mode needs only Microphone permission. System-wide mode additionally needs Accessibility and Input Monitoring for global shortcuts, focus detection, and insertion.
 
 ## Release process
 

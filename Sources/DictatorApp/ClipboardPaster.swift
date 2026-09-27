@@ -28,6 +28,8 @@ final class ClipboardPaster {
     private let clipboard: any ClipboardAccess
     private let postEvent: @MainActor (PostedKeyEvent) -> Bool
     private let delay: (Int) async -> Void
+    private var pendingRestoreTask: Task<Void, Never>?
+    private var pendingOriginalSnapshot: PasteboardSnapshot?
 
     init() {
         clipboard = SystemClipboardAccess()
@@ -46,22 +48,52 @@ final class ClipboardPaster {
     }
 
     func paste(_ text: String) async -> Bool {
-        let snapshot = clipboard.snapshot()
+        // A restore still pending from an earlier, overlapping paste holds
+        // the user's true original clipboard contents; the pasteboard right
+        // now only holds that earlier paste's text, so reuse the pending
+        // original instead of snapshotting the wrong "original".
+        let snapshot = pendingOriginalSnapshot ?? clipboard.snapshot()
         let sessionID = UUID().uuidString
         guard clipboard.prepare(text: text, sessionID: sessionID) else {
             clipboard.restore(snapshot)
+            cancelPendingRestore()
             return false
         }
 
-        await delay(100)
+        await delay(40)
         guard await postPasteCommand() else {
             restoreIfOwned(snapshot, text: text, sessionID: sessionID)
+            cancelPendingRestore()
             return false
         }
 
-        await delay(500)
-        restoreIfOwned(snapshot, text: text, sessionID: sessionID)
+        scheduleRestore(snapshot, text: text, sessionID: sessionID)
         return true
+    }
+
+    /// The pasteboard restore only needs to happen before the *next* copy, not
+    /// before the paste command lands, so it runs after `paste` has already
+    /// returned instead of holding up the `.processing` UI state.
+    private func scheduleRestore(_ snapshot: PasteboardSnapshot, text: String, sessionID: String) {
+        pendingRestoreTask?.cancel()
+        pendingOriginalSnapshot = snapshot
+        pendingRestoreTask = Task { @MainActor [weak self] in
+            await self?.delay(500)
+            guard let self, !Task.isCancelled else { return }
+            self.restoreIfOwned(snapshot, text: text, sessionID: sessionID)
+            self.pendingRestoreTask = nil
+            self.pendingOriginalSnapshot = nil
+        }
+    }
+
+    /// Drops the pending-restore bookkeeping for a paste whose own restore
+    /// already ran synchronously (e.g. an immediate failure path), so a
+    /// later paste doesn't reuse a stale snapshot or leave a superseded
+    /// restore task around.
+    private func cancelPendingRestore() {
+        pendingRestoreTask?.cancel()
+        pendingRestoreTask = nil
+        pendingOriginalSnapshot = nil
     }
 
     private func postPasteCommand() async -> Bool {

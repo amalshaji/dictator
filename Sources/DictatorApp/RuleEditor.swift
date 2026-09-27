@@ -28,7 +28,7 @@ enum RuleDraft: Identifiable {
 }
 
 struct RuleEditor: View {
-    @ObservedObject var model: AppModel
+    let model: AppModel
     @Environment(\.dismiss) private var dismiss
     private let rule: RuleDraft
     @State private var primary: String
@@ -49,10 +49,10 @@ struct RuleEditor: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(rule.title).font(.dictatorDisplay(22))
+            Text(rule.title).font(.dictatorDisplay)
             TextField(rule.primaryLabel, text: $primary).textFieldStyle(DictatorTextFieldStyle())
             TextEditor(text: $secondary).frame(minHeight: 120).dictatorEditor()
-            if let validationError { Text(validationError).font(.dictatorBody(11, weight: .medium)).foregroundStyle(.red) }
+            if let validationError { Text(validationError).font(.dictatorCaption(weight: .medium)).foregroundStyle(DictatorDesign.textError) }
             HStack { Spacer(); Button("Cancel") { dismiss() }.dictatorButton(.ghost); Button("Save") {
                 do {
                     switch rule {

@@ -1,4 +1,5 @@
 import AppKit
+import Observation
 import QuartzCore
 import SwiftUI
 
@@ -6,26 +7,16 @@ enum HUDSuccess: Equatable {
     case cancelled
     case copied
     case pasteSent
-    case offlineSaved
-    case offlineCopied
-    case offlinePasteSent
+    case copiedViaAppleFallback
+    case pasteSentViaAppleFallback
 
     var label: String {
         switch self {
         case .cancelled: "Cancelled"
         case .copied: "Copied — press ⌘V"
         case .pasteSent: "Paste sent"
-        case .offlineSaved: "Offline · Saved"
-        case .offlineCopied: "Offline · Copied"
-        case .offlinePasteSent: "Offline · Paste sent"
-        }
-    }
-
-    var panelWidth: CGFloat {
-        switch self {
-        case .cancelled, .pasteSent: 124
-        case .offlineSaved, .offlinePasteSent: 174
-        case .copied, .offlineCopied: 196
+        case .copiedViaAppleFallback: "Used Apple On-Device · Copied"
+        case .pasteSentViaAppleFallback: "Used Apple On-Device · Paste sent"
         }
     }
 }
@@ -34,11 +25,10 @@ enum HUDPhase: Equatable {
     case idle
     case listening
     case transcribing
-    case offline
     case cleaning
-    case understanding
     case success(HUDSuccess)
-    case clipboard
+    case clipboard(shortcut: String)
+    case warning(String)
     case error(String)
 
     var label: String {
@@ -46,11 +36,10 @@ enum HUDPhase: Equatable {
         case .idle: ""
         case .listening: "Listening"
         case .transcribing: "Transcribing"
-        case .offline: "Offline mode"
         case .cleaning: "Cleaning up"
-        case .understanding: "Understanding screen"
         case .success(let success): success.label
-        case .clipboard: "Saved to Dictator clipboard"
+        case .clipboard(let shortcut): "Copied · \(shortcut) to paste"
+        case .warning(let value): value
         case .error(let value): value
         }
     }
@@ -78,9 +67,10 @@ enum HUDPositioning {
 }
 
 @MainActor
-final class HUDModel: ObservableObject {
-    @Published var phase: HUDPhase = .idle
-    @Published var levels = Array(repeating: 0.12, count: 22)
+@Observable
+final class HUDModel {
+    var phase: HUDPhase = .idle
+    var levels = Array(repeating: 0.12, count: 22)
 
     func push(level: Double) {
         levels.removeFirst()
@@ -96,11 +86,14 @@ final class FloatingPanelController {
     private var hideTask: Task<Void, Never>?
     private var screenObserver: NSObjectProtocol?
     private var sessionDisplayID: NSNumber?
-    private let transitionDuration = 0.24
+    /// Fixed panel size. Changing an NSPanel frame while the hosted SwiftUI view is
+    /// animating triggers AppKit constraint-pass loops, so the panel never resizes;
+    /// the capsule inside animates instead.
+    static let panelSize = NSSize(width: 380, height: 60)
 
     init() {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 280, height: 58),
+            contentRect: NSRect(origin: .zero, size: Self.panelSize),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -114,10 +107,14 @@ final class FloatingPanelController {
         panel.hidesOnDeactivate = false
         panel.ignoresMouseEvents = true
         panel.becomesKeyOnlyIfNeeded = true
-        panel.contentView = NSHostingView(rootView: FloatingHUDView(
+        let hostingView = NSHostingView(rootView: FloatingHUDView(
             model: model,
             onStop: { [weak self] in self?.stopFromPill() }
         ))
+        // The panel frame is the source of truth; hosting-view sizing constraints
+        // otherwise fight externally set frames and can loop AppKit's constraint pass.
+        hostingView.sizingOptions = []
+        panel.contentView = hostingView
         observeScreenChanges()
     }
 
@@ -144,7 +141,7 @@ final class FloatingPanelController {
         if screen(for: sessionDisplayID) == nil {
             sessionDisplayID = displayID(for: fallbackScreen())
         }
-        resize(for: model.phase, animated: false)
+        reposition()
     }
 
     func show(_ phase: HUDPhase) {
@@ -163,7 +160,7 @@ final class FloatingPanelController {
             : nil
         withAnimation(animation) { model.phase = phase }
         panel.ignoresMouseEvents = phase != .listening
-        resize(for: phase, animated: shouldAnimate)
+        reposition()
         panel.orderFrontRegardless()
     }
 
@@ -186,35 +183,12 @@ final class FloatingPanelController {
         onStop?()
     }
 
-    private func resize(for phase: HUDPhase, animated: Bool) {
-        let size = size(for: phase)
-        guard let target = targetFrame(size: size, phase: phase) else { return }
-        guard animated else {
-            panel.setFrame(target, display: true)
-            return
-        }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = transitionDuration
-            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 0.72, 0.22, 1)
-            panel.animator().setFrame(target, display: true)
-        }
+    private func reposition() {
+        guard let target = targetFrame() else { return }
+        if panel.frame != target { panel.setFrame(target, display: false) }
     }
 
-    private func size(for phase: HUDPhase) -> NSSize {
-        switch phase {
-        case .idle: NSSize(width: 54, height: 18)
-        case .listening:
-            NSSize(width: 148, height: 34)
-        case .transcribing, .offline, .cleaning, .understanding:
-            NSSize(width: 124, height: 32)
-        case .success(let success):
-            NSSize(width: success.panelWidth, height: 32)
-        case .clipboard: NSSize(width: 190, height: 34)
-        case .error: NSSize(width: 260, height: 36)
-        }
-    }
-
-    private func targetFrame(size: NSSize, phase: HUDPhase) -> NSRect? {
+    private func targetFrame() -> NSRect? {
         guard let screen = screen(for: sessionDisplayID) ?? fallbackScreen() else { return nil }
         let topExclusion = HUDPositioning.topExclusion(
             screenFrame: screen.frame,
@@ -222,7 +196,7 @@ final class FloatingPanelController {
             topSafeAreaInset: screen.safeAreaInsets.top
         )
         return HUDPositioning.notchFrame(
-            size: size,
+            size: Self.panelSize,
             screenFrame: screen.frame,
             topExclusion: topExclusion
         )
@@ -246,22 +220,29 @@ final class FloatingPanelController {
 }
 
 struct FloatingHUDView: View {
-    @ObservedObject var model: HUDModel
+    let model: HUDModel
     let onStop: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    private var motionAnimation: Animation {
+        reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.3, dampingFraction: 1)
+    }
+
     var body: some View {
-        ZStack {
-            chrome
-            content
-                .id(phaseKey)
-                .transition(.opacity)
+        ViewThatFits(in: .horizontal) {
+            content.fixedSize()
+            content.frame(width: 360)
         }
+        .id(phaseKey)
         .padding(0.5)
+        .background(chrome)
+        .transition(.opacity.animation(motionAnimation))
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .animation(reduceMotion ? nil : motionAnimation, value: model.phase)
     }
 
     @ViewBuilder private var chrome: some View {
-        Capsule().fill(Color(red: 17/255, green: 16/255, blue: 20/255).opacity(0.97))
+        Capsule().fill(DictatorDesign.hudSurface.opacity(0.97))
         Capsule().stroke(Color.white.opacity(0.075), lineWidth: 0.75)
     }
 
@@ -269,7 +250,7 @@ struct FloatingHUDView: View {
         switch model.phase {
         case .idle: EmptyView()
         case .listening: listeningState
-        case .transcribing, .offline, .cleaning, .understanding: processingState
+        case .transcribing, .cleaning: processingState
         default: resultState
         }
     }
@@ -283,15 +264,18 @@ struct FloatingHUDView: View {
             waveform
             Button(action: onStop) {
                 Image(systemName: "stop.fill")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(DictatorDesign.glyphFont(size: 8, weight: .bold))
                     .foregroundStyle(.white)
                     .frame(width: 22, height: 22)
                     .background(DictatorDesign.orchid, in: Circle())
             }
             .buttonStyle(.plain)
+            .help("Stop recording")
             .accessibilityLabel("Stop recording")
         }
         .padding(.horizontal, 8)
+        .padding(.vertical, 7)
+        .frame(minHeight: 32)
         .accessibilityLabel("Listening")
     }
 
@@ -302,7 +286,7 @@ struct FloatingHUDView: View {
                 Capsule()
                     .fill(index.isMultiple(of: 4) ? DictatorDesign.orchid : DictatorDesign.orchid.opacity(0.68))
                     .frame(width: 2, height: 2.5 + shaped * 19)
-                    .animation(reduceMotion ? nil : .smooth(duration: 0.08), value: level)
+                    .animation(reduceMotion ? nil : .smooth(duration: 0.1), value: level)
             }
         }
         .frame(width: 54, height: 24)
@@ -320,36 +304,56 @@ struct FloatingHUDView: View {
                     }
                 }.frame(width: 21)
                 Text(model.phase.label)
-                    .font(.dictatorBody(11.5, weight: .semibold))
+                    .font(.dictatorBody(weight: .semibold))
                     .foregroundStyle(Color.white.opacity(0.92))
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
-            }.padding(.horizontal, 9)
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 7)
+            .frame(minHeight: 32)
         }
         .accessibilityLabel(model.phase.label)
     }
 
     private var resultState: some View {
         HStack(spacing: 8) {
-            Image(systemName: resultIcon).font(.system(size: 10, weight: .bold)).foregroundStyle(resultColor)
-            Text(model.phase.label).font(.dictatorBody(12, weight: .semibold)).foregroundStyle(Color.white.opacity(0.92))
-                .lineLimit(1)
-        }.padding(.horizontal, 13)
+            Image(systemName: resultIcon).font(DictatorDesign.glyphFont(size: 10, weight: .bold)).foregroundStyle(resultColor)
+            Text(model.phase.label).font(.dictatorBody(weight: .semibold)).foregroundStyle(Color.white.opacity(0.92))
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 13)
+        .padding(.vertical, 7)
+        .frame(minHeight: 32)
         .accessibilityLabel(model.phase.label)
     }
 
-    private var resultIcon: String {
+    // Internal (not private) so FloatingHUDTests can verify the phase→glyph/color
+    // feedback taxonomy directly, without rendering the view hierarchy.
+    var resultIcon: String {
         switch model.phase {
+        case .success(.cancelled): "xmark"
+        case .success(.copiedViaAppleFallback), .success(.pasteSentViaAppleFallback): "exclamationmark.triangle.fill"
         case .success: "checkmark"
         case .clipboard: "doc.on.clipboard"
-        case .error: "exclamationmark"
+        case .warning: "exclamationmark.triangle.fill"
+        case .error: "xmark.octagon.fill"
         default: "checkmark"
         }
     }
 
-    private var resultColor: Color {
-        if case .error = model.phase { return .orange }
-        return DictatorDesign.orchid
+    var resultColor: Color {
+        switch model.phase {
+        case .success(.cancelled): Color.white.opacity(0.7)
+        case .success(.copiedViaAppleFallback), .success(.pasteSentViaAppleFallback): DictatorDesign.hudWarning
+        case .success: DictatorDesign.orchid
+        case .clipboard: Color.white
+        case .warning: DictatorDesign.hudWarning
+        case .error: DictatorDesign.hudError
+        default: DictatorDesign.orchid
+        }
     }
 
     private var phaseKey: String {
@@ -357,11 +361,10 @@ struct FloatingHUDView: View {
         case .idle: "idle"
         case .listening: "listening"
         case .transcribing: "transcribing"
-        case .offline: "offline"
         case .cleaning: "cleaning"
-        case .understanding: "understanding"
         case .success: "success"
         case .clipboard: "clipboard"
+        case .warning: "warning"
         case .error: "error"
         }
     }

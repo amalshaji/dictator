@@ -5,8 +5,7 @@ public struct DeepgramSTTProvider: SpeechToTextProvider {
         kind: .deepgram,
         displayName: "Deepgram",
         defaultModel: "nova-3",
-        models: ["nova-3", "nova-3-general"],
-        requiresAccountID: false
+        models: ["nova-3", "nova-3-general"]
     )
 
     private let transport: any HTTPTransport
@@ -18,6 +17,13 @@ public struct DeepgramSTTProvider: SpeechToTextProvider {
         request.setValue("Token \(credentials.apiKey)", forHTTPHeaderField: "Authorization")
         let (data, response) = try await transport.data(for: request)
         try HTTPHelpers.requireSuccess(data: data, response: response)
+    }
+
+    public func warmUpConnection(credentials: ProviderCredentials) async {
+        var request = URLRequest(url: URL(string: "https://api.deepgram.com")!)
+        request.httpMethod = "HEAD"
+        request.timeoutInterval = 5
+        _ = try? await transport.data(for: request)
     }
 
     public func transcribe(audio: RecordedAudio, options: TranscriptionOptions, credentials: ProviderCredentials) async throws -> TranscriptionResult {
@@ -34,6 +40,7 @@ public struct DeepgramSTTProvider: SpeechToTextProvider {
         guard let url = components.url else { throw ProviderError.invalidConfiguration("The Deepgram request options are invalid.") }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        request.timeoutInterval = 20
         request.setValue("Token \(credentials.apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("audio/wav", forHTTPHeaderField: "Content-Type")
         request.httpBody = audio.wavData

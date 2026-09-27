@@ -46,20 +46,8 @@ public enum HTTPHelpers {
         fileData: Data,
         boundary: String
     ) -> Data {
-        multipartBody(fields: fields.sorted(by: { $0.key < $1.key }), fileField: fileField, filename: filename, mimeType: mimeType, fileData: fileData, boundary: boundary)
-    }
-
-    /// Pair-based variant supports APIs with repeatable multipart fields such as `keyterm`.
-    public static func multipartBody(
-        fields: [(String, String)],
-        fileField: String,
-        filename: String,
-        mimeType: String,
-        fileData: Data,
-        boundary: String
-    ) -> Data {
         var data = Data()
-        for (name, value) in fields {
+        for (name, value) in fields.sorted(by: { $0.key < $1.key }) {
             data.append("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"\r\n\r\n\(value)\r\n")
         }
         data.append("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(fileField)\"; filename=\"\(filename)\"\r\nContent-Type: \(mimeType)\r\n\r\n")

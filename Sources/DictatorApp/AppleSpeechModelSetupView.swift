@@ -2,7 +2,7 @@ import DictatorCore
 import SwiftUI
 
 struct AppleSpeechModelSetupView: View {
-    @ObservedObject var model: AppModel
+    let model: AppModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -20,8 +20,8 @@ struct AppleSpeechModelSetupView: View {
             }
 
             Text(model.appleSpeech.statusText)
-                .font(.dictatorBody(12, weight: .medium))
-                .foregroundStyle(model.appleSpeech.state.readiness.isReady ? DictatorDesign.focus : .secondary)
+                .font(.dictatorBody(weight: .medium))
+                .foregroundStyle(model.appleSpeech.state.readiness.isReady ? DictatorDesign.focus : DictatorDesign.textSecondary)
 
             if case let .downloading(_, progress) = model.appleSpeech.state.readiness {
                 ProgressView(value: progress)

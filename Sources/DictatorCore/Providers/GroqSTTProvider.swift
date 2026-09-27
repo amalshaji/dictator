@@ -5,8 +5,7 @@ public struct GroqSTTProvider: SpeechToTextProvider {
         kind: .groq,
         displayName: "Groq",
         defaultModel: "whisper-large-v3-turbo",
-        models: ["whisper-large-v3-turbo", "whisper-large-v3"],
-        requiresAccountID: false
+        models: ["whisper-large-v3-turbo", "whisper-large-v3"]
     )
 
     private let transport: any HTTPTransport
@@ -23,6 +22,13 @@ public struct GroqSTTProvider: SpeechToTextProvider {
         try HTTPHelpers.requireSuccess(data: data, response: response)
     }
 
+    public func warmUpConnection(credentials: ProviderCredentials) async {
+        var request = URLRequest(url: URL(string: "https://api.groq.com")!)
+        request.httpMethod = "HEAD"
+        request.timeoutInterval = 5
+        _ = try? await transport.data(for: request)
+    }
+
     public func transcribe(audio: RecordedAudio, options: TranscriptionOptions, credentials: ProviderCredentials) async throws -> TranscriptionResult {
         let started = ContinuousClock.now
         let boundary = "dictator-\(UUID().uuidString)"
@@ -33,6 +39,7 @@ public struct GroqSTTProvider: SpeechToTextProvider {
 
         var request = URLRequest(url: URL(string: "https://api.groq.com/openai/v1/audio/transcriptions")!)
         request.httpMethod = "POST"
+        request.timeoutInterval = 20
         request.setValue("Bearer \(credentials.apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.httpBody = HTTPHelpers.multipartBody(

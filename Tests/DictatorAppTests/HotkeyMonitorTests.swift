@@ -31,49 +31,6 @@ final class HotkeyMonitorTests: XCTestCase {
         XCTAssertEqual(shortcut.displayName, "⌃⌘C")
     }
 
-    func testScreenAwareShortcutIsAnExactModifierChord() throws {
-        let shortcut = GlobalShortcut.screenAware
-        guard case .modifierChord(let modifiersRawValue) = shortcut.trigger else {
-            return XCTFail("Expected a typed modifier chord")
-        }
-        XCTAssertEqual(
-            CGEventFlags(rawValue: modifiersRawValue),
-            [.maskControl, .maskAlternate]
-        )
-        XCTAssertEqual(shortcut.displayName, "⌃⌥")
-        XCTAssertTrue(
-            ShortcutMatcher.matchesModifiers(
-                shortcut,
-                flags: [.maskControl, .maskAlternate]
-            )
-        )
-        XCTAssertFalse(
-            ShortcutMatcher.matchesModifiers(shortcut, flags: [.maskControl])
-        )
-        XCTAssertFalse(
-            ShortcutMatcher.matchesModifiers(
-                shortcut,
-                flags: [.maskControl, .maskAlternate, .maskShift]
-            )
-        )
-
-        let restored = try JSONDecoder().decode(
-            GlobalShortcut.self,
-            from: JSONEncoder().encode(shortcut)
-        )
-        XCTAssertEqual(restored, shortcut)
-
-        let object = try XCTUnwrap(
-            JSONSerialization.jsonObject(
-                with: JSONEncoder().encode(shortcut)
-            ) as? [String: Any]
-        )
-        XCTAssertNotNil(object["trigger"])
-        XCTAssertNil(object["keyCode"])
-        XCTAssertNil(object["isFunctionModifier"])
-        XCTAssertNil(object["isModifierOnly"])
-    }
-
     func testLegacyShortcutDecodesIntoTypedKeyTrigger() throws {
         let legacy = #"{"keyCode":8,"modifiersRawValue":1179648,"keyLabel":"C","isFunctionModifier":false,"isModifierOnly":false}"#
 
