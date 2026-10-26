@@ -39,11 +39,13 @@ public struct TranscriptProcessor: Sendable {
         snippets: [SnippetEntry],
         cleanup: TranscriptCleanupConfiguration?
     ) async -> ProcessedTranscript {
-        let normalized = VocabularyNormalizer.normalize(rawText, vocabulary: vocabulary)
-        let expanded = SnippetExpander.expand(normalized, snippets: snippets)
         guard let cleanup else {
-            return .raw(expanded)
+            let normalized = VocabularyNormalizer.normalize(rawText, vocabulary: vocabulary)
+            return .raw(SnippetExpander.expand(normalized, snippets: snippets))
         }
+        // With cleanup, the LLM applies vocabulary from context (see CleanupPrompt) instead of
+        // the literal variant replacement, which can't tell a misheard term from the real word.
+        let expanded = SnippetExpander.expand(rawText, snippets: snippets)
 
         let input: CleanupInput = selectedText.flatMap { $0.isEmpty ? nil : $0 }.map {
             .contextual(spokenText: expanded, selectedText: $0)
