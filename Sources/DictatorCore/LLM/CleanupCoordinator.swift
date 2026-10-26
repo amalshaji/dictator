@@ -10,7 +10,7 @@ public struct CleanupCoordinator: Sendable {
         provider: any CleanupLLMProvider,
         model: String,
         credentials: ProviderCredentials,
-        timeout: Duration = .milliseconds(1_500)
+        timeout: Duration = .seconds(3)
     ) async -> CleanupOutcome {
         do {
             if case .contextual(_, let selectedText) = request.input,
