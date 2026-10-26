@@ -64,14 +64,21 @@ struct MainView: View {
         }
     }
 
+    /// Drawn with the same paper surface, type, and selected-chip treatment as
+    /// the detail pages (see `DictatorSegmentedSwitcher`) instead of the stock
+    /// translucent sidebar list, so both columns read as one surface.
     private func sidebar(selection: Binding<Destination?>) -> some View {
-        List(selection: selection) {
+        VStack(alignment: .leading, spacing: 2) {
             ForEach(Destination.allCases) { item in
-                Label(item.rawValue, systemImage: item.icon)
-                    .tag(item)
+                SidebarRow(destination: item, isSelected: selection.wrappedValue == item) {
+                    selection.wrappedValue = item
+                }
             }
+            Spacer(minLength: 0)
         }
-        .listStyle(.sidebar)
+        .padding(.horizontal, 10)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(DictatorDesign.paper)
         .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 240)
         .safeAreaInset(edge: .top) { wordmark }
         .safeAreaInset(edge: .bottom) { statusBlock }
@@ -84,9 +91,10 @@ struct MainView: View {
             WaveMark()
         }
         .accessibilityLabel("Dictator")
-        .padding(.horizontal, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 18)
         .padding(.top, 8)
-        .padding(.bottom, 4)
+        .padding(.bottom, 12)
     }
 
     /// Reduced to a single caption line: the Home header already restates access
@@ -102,7 +110,10 @@ struct MainView: View {
                     .font(.dictatorCaption).foregroundStyle(DictatorDesign.textSecondary)
             }
         }
-        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+        .overlay(alignment: .top) { Divider().padding(.horizontal, 10) }
     }
 
     private var idleCaption: String {
@@ -126,6 +137,39 @@ struct MainView: View {
         case .library: LibraryView(model: model)
         case .settings: SettingsView(model: model)
         }
+    }
+}
+
+private struct SidebarRow: View {
+    let destination: Destination
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label {
+                Text(destination.rawValue)
+            } icon: {
+                Image(systemName: destination.icon)
+                    .foregroundStyle(isSelected ? DictatorDesign.accentForeground : DictatorDesign.textSecondary)
+                    .frame(width: 18)
+            }
+            .font(.dictatorBody(weight: isSelected ? .semibold : .medium))
+            .foregroundStyle(isSelected ? DictatorDesign.ink : DictatorDesign.textSecondary)
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
+            .contentShape(Rectangle())
+            .background(isSelected ? DictatorDesign.control : .clear, in: RoundedRectangle(cornerRadius: DictatorDesign.radiusControl, style: .continuous))
+            .overlay {
+                if isSelected {
+                    RoundedRectangle(cornerRadius: DictatorDesign.radiusControl, style: .continuous).stroke(DictatorDesign.border.opacity(0.7))
+                }
+            }
+            .shadow(color: isSelected ? .black.opacity(0.06) : .clear, radius: 2, y: 1)
+        }
+        .buttonStyle(.plain)
+        .help("\(destination.rawValue) (⌘\(destination.keyboardNumber))")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 
